@@ -318,13 +318,13 @@ __aicore__ inline void GroupMatmulSwiglu(
         if constexpr (g_coreType == AscendC::AIC) {
             if (loopIdx == startLoopIdx) {
             }
-            // Streaming mode checks each task's input because static swizzling
-            // can visit non-adjacent M tiles. The default expert mode waits
-            // for the whole expert and removes all later input polling.
+            // Automatic readiness checks each task's input when tile-ready is
+            // selected, since static swizzling can visit non-adjacent M tiles.
+            // FORCE_EXPERT_READY waits once for this expert's complete input.
             if constexpr (DispatchTileReady && WaitForFullExpert) {
-                // Expert mode publishes only partition completion. The row
-                // counter layout is still reserved for the opt-in streaming
-                // mode; wait on the separate expert-completion counter once.
+                // Forced expert mode publishes partition completion only.
+                // The row-counter storage remains allocated; this path waits
+                // once on the separate expert-completion counter.
                 if (loopIdx == startLoopIdx) {
                     __gm__ int32_t* expertFlag =
                         reinterpret_cast<__gm__ int32_t*>(params.workspaceInfo.ptrFlagDispatchToGmm1) +
@@ -527,13 +527,13 @@ __aicore__ inline void GroupMatmulSwigluGm(
         if constexpr (g_coreType == AscendC::AIC) {
             if (loopIdx == startLoopIdx) {
             }
-            // Streaming mode checks each task's input because static swizzling
-            // can visit non-adjacent M tiles. The default expert mode waits
-            // for the whole expert and removes all later input polling.
+            // Automatic readiness checks each task's input when tile-ready is
+            // selected, since static swizzling can visit non-adjacent M tiles.
+            // FORCE_EXPERT_READY waits once for this expert's complete input.
             if constexpr (DispatchTileReady && WaitForFullExpert) {
-                // Expert mode publishes only partition completion. The row
-                // counter layout is still reserved for the opt-in streaming
-                // mode; wait on the separate expert-completion counter once.
+                // Forced expert mode publishes partition completion only.
+                // The row-counter storage remains allocated; this path waits
+                // once on the separate expert-completion counter.
                 if (loopIdx == startLoopIdx) {
                     __gm__ int32_t* expertFlag =
                         reinterpret_cast<__gm__ int32_t*>(params.workspaceInfo.ptrFlagDispatchToGmm1) +

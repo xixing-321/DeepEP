@@ -323,8 +323,8 @@ __aicore__ inline AscendC::LocalTensor<bfloat16_t> MegaMoeBF16Backward::StageUb(
 __aicore__ inline void MegaMoeBF16Backward::InitStageLayout()
 {
     // The two-slot dispatch ring must fit the static staging budget
-    // [BW_STAGE_BASE_BYTES, UB_SIZE).  Tiling's dispatchRows_ was sized for
-    // the old whole-UB firstPipe layout, so clamp the per-ping row count;
+    // [BW_STAGE_BASE_BYTES, UB_SIZE).  Clamp tiling's dispatchRows_ to this
+    // smaller window when choosing the per-ping row count;
     // one row is the floor (K classes that cannot fit a single row twice
     // are outside this layout's contract).  The 32-element alignment of a
     // ping can add up to 64B, hence the margin.
@@ -333,7 +333,7 @@ __aicore__ inline void MegaMoeBF16Backward::InitStageLayout()
     dispatchPingRows_ = static_cast<uint32_t>(dispatchRows_) < maxPingRows ? static_cast<uint32_t>(dispatchRows_)
                                                                            : (maxPingRows > 0 ? maxPingRows : 1);
     if (MegaMoeBF16Training::BackwardUsesGm(savedGateUpMode_))
-        dispatchPingRows_ = 1;  // Preserve the measured saved-mode single-row path, including k=0.
+        dispatchPingRows_ = 1;  // Saved modes use single-row DMA, including splitExperts_=0.
     dispatchCopyElementsPerPing_ = Ops::Base::CeilAlign(dispatchPingRows_ * k_, static_cast<uint32_t>(ALIGN_32));
 }
 
@@ -1370,8 +1370,8 @@ __aicore__ inline void MegaMoeBF16Backward::Process()
             // dW1 = dZ^T @ Xpacked reduces across the complete expert token band,
             // so pair-local WaitForVector is insufficient: every paired AIV must have
             // completed P1 before any AIC is allowed to consume dZ in P2/P3.
-            // P1 contributes two blockNum bands, one arrival from every AIV0 and
-            // AIV1 (the old P0 ownership band is gone with the static staging).
+            // P1 contributes two blockNum bands: one arrival from every AIV0
+            // and AIV1 after their writes complete.
             const int32_t p1ReadyTarget = 2 * static_cast<int32_t>(blockNum_);
             while (ReadGmByPassDCache(bwFlagAiv1Ready_) < p1ReadyTarget) {
                 const int64_t start = GetSystemCycle();

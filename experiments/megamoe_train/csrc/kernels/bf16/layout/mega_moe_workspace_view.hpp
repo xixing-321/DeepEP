@@ -197,7 +197,7 @@ struct ForwardWorkspaceInfo {
     }
 };
 // Persistent view of the state retained by forward for the matching backward.
-// The data fields are read-only; the former diagnostic region stays reserved.
+// The data fields are read-only; the reserved region preserves plane offsets.
 // Forward-only buffers deliberately remain null so backward cannot accidentally
 // depend on transient storage whose lifetime ended when forward returned.
 struct BackwardSavedStateInfo : ForwardWorkspaceInfo {

@@ -31,7 +31,7 @@ set(train_include "${CMAKE_CURRENT_SOURCE_DIR}"
     "${ASCEND_HOME_PATH}/aarch64-linux/asc/include"
     "${ASCEND_HOME_PATH}/compiler/tikcpp" "${ASCEND_HOME_PATH}/compiler/tikcpp/tikcfw"
     "${ASCEND_HOME_PATH}/compiler/tikcpp/tikcfw/interface" "${ASCEND_HOME_PATH}/compiler/tikcpp/tikcfw/impl")
-# Preserve b8cff148's adaptive-auto / auto defaults and its exact numerical path.
+# Training uses adaptive GMM1 scheduling and automatic SwiGLU handoff by default.
 # Forward SwiGLU only: 0 = force UB handoff, 1 = force GM staging, 2 = auto.
 # Host queries the built device SO for workspace sizing; the shared header's
 # fallback value 0 is not the default of this device build, which uses 2 below.

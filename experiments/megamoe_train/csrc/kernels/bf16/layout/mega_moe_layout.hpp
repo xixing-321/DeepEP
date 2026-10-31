@@ -24,8 +24,8 @@ constexpr uint64_t kAlignment512 = 512;
 constexpr uint64_t kBf16Bytes = 2;
 constexpr uint64_t kInt32Bytes = 4;
 constexpr uint64_t kIntCacheline = 16;
-// Keep the former backward diagnostic region reserved so all subsequent
-// saved Gate/Up, scale and mask offsets remain unchanged.
+// Reserve 1 KiB in saved-state to preserve the fixed offsets of the
+// following Gate/Up, scale and clipping-mask planes.
 constexpr uint64_t kBackwardProgressElements = 256;
 constexpr uint64_t kMaxEpRanks = 1024;
 constexpr uint64_t kMaxLocalExperts = 32;
@@ -272,7 +272,7 @@ struct TrainingSavedStateLayout {
     uint64_t savedTokenCountsOffset;
     uint64_t dispatchedTopkWeightsOffset;
     uint64_t dispatchedTopkWeightsBytes;
-    uint64_t backwardProgressOffset;  // Reserved 1 KiB; no longer diagnostic output.
+    uint64_t backwardProgressOffset;  // Reserved 1 KiB preserving subsequent plane offsets.
     // Existing metadata and reserved-region offsets stay fixed.
     uint64_t legacyBytes;
     uint64_t gateOffset;
@@ -375,10 +375,10 @@ struct UDMAForwardTransientWorkspaceLayout {
     }
 };
 
-// Ordinary BF16 only: append row-ready counters without moving any existing
-// transient buffer or changing the saved-state / MGroup / UDMA layouts. The
-// forward kernel resets every counter before Dispatch can publish readiness.
-// Backward-only progress suffix; all previous offsets stay unchanged.
+// Backward-only per-producer row-progress suffix; preceding workspace and
+// saved-state offsets remain fixed. Host allocation zeros these counters
+// before backward Dispatch publishes readiness. These are synchronization
+// counters, separate from the reserved 1 KiB saved-state region.
 struct BackwardDispatchProgressLayout {
     static constexpr uint64_t kSlotBytes = 64;
     MEGA_MOE_BF16_HOST_DEVICE static constexpr uint64_t ExtraBytes(uint64_t experts, uint64_t sources,
@@ -401,10 +401,12 @@ struct ForwardDispatchTileReadyLayout {
     static constexpr uint64_t kComputeRows = 192;
     static constexpr uint64_t kMaxReadyExperts = 7;
     static constexpr uint64_t kReadyRows = 2 * kComputeRows;
-    // Keep Host and backward allocation unchanged; Ready384 uses fewer slots.
+    // Reserve at 256-row granularity to preserve Host/backward allocation;
+    // Ready384 requires no more slots than this capacity.
     static constexpr uint64_t kReservedRows = 256;
-    // tile readiness is used only for one startup expert, so one counter set is
-    // shared by whichever local expert is selected at runtime.
+    // With prepared metadata, each eligible expert uses a distinct word in
+    // every ready-block cache line. Without it, only the first non-empty
+    // expert may use the shared startup counter set, subject to row guards.
     static constexpr uint64_t kMinReadyRowsPerExpert = 2 * kReadyRows;
     uint64_t flagSlotsPerExpert;
     uint64_t flagCount;
