@@ -3,15 +3,18 @@
 #include <cstdint>
 #include <cfloat>
 
-#if defined(ASCEND_MEGAMOE_USE_NEW_ASCENDC_FRONTEND)
+#if defined(__NPU_DEVICE__) || defined(__ASC_NPU_HOST__)
 #include <kernel_operator.h>
 #define MEGA_MOE_BF16_HOST_DEVICE __host_aicore__
-#elif defined(__CCE__)
-#include <kernel_operator.h>
-#define MEGA_MOE_BF16_HOST_DEVICE __host__ __aicore__
 #else
 #define MEGA_MOE_BF16_HOST_DEVICE
 #endif
+
+#ifndef DEEPEP_BF16_FORCE_EXPERT_READY
+#define DEEPEP_BF16_FORCE_EXPERT_READY 0
+#endif
+static_assert(DEEPEP_BF16_FORCE_EXPERT_READY == 0 || DEEPEP_BF16_FORCE_EXPERT_READY == 1,
+              "DEEPEP_BF16_FORCE_EXPERT_READY must be 0 or 1");
 
 namespace MegaMoeBF16Training {
 
@@ -21,6 +24,8 @@ constexpr uint64_t kAlignment512 = 512;
 constexpr uint64_t kBf16Bytes = 2;
 constexpr uint64_t kInt32Bytes = 4;
 constexpr uint64_t kIntCacheline = 16;
+// Keep the former backward diagnostic region reserved so all subsequent
+// saved Gate/Up, scale and mask offsets remain unchanged.
 constexpr uint64_t kBackwardProgressElements = 256;
 constexpr uint64_t kMaxEpRanks = 1024;
 constexpr uint64_t kMaxLocalExperts = 32;
@@ -118,8 +123,12 @@ MEGA_MOE_BF16_HOST_DEVICE constexpr uint32_t ResolveSavedGateUpMode(uint32_t mod
     return mode == kSaveAuto ? (tilingLimit == FLT_MAX ? kSaveMxFp8 : kSaveBf16) : mode;
 }
 
-// Ordinary forward only. UDMA/MGroup keep their existing UB path.
-// This policy is compiled into the kernel SO and queried by Host allocation.
+// Ordinary forward SwiGLU handoff: 0 forces paired Gate/Up tiles through UB;
+// 1 stages raw Gate/Up in GM; 2 selects either path from hidden and savedMode.
+// The device build explicitly sets 2 in CMake. The fallback below only applies
+// to translation units without that definition, including Host/CPU consumers.
+// Host allocation queries the built device SO instead of using that fallback.
+// This switch does not control the separate BackwardUsesGm() saved-mode policy.
 #ifndef DEEPEP_BF16_SWIGLU_DECOUPLE
 #define DEEPEP_BF16_SWIGLU_DECOUPLE 0
 #endif
@@ -127,6 +136,10 @@ static_assert(DEEPEP_BF16_SWIGLU_DECOUPLE >= 0 && DEEPEP_BF16_SWIGLU_DECOUPLE <=
               "BF16 SwiGLU decoupling must be off(0), on(1), or auto(2)");
 constexpr uint64_t kForwardSwigluAutoBoundary = 3584;
 
+// savedMode must first be resolved by ResolveSavedGateUpMode(). In auto mode,
+// GM is used below 3584, or at 3584 when savedMode is kSaveMxFp8; otherwise UB.
+// The GM path makes raw Gate/Up visible before AIV0 reloads and activates them;
+// the UB path retains the paired AIC/AIV0 producer-consumer handoff.
 MEGA_MOE_BF16_HOST_DEVICE constexpr bool ForwardUsesGmSwiglu(uint64_t hidden, uint32_t savedMode,
                                                              uint32_t mode = DEEPEP_BF16_SWIGLU_DECOUPLE)
 {
@@ -200,18 +213,6 @@ using SavedGateUpQuantUbLayout = SavedGateUpQuantUbLayoutFor<128>;
 // Simultaneous UB allocations during count exchange and Dispatch. GM count
 // rows contain all experts; Cumsum gathers only this rank's expert columns.
 struct ForwardDispatchUbLayout {
-    // The ordinary M192 entry opts in; Host, backward, MGroup and UDMA
-    // retain their configured granularity and conservative UB capacity check.
-    MEGA_MOE_BF16_HOST_DEVICE static constexpr uint64_t CopyRowsForForward(uint64_t configuredRows)
-    {
-#if defined(DEEPEP_BF16_M192_FORWARD)
-        (void)configuredRows;
-        return 1;
-#else
-        return configuredRows;
-#endif
-    }
-
     static constexpr uint64_t kTopkWeightBytes = 4 * 1024;
     static constexpr uint64_t kCountResetChunkBytes = 16 * 1024;
     uint64_t syncBytes;
@@ -271,8 +272,8 @@ struct TrainingSavedStateLayout {
     uint64_t savedTokenCountsOffset;
     uint64_t dispatchedTopkWeightsOffset;
     uint64_t dispatchedTopkWeightsBytes;
-    uint64_t backwardProgressOffset;
-    // Append-only extension: existing metadata/progress offsets stay fixed.
+    uint64_t backwardProgressOffset;  // Reserved 1 KiB; no longer diagnostic output.
+    // Existing metadata and reserved-region offsets stay fixed.
     uint64_t legacyBytes;
     uint64_t gateOffset;
     uint64_t upOffset;
@@ -396,14 +397,9 @@ struct BackwardDispatchProgressLayout {
 };
 
 struct ForwardDispatchTileReadyLayout {
-    // Only the ordinary forward entry opts into M192. Shared variants retain M128.
-#if defined(DEEPEP_BF16_M192_FORWARD)
+    // Forward computation uses M192; backward GEMMs define their own M128.
     static constexpr uint64_t kComputeRows = 192;
     static constexpr uint64_t kMaxReadyExperts = 7;
-#else
-    static constexpr uint64_t kComputeRows = 128;
-    static constexpr uint64_t kMaxReadyExperts = 7;
-#endif
     static constexpr uint64_t kReadyRows = 2 * kComputeRows;
     // Keep Host and backward allocation unchanged; Ready384 uses fewer slots.
     static constexpr uint64_t kReservedRows = 256;

@@ -2,6 +2,10 @@
 
 本方案在已有SwiGLU/Gather稳定优化之上，提前交付dO行块供dHp计算。前向逻辑、保存模式、梯度数学和舍入顺序保持不变。
 
+本页描述默认`DEEPEP_BF16_FORCE_EXPERT_READY=OFF`的行为。该选项可通过同名wheel构建环境变量或CMake选项设为`ON`，统一向Host/Device传C++值`1`（`OFF`传`0`）。`ON`时两侧均强制`splitExperts=0`，关闭行进度及配套元数据，回到既有整专家Dispatch完成flag；前向也同时关闭tile-ready。它优先于`MEGAMOE_BF16_BWD_DISPATCH_SPLIT_EXPERTS`，运行时覆盖不能重新开启细分。
+
+改变选项需完整重建并重装同一次构建的Host/Device wheel，所有EP rank必须同构建；SO名称、公开接口及保存模式保持不变。该选项不替代`DEEPEP_BF16_SWIGLU_DECOUPLE=0/1/2`，后者设备默认`2`，仍只控制前向SwiGLU交接。
+
 ## 默认与回退
 
 | 条件 | Dispatch→dHp交付 |
@@ -26,6 +30,8 @@
 ## 控制区与边界
 
 新增控制区为`k × EP × P × 64B`，P为每source producer数；原payload与控制区前缀偏移不变。Host对控制区及suffix清零，kernel每次调用使用新进度。没有新增大块GM/UB payload。以每卡4专家、P=1为例，EP64/128/256分别增加16/32/64KiB。
+
+这里的progress是算法同步：producer发布实际已完成的行数，consumer据此等待数据可读。它不同于saved-state中的旧反向诊断阶段码。诊断阶段码写入及Host对应清零已删除，原1KiB区域仅作为reserved保留，后续Gate/Up等偏移不动；不能将真正的Dispatch行进度计数器随诊断代码一起清除。
 
 本版本不包含查询跳过、N8、跨组N方向交替、row-wave、none-GM等额外候选。保留必要的发布/复用/整专家同步。
 

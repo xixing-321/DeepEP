@@ -3,6 +3,19 @@
 
 普通BF16使用默认构建`adaptive-auto`。前向采用M192／Ready384和静态producer元数据，反向saved路径采用M128／256行进度和静态元数据。单行搬运是DMA粒度，与是否等待整专家ready分开选择。
 
+## 统一整专家回退选项
+
+`DEEPEP_BF16_FORCE_EXPERT_READY`是唯一的前反向Dispatch就绪回退构建选项，默认`OFF`。wheel构建可设置同名环境变量，直接CMake构建可传`-DDEEPEP_BF16_FORCE_EXPERT_READY=ON/OFF`；构建系统向Host和Device一致传入C++值`0/1`。
+
+| 构建值 | 前向 | 反向 |
+| --- | --- | --- |
+| `OFF`（默认） | 保留下文M192／Ready384与静态producer元数据策略 | 保留下文saved模式的256行进度及逐专家回退 |
+| `ON` | 关闭tile-ready和配套元数据，消费既有完整专家Dispatch完成flag | Host与Device均固定`splitExperts=0`，不分配行进度后缀、不准备配套元数据，消费既有完整专家完成flag |
+
+`ON`优先于`MEGAMOE_BF16_BWD_DISPATCH_SPLIT_EXPERTS`，该环境变量不能重新开启细分。默认`OFF`时才使用原专家数选择及显式排障覆盖。整专家回退保留必要同步、DMA搬运、GMM1/GMM2计算及保存模式，也不控制SwiGLU的UB／GM交接选择；`DEEPEP_BF16_SWIGLU_DECOUPLE`仍保留`0/1/2`且设备默认`2`。
+
+更改选项后必须完整重建、重装同一次构建的Host/Device wheel；所有EP rank必须使用同一构建。SO名称、公开接口及saved-state布局不变。不要只替换设备SO，也不要在各rank混用默认构建和整专家构建。以下细分说明均针对默认`OFF`。
+
 ## 前向
 
 新路径对**所有符合条件的非空专家**分别启用细分，不再只选首专家。正常形状要求每卡专家数≤7、`M × TopK ≥ 每卡专家数 × 768`，该专家接收容量截断后的实际行数≥768。none、bf16、mxfp8保存模式共用此选择，SwiGLU解耦的hidden阈值是另一套独立策略。
@@ -35,7 +48,11 @@ shape不满足候选条件：
 
 正常使用不用新增参数。排障可用`MEGAMOE_BF16_BWD_DISPATCH_SPLIT_EXPERTS=0/1/.../all`选择前k个非空专家。默认每卡专家数≤7时为all、≥8时为0；该专家数边界复用前向常量，但实际行数门槛仍各自保留。显式参数是排障覆盖，可在≥8专家时强制all；再逐专家应用单M保护。none始终强制按0处理。
 
-前向仍为M192／Ready384、自适应N条带，反向细分仍为M128／256行producer进度、固定N3和跨组尾块后置，反向整专家仍为3_1。此次只改Host默认选择，不修改kernel算法、发布协议、舍入、同步或原workspace偏移。≥8专家仅不追加细分控制区。
+默认前向为M192／Ready384、自适应N条带，反向细分为M128／256行producer进度、固定N3和跨组尾块后置，反向整专家为3_1。专家数边界及统一整专家回退不改梯度数学、舍入或既有workspace前缀偏移。≥8专家默认以及强制整专家构建均不追加细分控制区。
+
+## 诊断预留区
+
+saved-state中原来的`256 × int32`阶段码区域现仅保留为1KiB reserved空间，不再写阶段码或在Host逐次清零，以固定后续Gate/Up、scale和clipping mask偏移。它与上述真正用于等待数据行到达的`BackwardDispatchProgressLayout`不是同一块内存；真实行进度发布和等待仍由当前就绪策略控制，不能作为诊断残留删除。
 
 ## 支持边界
 

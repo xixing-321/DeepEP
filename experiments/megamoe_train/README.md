@@ -47,8 +47,24 @@ The training option defaults to OFF. It is independent of
 `DEEPEP_BUILD_MEGAMOE` and `DEEPEP_BUILD_EP_GMM_FUSED`. Use a wheel, not an editable
 installation. The root lock file selects CATLASS and SHMEM; training does not
 embed another SHMEM or load the inference kernel SO. No CATCCOS is required.
+
+`DEEPEP_BF16_FORCE_EXPERT_READY` is the single forward/backward dispatch fallback
+build option. It accepts `ON` or `OFF` as an environment variable in the wheel
+build, or as a CMake option (`-DDEEPEP_BF16_FORCE_EXPERT_READY=ON`). The default is
+`OFF`, preserving M192/Ready384 forward dispatch and the saved-mode backward
+row-ready policy. `ON` makes both directions wait for complete-expert dispatch:
+forward disables tile-ready metadata and backward uses `splitExperts=0`.
+The build supplies the same C++ value (`0` or `1`) to Host and Device.
+The forced build takes precedence over the runtime
+`MEGAMOE_BF16_BWD_DISPATCH_SPLIT_EXPERTS` override; changing that variable cannot
+re-enable backward splitting. SwiGLU selection and saved formats are independent
+of this option. For example, set `export DEEPEP_BF16_FORCE_EXPERT_READY=ON` before
+the wheel build above to build the fallback.
+
 Rebuild and reinstall the complete wheel after changing Host or device sources;
 the Host extension and device library must come from the same build.
+All EP ranks must use the same build and readiness option. The fallback does not
+rename the Python API, Host extension or `libdeepep_megamoe_train_bf16.so`.
 Set runtime SDK library paths to the same SHMEM/CANN used for the wheel.
 The installed `deep_ep/_build_info.json` records the actual build inputs.
 Avoid empty entries (including a trailing colon) in `PYTHONPATH`: they add the
@@ -122,6 +138,11 @@ semantics. MXFP8 here describes saved activations; matrix computation remains
 BF16. Default GMM1 scheduling is adaptive-auto, SwiGLU decoupling is auto, and
 backward dispatch splitting follows the source's local-expert cutoff (<=7).
 See [dispatch policy](docs/BF16_DISPATCH_READY_DEFAULTS.md).
+
+The saved-state layout retains a reserved 1 KiB region so later Gate/Up, scale
+and clipping-mask offsets stay unchanged. Backward no longer writes diagnostic
+phase markers there, and Host no longer clears that region per backward. This
+reserved space is separate from the live backward dispatch row-ready counters.
 
 **Known issue retained:** the EP2/M65/H7168/F4096/E2/TopK4 BF16 intermediate
 `ptrDX` check has a small number of original-threshold failures, reproduced on
