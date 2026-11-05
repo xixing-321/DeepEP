@@ -30,6 +30,16 @@ class RunnerConfiguration(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self.runner.parse_args(["0,1", "--topk-weight-values", "full-precision"])
 
+    def test_ffn_schema_accepts_the_original_gmm_n_command(self):
+        modern = self.runner.parse_args(["0,1", "--ffn", "2048"])
+        legacy = self.runner.parse_args(["0,1", "--gmm-n", "4096"])
+        self.assertEqual(modern.ffn, legacy.ffn)
+        self.assertFalse(hasattr(legacy, "gmm_n"))
+        with self.assertRaises(SystemExit):
+            self.runner.parse_args(["0,1", "--ffn", "2048", "--gmm-n", "4096"])
+        with self.assertRaises(SystemExit):
+            self.runner.parse_args(["0,1", "--gmm-n", "513"])
+
     def test_suites_preserve_models_and_cover_each_weight_save_clip_combination(self):
         model = self.runner.suite_cases(self.runner.parse_args(["0,1", "--suite", "priority"]))
         self.assertEqual(
@@ -204,6 +214,47 @@ class ReferenceContract(unittest.TestCase):
         self.assertFalse(torch.equal(result["dtopk_weights"], result["dtopk_weights"].bfloat16().float()))
         self.assertEqual(result["y"].item(), 0)
         self.assertEqual(result["dx"].item(), 0)
+
+    def test_performance_baseline_keeps_fp32_p_without_promoting_gmm_inputs(self):
+        from types import SimpleNamespace
+
+        import test_mega_moe as runner
+
+        self.enterContext(patch.object(runner, "exchanged_rows", side_effect=lambda group, value, recv, send: value))
+        for dtype in (torch.bfloat16, torch.float32):
+            with self.subTest(dtype=dtype):
+                inputs = self.inputs(1.0)
+                inputs["p"] = torch.tensor([[1.0038]], dtype=dtype)
+                x, p, w1, w2 = (inputs[name].clone().requires_grad_() for name in ("x", "p", "w1", "w2"))
+                plan = SimpleNamespace(
+                    counts=torch.tensor([1]),
+                    local_experts=1,
+                    group=None,
+                    tokens=1,
+                    topk=1,
+                    hidden=1,
+                    route_row=torch.tensor([0]),
+                    order=torch.tensor([0]),
+                    input_splits=[1],
+                    output_splits=[1],
+                    received_sizes=[1],
+                    return_sizes=[1],
+                    sort_index=[0],
+                    restore_index=[0],
+                    weight1=w1.detach().transpose(1, 2),
+                    weight2=w2.detach().transpose(1, 2),
+                    swiglu_limit=0.0,
+                    recompute=False,
+                )
+                # The real chain uses the mocked GEMMs from setUp, whose
+                # assertions reject FP32 operands paired with BF16 matrices.
+                y = runner.baseline_chain().apply(x, p, w1, w2, plan)
+                y.backward(inputs["dy"])
+                self.assertEqual(y.dtype, torch.bfloat16)
+                self.assertEqual(p.grad.dtype, dtype)
+                self.assertTrue(bool(torch.isfinite(p.grad).all()))
+                if dtype == torch.float32:
+                    self.assertFalse(torch.equal(p.grad, p.grad.bfloat16().float()))
 
     def test_generated_probability_variants_share_all_other_inputs(self):
         from test_mega_moe import make_inputs, parse_args

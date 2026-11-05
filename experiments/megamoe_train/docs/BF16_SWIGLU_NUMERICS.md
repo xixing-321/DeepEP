@@ -129,7 +129,7 @@ clipping 在 FP32 中进行，掩码依原始 Gate/Up 判断，边界值保留�
 所有已有保存模式；dtype 套件覆盖各保存模式及 clipping 配置，清单本身不构成设备通过结论。
 CPU FP64 真值直接将公共 p 提升到 FP64，不做额外 BF16 舍入；ATK 门限不变，旧
 BigOp 结果保留原版本标识。MXFP8 诊断重放采用同一份 MegaMoE 契约；测试
-范围和具名历史结果见 [TEST_PLAN.md](../tests/bf16/TEST_PLAN.md)。
+范围见 [TEST_SPEC.md](../tests/bf16/TEST_SPEC.md)，具名历史结果见[模块 README](../README.md)。
 
 ## 源码入口与回归例
 
