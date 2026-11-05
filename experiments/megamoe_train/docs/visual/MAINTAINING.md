@@ -2,6 +2,10 @@
 
 本目录直接在 `feat/megamoe-train-bf16` 分支随 MegaMoE BF16 训练代码一起维护。图中的文字、节点和连线描述源码行为；生成工具负责更新源码片段、位置与网页。默认阅读场景为 `save=bf16`、clipping 关闭。
 
+生成产物对应的精确源码提交见 [README 的源码快照](README.md)及 `source-map.json` 的
+`sourceCommit`。构建工具从 `SOURCE_REF` 指定的真实 Git 提交读取源码，未指定时解析当前
+Git 提交；写入产物的是完整 SHA，不是字面量 `HEAD`，也不代表未提交工作区的内容。
+
 ## 本地修改与检查
 
 在仓库根目录进入本目录，使用 Node.js 22 或更新版本：
