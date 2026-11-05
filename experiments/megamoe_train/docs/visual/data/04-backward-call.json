@@ -55,9 +55,9 @@
         },
         {
           "path": "experiments/megamoe_train/tests/bf16/test_mega_moe.py",
-          "anchor": "        y.backward(dy)",
-          "before": 3,
-          "after": 2
+          "anchor": "    with phase(\"fused_forward_backward\"):",
+          "before": 1,
+          "after": 9
         }
       ],
       "formula": "y, counts = op(...)\ny.backward(dy)\n\nautograd → Function.backward(ctx, grad_y=dy)\n         → op._executor.backward(...)"
