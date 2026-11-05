@@ -32,7 +32,7 @@ code --install-extension .artifacts/megamoe-train-source-guide-0.2.0.vsix
 
 三个阅读场景由 `data/learning-case.json` 与 `tools/learning-scenes.mjs` 生成。默认 EP8、每源 M4096、TopK6、每 rank 4 个专家，流水总览固定看 rank0，按专家展示。`assets/full-pipeline.js` 维护前反向总览，`assets/gmm2-pipeline.js` 维护独立双槽练习。输入规则、聚合计数和所选 token 的数据共同驱动路由图、保存桥和流水示意；修改案例后同时检查路由守恒和数值结果。时间轴 tick 表示可调的教学耗时，实测时间及性能记录单独维护。
 
-H、dH 和 dp 乘积保持 FP32；Hp、dGate/dUp 写出时转回 BF16，Y、dX、dp 在 FP32 归约后最终舍入。修改数值边界时，同时更新 L5 节点、教学计算和表格；流水详情从 L5 读取同一份公式。
+H、dH 和 dp 乘积保持 FP32；Hp、dGate/dUp 写出时转回 BF16，Y、dX 在 FP32 归约后最终舍入 BF16。dp 的最终类型与输入 p 一致：BF16 舍入、FP32 保留；固定教学数值仍使用 BF16 p。修改数值边界时，同时更新 L5 节点、教学计算和表格；流水详情从 L5 读取同一份公式。
 
 [数值契约](../BF16_SWIGLU_NUMERICS.md)也用于 NPU BigOp 与契约参考，CPU FP64 真值独立计算。修改测试参考时，核对导览中的公式和源码引用；原始设备报告与临时验证脚本继续存放在仓库外。
 

@@ -11,7 +11,7 @@ CPU FP64 mathematical truth is implemented independently in cpu_reference.py.
 import torch
 
 
-BIGOP_REFERENCE_VERSION = "fp32-boundaries-v2"
+BIGOP_REFERENCE_VERSION = "fp32-boundaries-v3-topk-dtype"
 
 
 def _grouped_matmul(input_tokens, weight, tokens_per_expert):
@@ -131,6 +131,7 @@ def run_baseline(inputs, device, expert_start, save_mode="bf16", swiglu_limit=0.
         "routes": [],
         "counts": counts,
         "reference": reference,
+        "topk_weight_dtype": inputs["p"].dtype,
     }
     if trace is not None:
         trace.update(rows=rows.clone(), slots=slots.clone(), counts=counts.clone())
@@ -144,7 +145,8 @@ def run_baseline(inputs, device, expert_start, save_mode="bf16", swiglu_limit=0.
     def tensor(value):
         return value.to(device=device, dtype=torch.bfloat16).contiguous()
 
-    x, p, dy = tensor(inputs["x"][rows]), tensor(inputs["p"][rows, slots, None]), tensor(inputs["dy"][rows])
+    x, dy = tensor(inputs["x"][rows]), tensor(inputs["dy"][rows])
+    p = inputs["p"][rows, slots, None].to(device=device).contiguous()
     weight1 = tensor(inputs["w1"].transpose(1, 2))
     weight2 = tensor(inputs["w2"].transpose(1, 2))
     forward_z = _grouped_matmul(x, weight1, counts)
@@ -159,7 +161,7 @@ def run_baseline(inputs, device, expert_start, save_mode="bf16", swiglu_limit=0.
     hp = (h * p.float()).to(z.dtype)
     dhp = _grouped_matmul(dy, weight2.transpose(1, 2).contiguous(), counts)
     dw2 = _grouped_wgrad(hp, dy, counts).reshape_as(weight2).transpose(1, 2).contiguous()
-    dp = (dhp.float() * h).sum(dim=-1).to(dhp.dtype)
+    dp = (dhp.float() * h).sum(dim=-1).to(p.dtype)
     grad_swiglu = dhp.float() * p.float()
     dz = _swiglu_backward_fp32(grad_swiglu, z, swiglu_limit, raw)
     dx = _grouped_matmul(dz, weight1.transpose(1, 2).contiguous(), counts)
@@ -193,17 +195,19 @@ def run_baseline(inputs, device, expert_start, save_mode="bf16", swiglu_limit=0.
 
 
 @torch.no_grad()
-def unpermute_routes(buffer, ids, device, *, reference="megamoe"):
+def unpermute_routes(buffer, ids, device, *, reference="megamoe", topk_weight_dtype=torch.bfloat16):
     """Combine transported routes using the selected numerical contract.
 
-    buffer=[M,TopK,2H+1] contains exact BF16 y/dx/dp values carried as FP32.
+    buffer=[M,TopK,2H+1] carries BF16 y/dx and input-dtype dp exactly as FP32.
     Both reference roles combine y and dx in TopK order in FP32, then cast once.
     """
     if reference not in ("megamoe", "bigop"):
         raise ValueError(f"Unknown NPU reference: {reference}")
     m, topk = ids.shape
     hidden = (buffer.shape[-1] - 1) // 2
-    result = {"dtopk_weights": buffer[:, :, -1].to(torch.bfloat16).clone()}
+    if topk_weight_dtype not in (torch.bfloat16, torch.float32):
+        raise ValueError("Route-weight gradients require BF16 or FP32")
+    result = {"dtopk_weights": buffer[:, :, -1].to(topk_weight_dtype).clone()}
     routes = buffer[:, :, : 2 * hidden].to(device=device, dtype=torch.bfloat16)
     y = torch.zeros((m, hidden), dtype=torch.float32, device=device)
     dx = torch.zeros((m, hidden), dtype=torch.float32, device=device)

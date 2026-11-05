@@ -41,7 +41,7 @@ op.close()
 | `timeout` | 整数，1..3600 秒 | SHMEM 初始化和控制操作超时；group 自身超时另由调用方设置 |
 | `x` | BF16 `[M,H]` | 当前源 rank 的输入 |
 | `topk_ids` | int32 `[M,T]` | 全局专家编号，按 `ep_rank * E + local_expert` 解释 |
-| `topk_weights` | BF16 `[M,T]` | 对应路由权重，可参与求导 |
+| `topk_weights` | BF16 或 FP32 `[M,T]` | 对应路由权重，可参与求导；所有 EP rank 在同次调用中使用相同 dtype |
 | `w1` | BF16 `[E,2F,H]` | 当前 rank 专家的第一层权重 |
 | `w2` | BF16 `[E,H,F]` | 当前 rank 专家的第二层权重 |
 | `max_recv_tokens` | 正整数，不超过 int32 上界 | 当前 rank 所有本地专家合计接收的路由行容量 |
@@ -49,6 +49,10 @@ op.close()
 | `save_gmm1_output` | `bf16 / none / mxfp8 / auto` | 选择供反向使用的 Gate/Up 保存形式 |
 | `y` | BF16 `[M,H]` | combine 回当前源 rank 的输出 |
 | `counts` | int32 `[E]` | 本地各专家接收的路由行数，不参与求导 |
+
+每次前向和反向都在启动原生算子前集体检查调用阶段与路由权重 dtype。
+同一实例可以按各 rank 一致的顺序切换 BF16／FP32，排队的计算图保留各自 p 的 dtype。
+此检查包含一次 Host 协调；端到端耗时需包含这项开销。
 
 Tensor 输入必须连续并位于构造时选定的同一 NPU。也支持权重布局 `w1=[E,H,2F]`、`w2=[E,F,H]`；Host 按形状识别，返回的权重梯度保持输入布局。
 
@@ -109,7 +113,7 @@ topk_weights, w1, w2, counts, saved_state, dispatch_output
 | `op` | `None` |
 | `x` | `dx` |
 | `topk_ids` | `None` |
-| `topk_weights` | `dtopk_weights` |
+| `topk_weights` | `dtopk_weights`，与输入路由权重 dtype 相同 |
 | `w1` / `w2` | `dw1` / `dw2` |
 | `max_recv_tokens` / `swiglu_limit` / `mode` | 各自为 `None` |
 
@@ -122,7 +126,7 @@ C++ 计算完整四类梯度，没有根据单个输入的 `requires_grad` 选�
 | `mxfp8` | 保存 MXFP8 Gate/Up；开启 clipping 时还保存三个位平面 |
 | `auto` | 关闭 clipping 时选择 MXFP8，开启时选择 BF16 |
 
-所有模式都保留反向必需的路由元数据和 dispatch payload；`none` 不代表删除全部前向状态。MXFP8 是保存激活的格式，矩阵计算仍使用 BF16。Host 在前后向按同一规则解析规范化的 float32 limit；具体舍入、clip mask 和梯度语义见[数值说明](BF16_SWIGLU_NUMERICS.md)。
+所有模式都保留反向必需的路由元数据和 dispatch payload；`none` 不代表删除全部前向状态。p 保持输入 BF16 或 FP32 类型，与 Gate/Up 保存模式独立；MXFP8 不量化 p。MXFP8 是保存激活的格式，矩阵计算仍使用 BF16。Host 在前后向按同一规则解析规范化的 float32 limit；具体舍入、clip mask 和梯度语义见[数值说明](BF16_SWIGLU_NUMERICS.md)。
 
 ## Session 所有权与实际通信
 
@@ -178,7 +182,7 @@ Python GC 不执行集体 SHMEM 清理，不能代替显式 `close()`。发生�
 | 验证入口 | 能检查的内容 |
 | --- | --- |
 | [test_mega_moe.py](../tests/bf16/test_mega_moe.py) | 单入口前后向精度和性能；固定输入、全部四项梯度和 counts |
-| [cpu_reference.py](../tests/bf16/cpu_reference.py) / [npu_baseline.py](../tests/bf16/npu_baseline.py) | 独立 Torch CPU FP64 真值；`fp32-boundaries-v2` BigOp 与契约参考共用 FP32 中间计算、BF16 张量边界 |
+| [cpu_reference.py](../tests/bf16/cpu_reference.py) / [npu_baseline.py](../tests/bf16/npu_baseline.py) | 独立 Torch CPU FP64 真值；`fp32-boundaries-v3-topk-dtype` BigOp 与契约参考共用 FP32 中间计算、BF16 矩阵边界，p/dp 保持输入 BF16 或 FP32 类型 |
 | [atk_compare.py](../tests/bf16/atk_compare.py) / [cases.json](../tests/bf16/cases.json) | ATK 双标杆判定及用例清单；典型尺寸从 M512 开始 |
 | [bf16_lifecycle.py](../tests/integration/bf16_lifecycle.py) | ProcessGroup/gloo协调下的重复调用、排队前向、流约束、布局和关闭重建；重复结果对照不替代独立golden |
 

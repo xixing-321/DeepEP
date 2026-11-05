@@ -19,7 +19,7 @@ from deep_ep_experimental.megamoe_train import MegaMoeBF16Train
 def expect_error(action, message):
     try:
         action()
-    except RuntimeError as error:
+    except (RuntimeError, ValueError) as error:
         assert message in str(error), error
     else:
         raise AssertionError(f"Expected rejection: {message}")
@@ -43,25 +43,36 @@ def main():
     ]
     dy = (torch.randn(m, h) * 0.1).to(device=device, dtype=torch.bfloat16)
     capacity = 64 << 20
-    modes = [("bf16", 0.0), ("none", 0.05), ("mxfp8", 0.05), ("auto", 0.0)]
+    modes = [
+        (mode, limit, dtype)
+        for mode, limit in (("bf16", 0.0), ("none", 0.05), ("mxfp8", 0.05), ("auto", 0.0))
+        for dtype in (torch.bfloat16, torch.float32)
+    ]
 
-    def forward(op, mode, limit):
-        values = [value.clone().requires_grad_() for value in templates]
+    def forward(op, mode, limit, dtype=torch.bfloat16):
+        values = [value.clone() for value in templates]
+        values[1] = values[1].to(dtype)
+        values = [value.requires_grad_() for value in values]
         x, weights, w1, w2 = values
         y, counts = op(x, ids, weights, w1, w2, m * size * e, save_gmm1_output=mode, swiglu_limit=limit)
         return values, y, counts
 
     def capture(values, y, counts):
+        assert values[1].grad.dtype == values[1].dtype
         return [y.detach().cpu(), counts.cpu(), *(value.grad.cpu() for value in values)]
 
     op = MegaMoeBF16Train(group, capacity)
     expect_error(lambda: MegaMoeBF16Train(group, capacity), "already owns")
+    expect_error(
+        lambda: forward(op, "bf16", 0.0, torch.float32 if rank % 2 else torch.bfloat16),
+        "EP ranks",
+    )
     sequential = []
-    for mode, limit in modes:
-        values, y, counts = forward(op, mode, limit)
+    for mode, limit, dtype in modes:
+        values, y, counts = forward(op, mode, limit, dtype)
         (y * dy).sum().backward()
         sequential.append(capture(values, y, counts))
-    pending = [forward(op, mode, limit) for mode, limit in modes]
+    pending = [forward(op, mode, limit, dtype) for mode, limit, dtype in modes]
     with torch.npu.stream(torch.npu.Stream()):
         expect_error(lambda: forward(op, "bf16", 0.0), "construction stream")
     for index in reversed(range(len(pending))):

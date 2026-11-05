@@ -47,7 +47,7 @@ namespace deepep::megamoe_train::ops::detail {
 MegaMoeHostTiling MakeMegaMoeHostTiling(MegaMoeTilingData& tiling, int64_t m, int64_t k, int64_t n, int64_t topk,
                                         int64_t world_size, int64_t expert_per_rank, int64_t max_recv_tokens, int rank,
                                         bool bf16, double swiglu_limit, bool bf16_direct_dispatch,
-                                        const std::string& save_gmm1_output)
+                                        const std::string& save_gmm1_output, uint32_t topk_weight_type)
 {
     auto* platform = platform_ascendc::PlatformAscendCManager::GetInstance();
     const uint32_t aic_num = platform->GetCoreNumAic();
@@ -106,6 +106,8 @@ MegaMoeHostTiling MakeMegaMoeHostTiling(MegaMoeTilingData& tiling, int64_t m, in
     TORCH_CHECK(ok, "failed to generate MegaMoe BF16 tiling data");
     tiling.swigluLimit = normalizedSwigluLimit;
     tiling.savedGateUpMode = saveMode;
+    TORCH_CHECK(topk_weight_type <= kTopkWeightFp32, "unsupported TopK weight type");
+    tiling.topkWeightType = topk_weight_type;
     tiling.compactTokenCountExchange =
         ResolveCompactTokenCountExchange(bf16_direct_dispatch, world_size, expert_per_rank) ? 1U : 0U;
     const auto workspace_info = optiling::CalcWorkspaceSize(tiling);

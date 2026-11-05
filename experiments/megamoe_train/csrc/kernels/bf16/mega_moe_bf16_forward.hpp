@@ -10,6 +10,7 @@
 #define MEGA_MOE_BF16_FORWARD_HPP
 
 #include "kernel_operator.h"
+#include <type_traits>
 #include "kernel_tiling/kernel_tiling.h"
 #include "op_kernel/mc2_kernel_utils.h"
 #include "kernel_operator_list_tensor_intf.h"
@@ -30,10 +31,14 @@ using BlockOffset = AscendC::Shape<int64_t, int64_t, int64_t, int64_t, int64_t, 
                                    int64_t, int64_t, int64_t>;
 
 constexpr uint32_t TOPK_WEIGHT_COPY_BUFFER_BYTES = MegaMoeBF16Training::ForwardDispatchUbLayout::kTopkWeightBytes;
-constexpr uint32_t TOPK_WEIGHT_COPY_ELEMENTS = TOPK_WEIGHT_COPY_BUFFER_BYTES / sizeof(bfloat16_t);
 
+template <typename TopkWeightT = bfloat16_t>
 class MegaMoeBF16Forward {
 public:
+    static_assert(std::is_same_v<TopkWeightT, bfloat16_t> || std::is_same_v<TopkWeightT, float>,
+                  "TopK weights must be BF16 or FP32");
+    using TopkWeightBitsT = std::conditional_t<sizeof(TopkWeightT) == sizeof(uint16_t), uint16_t, uint32_t>;
+    static constexpr uint32_t TOPK_WEIGHT_COPY_ELEMENTS = TOPK_WEIGHT_COPY_BUFFER_BYTES / sizeof(TopkWeightT);
     using QuantOutType = bfloat16_t;
     using QuantScaleOutType = float;
     __aicore__ inline MegaMoeBF16Forward(){};
@@ -74,7 +79,7 @@ private:
                                                 GlobalTensor<QuantScaleOutType> dstScale,
                                                 GlobalTensor<QuantOutType> src, int32_t rows, int32_t hiddenSize,
                                                 int32_t& pingpongId);
-    __aicore__ inline void CopyGMToGMTopkWeights(GlobalTensor<bfloat16_t> dst, GlobalTensor<bfloat16_t> src,
+    __aicore__ inline void CopyGMToGMTopkWeights(GlobalTensor<TopkWeightT> dst, GlobalTensor<TopkWeightT> src,
                                                  int32_t rows);
 
     __aicore__ inline void TilingByCore(int32_t totalLen, int32_t& coreLen, int32_t& coreOffset,
@@ -172,17 +177,18 @@ private:
 
     using L1TileShape = tla::Shape<tla::Int<256>, tla::Int<256>, tla::Int<256>>;
     using BlockEpilogue =
-        MegaMoeBF16Impl::BlockEpilogueSwigluForwardBF16<MegaMoeBF16ForwardCatlassImpl::Gmm1L1TileShape, true>;
+        MegaMoeBF16Impl::BlockEpilogueSwigluForwardBF16<MegaMoeBF16ForwardCatlassImpl::Gmm1L1TileShape, true,
+                                                        TopkWeightT>;
     BlockEpilogue epilogueOp_;  // GMMswiglu调用
 };
 
-__aicore__ inline void MegaMoeBF16Forward::Init(GM_ADDR context, GM_ADDR x, GM_ADDR topkIds, GM_ADDR topkWeights,
-                                                GM_ADDR weight1, GM_ADDR weight2, GM_ADDR xActiveMask,
-                                                GM_ADDR weightScales1, GM_ADDR weightScales2, GM_ADDR scales,
-                                                GM_ADDR yOut, GM_ADDR expertTokenNumsOut, GM_ADDR permutedInputOut,
-                                                GM_ADDR actualRecvTokensOut, GM_ADDR savedMetaOut, GM_ADDR workspaceGM,
-                                                MegaMoeTilingData* tilingData, GM_ADDR transientWorkspaceGM,
-                                                GM_ADDR dispatchOutputGM, bool allowCompactTokenCountExchange)
+template <typename TopkWeightT>
+__aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::Init(
+    GM_ADDR context, GM_ADDR x, GM_ADDR topkIds, GM_ADDR topkWeights, GM_ADDR weight1, GM_ADDR weight2,
+    GM_ADDR xActiveMask, GM_ADDR weightScales1, GM_ADDR weightScales2, GM_ADDR scales, GM_ADDR yOut,
+    GM_ADDR expertTokenNumsOut, GM_ADDR permutedInputOut, GM_ADDR actualRecvTokensOut, GM_ADDR savedMetaOut,
+    GM_ADDR workspaceGM, MegaMoeTilingData* tilingData, GM_ADDR transientWorkspaceGM, GM_ADDR dispatchOutputGM,
+    bool allowCompactTokenCountExchange)
 {
     m_ = tilingData->m;
     k_ = tilingData->k;
@@ -244,7 +250,8 @@ __aicore__ inline void MegaMoeBF16Forward::Init(GM_ADDR context, GM_ADDR x, GM_A
         params_.peermemInfo.ptrTokenPerExpert + TokenPerExpertLayout(rankId_, 0, 0) * sizeof(int32_t);
 }
 
-__aicore__ inline void MegaMoeBF16Forward::EnableDispatchTileReady(GM_ADDR transientWorkspaceGM)
+template <typename TopkWeightT>
+__aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::EnableDispatchTileReady(GM_ADDR transientWorkspaceGM)
 {
     const MegaMoeBF16Training::ForwardDispatchTileReadyLayout layout(params_.tilingData->n, expertPerRank_,
                                                                      maxOutputSize_);
@@ -265,7 +272,8 @@ __aicore__ inline void MegaMoeBF16Forward::EnableDispatchTileReady(GM_ADDR trans
                                                 m_, topK_, expertPerRank_);
 }
 
-__aicore__ inline void MegaMoeBF16Forward::FirstBuffInit(TPipe* tPipe)
+template <typename TopkWeightT>
+__aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::FirstBuffInit(TPipe* tPipe)
 {
     // 对CrossRankSync、Dispatch、GetCumSum过程涉及到的LocalTensor初始化管理
     const MegaMoeBF16Training::ForwardDispatchUbLayout layout(worldSize_, expertPerRank_, k_, dispatchRows_);
@@ -278,7 +286,8 @@ __aicore__ inline void MegaMoeBF16Forward::FirstBuffInit(TPipe* tPipe)
     tPipe->InitBuffer(ResetFlagBuf_, layout.resetFlagBytes);
 }
 
-__aicore__ inline void MegaMoeBF16Forward::ResetWorkSpaceFlagList()
+template <typename TopkWeightT>
+__aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::ResetWorkSpaceFlagList()
 {
     // Host leaves forward-transient storage uninitialized. Reset every
     // control flag here on each invocation before the pre-Dispatch SyncAll.
@@ -314,7 +323,8 @@ __aicore__ inline void MegaMoeBF16Forward::ResetWorkSpaceFlagList()
     }
 }
 
-__aicore__ inline void MegaMoeBF16Forward::GetCumsumForMMAIV()
+template <typename TopkWeightT>
+__aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::GetCumsumForMMAIV()
 {
     int32_t expertPerRankAligned = (expertPerRank_ + 8 - 1) / 8 * 8;
     LocalTensor<int32_t> tmpBuffer1 = CumsumBuf_.Get<int32_t>();
@@ -412,7 +422,8 @@ __aicore__ inline void MegaMoeBF16Forward::GetCumsumForMMAIV()
                 {static_cast<uint16_t>(worldSize_), static_cast<uint16_t>((expertPerRank_) * sizeof(int32_t)), 0, 0});
 }
 
-__aicore__ inline void MegaMoeBF16Forward::ExpertTokenNumCopyOut()
+template <typename TopkWeightT>
+__aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::ExpertTokenNumCopyOut()
 {
     int32_t copyNum = Ops::Base::CeilAlign(static_cast<uint32_t>(expertPerRank_), static_cast<uint32_t>(ALIGN_32));
     LocalTensor<int32_t> tmpCopyBuffer = CrossRankSyncBuf_.Get<int32_t>();
@@ -422,7 +433,8 @@ __aicore__ inline void MegaMoeBF16Forward::ExpertTokenNumCopyOut()
                 DataCopyParams{1, static_cast<uint16_t>(expertPerRank_ * sizeof(int32_t)), 0, 0});
 }
 
-__aicore__ inline void MegaMoeBF16Forward::SaveForwardState()
+template <typename TopkWeightT>
+__aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::SaveForwardState()
 {
     if constexpr (g_coreType == AIC) {
         return;
@@ -483,7 +495,8 @@ __aicore__ inline void MegaMoeBF16Forward::SaveForwardState()
                                        blockIdx_, blockNum_, copyBuffer);
 }
 
-__aicore__ inline void MegaMoeBF16Forward::EndSync()
+template <typename TopkWeightT>
+__aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::EndSync()
 {
     if (gmm1VecSetSyncCom_ == 0) {
         return;
@@ -493,7 +506,8 @@ __aicore__ inline void MegaMoeBF16Forward::EndSync()
     }
 }
 
-__aicore__ inline void MegaMoeBF16Forward::EndGMM2Sync()
+template <typename TopkWeightT>
+__aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::EndGMM2Sync()
 {
     if constexpr (g_coreType == AIV) {
         return;
@@ -508,7 +522,8 @@ __aicore__ inline void MegaMoeBF16Forward::EndGMM2Sync()
     }
 }
 
-__aicore__ inline void MegaMoeBF16Forward::CrossRankSyncCntPerExpert()
+template <typename TopkWeightT>
+__aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::CrossRankSyncCntPerExpert()
 {
     if constexpr (g_coreType == AIC) {
         return;
@@ -588,7 +603,8 @@ __aicore__ inline void MegaMoeBF16Forward::CrossRankSyncCntPerExpert()
     }
 }
 
-__aicore__ inline void MegaMoeBF16Forward::CrossRankSyncCntPerExpertCompact()
+template <typename TopkWeightT>
+__aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::CrossRankSyncCntPerExpertCompact()
 {
     using namespace MegaMoeBF16Training;
     constexpr uint32_t packetElements = kCompactTokenCountPacketBytes / sizeof(int32_t);
@@ -683,7 +699,8 @@ __aicore__ inline void MegaMoeBF16Forward::CrossRankSyncCntPerExpertCompact()
     }
 }
 
-__aicore__ inline void MegaMoeBF16Forward::GatherRoutedTopkWeights()
+template <typename TopkWeightT>
+__aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::GatherRoutedTopkWeights()
 {
     if constexpr (g_coreType == AscendC::AIC) {
         return;
@@ -705,11 +722,12 @@ __aicore__ inline void MegaMoeBF16Forward::GatherRoutedTopkWeights()
     // GM -> UB -> GM visibility model used by the normal Dispatch payload.
     GlobalTensor<int32_t> expandedRowIdx;
     expandedRowIdx.SetGlobalBuffer(reinterpret_cast<__gm__ int32_t*>(params_.workspaceInfo.expandedRowIdx));
-    GlobalTensor<bfloat16_t> topkWeights;
-    topkWeights.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(params_.probsGmAddr));
-    GlobalTensor<bfloat16_t> routedTopkWeights;
-    routedTopkWeights.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(params_.peermemInfo.ptrRoutedTopkWeights));
-    LocalTensor<bfloat16_t> buffer = TopkWeightCopyBuf_.Get<bfloat16_t>();
+    GlobalTensor<TopkWeightBitsT> topkWeights;
+    topkWeights.SetGlobalBuffer(reinterpret_cast<__gm__ TopkWeightBitsT*>(params_.probsGmAddr));
+    GlobalTensor<TopkWeightBitsT> routedTopkWeights;
+    routedTopkWeights.SetGlobalBuffer(
+        reinterpret_cast<__gm__ TopkWeightBitsT*>(params_.peermemInfo.ptrRoutedTopkWeights));
+    LocalTensor<TopkWeightBitsT> buffer = TopkWeightCopyBuf_.Get<TopkWeightBitsT>();
 
     const int64_t processCount = Ops::Base::CeilDiv(elements, static_cast<int64_t>(TOPK_WEIGHT_COPY_ELEMENTS));
     for (int64_t processIndex = 0; processIndex < processCount; ++processIndex) {
@@ -722,16 +740,18 @@ __aicore__ inline void MegaMoeBF16Forward::GatherRoutedTopkWeights()
             buffer.SetValue(index, topkWeights.GetValue(originalRoute));
         }
         SyncFunc<AscendC::HardEvent::S_MTE3>();
-        DataCopyExtParams copyParams{1U, static_cast<uint32_t>(chunkElements * sizeof(bfloat16_t)), 0U, 0U, 0U};
+        DataCopyExtParams copyParams{1U, static_cast<uint32_t>(chunkElements * sizeof(TopkWeightBitsT)), 0U, 0U, 0U};
         DataCopyPad(routedTopkWeights[indexBase + chunkOffset], buffer, copyParams);
         SyncFunc<AscendC::HardEvent::MTE3_S>();
     }
 }
 
-__aicore__ inline void MegaMoeBF16Forward::CopyGMToGMPerTokenV2(GlobalTensor<QuantOutType> dst,
-                                                                GlobalTensor<QuantScaleOutType> dstScale,
-                                                                GlobalTensor<QuantOutType> src, int32_t rows,
-                                                                int32_t hiddenSize, int32_t& pingpongId)
+template <typename TopkWeightT>
+__aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::CopyGMToGMPerTokenV2(GlobalTensor<QuantOutType> dst,
+                                                                             GlobalTensor<QuantScaleOutType> dstScale,
+                                                                             GlobalTensor<QuantOutType> src,
+                                                                             int32_t rows, int32_t hiddenSize,
+                                                                             int32_t& pingpongId)
 {
     (void)dstScale;
     constexpr int32_t BufferNum = 2;
@@ -757,18 +777,20 @@ __aicore__ inline void MegaMoeBF16Forward::CopyGMToGMPerTokenV2(GlobalTensor<Qua
     }
 }
 
-__aicore__ inline void MegaMoeBF16Forward::CopyGMToGMTopkWeights(GlobalTensor<bfloat16_t> dst,
-                                                                 GlobalTensor<bfloat16_t> src, int32_t rows)
+template <typename TopkWeightT>
+__aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::CopyGMToGMTopkWeights(GlobalTensor<TopkWeightT> dst,
+                                                                              GlobalTensor<TopkWeightT> src,
+                                                                              int32_t rows)
 {
-    LocalTensor<bfloat16_t> buffer = TopkWeightCopyBuf_.Get<bfloat16_t>();
+    LocalTensor<TopkWeightT> buffer = TopkWeightCopyBuf_.Get<TopkWeightT>();
     constexpr int32_t chunkElements = static_cast<int32_t>(TOPK_WEIGHT_COPY_ELEMENTS);
     const int32_t processCount = Ops::Base::CeilDiv(rows, chunkElements);
     for (int32_t processIndex = 0; processIndex < processCount; ++processIndex) {
         const int32_t offset = processIndex * chunkElements;
         const int32_t elements = offset + chunkElements > rows ? rows - offset : chunkElements;
-        const uint32_t bytes = static_cast<uint32_t>(elements * sizeof(bfloat16_t));
+        const uint32_t bytes = static_cast<uint32_t>(elements * sizeof(TopkWeightT));
         DataCopyExtParams copyParams{1U, bytes, 0U, 0U, 0U};
-        DataCopyPadExtParams<bfloat16_t> padParams{false, 0U, 0U, 0U};
+        DataCopyPadExtParams<TopkWeightT> padParams{false, 0U, 0U, 0U};
         WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID2);
         DataCopyPad(buffer, src[offset], copyParams, padParams);
         SetFlag<AscendC::HardEvent::MTE2_MTE3>(EVENT_ID2);
@@ -778,9 +800,11 @@ __aicore__ inline void MegaMoeBF16Forward::CopyGMToGMTopkWeights(GlobalTensor<bf
     }
 }
 
+template <typename TopkWeightT>
 template <bool TileReady, bool WaitForFullExpert>
-__aicore__ inline void MegaMoeBF16Forward::DispatchTokens(GMMAddrInfo& gmmAddrInfo, uint32_t expertIdx,
-                                                          GlobalTensor<QuantOutType> aGlobalTensor, bool useTileReady)
+__aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::DispatchTokens(GMMAddrInfo& gmmAddrInfo, uint32_t expertIdx,
+                                                                       GlobalTensor<QuantOutType> aGlobalTensor,
+                                                                       bool useTileReady)
 {
     int64_t widthA = Get<K_VALUE>(problemShape_);  // H 长度
     int64_t widthAScale = 0;
@@ -812,8 +836,8 @@ __aicore__ inline void MegaMoeBF16Forward::DispatchTokens(GMMAddrInfo& gmmAddrIn
             if (rowsPerCore > 0) {
                 GlobalTensor<QuantOutType> gmRemoteA;
                 GlobalTensor<QuantScaleOutType> aScaleGlobalTensor;
-                GlobalTensor<bfloat16_t> gmRemoteTopkWeights;
-                GlobalTensor<bfloat16_t> dispatchedTopkWeights;
+                GlobalTensor<TopkWeightT> gmRemoteTopkWeights;
+                GlobalTensor<TopkWeightT> dispatchedTopkWeights;
                 int64_t gmOffsetA = rowDstOffsetPerCore * widthA;
                 int64_t gmOffsetAScale = rowDstOffsetPerCore * widthAScale;
                 int64_t gmOffsetPeer = rowSrcOffsetPerCore * (widthA + widthAScale);
@@ -830,12 +854,12 @@ __aicore__ inline void MegaMoeBF16Forward::DispatchTokens(GMMAddrInfo& gmmAddrIn
                 const uint64_t routedWeightOffset =
                     params_.peermemInfo.ptrRoutedTopkWeights - params_.peermemInfo.ptrBase;
                 gmRemoteTopkWeights.SetGlobalBuffer(
-                    reinterpret_cast<__gm__ bfloat16_t*>(GetRankWinAddrWithOffset(dstRankIdx, routedWeightOffset)));
+                    reinterpret_cast<__gm__ TopkWeightT*>(GetRankWinAddrWithOffset(dstRankIdx, routedWeightOffset)));
                 // rowDstOffsetPerCore is relative to the current expert.
                 // Match gmmAddrInfo.aGlobal by applying the expert-row
                 // prefix before copying its dispatched route weights.
                 dispatchedTopkWeights.SetGlobalBuffer(
-                    reinterpret_cast<__gm__ bfloat16_t*>(params_.workspaceInfo.ptrDispatchedTopkWeights) +
+                    reinterpret_cast<__gm__ TopkWeightT*>(params_.workspaceInfo.ptrDispatchedTopkWeights) +
                     Get<IDX_M_OFFSET>(baseOffset_));
                 if (useTileReady) {
                     using ReadyLayout = MegaMoeBF16Training::ForwardDispatchTileReadyLayout;
@@ -881,7 +905,8 @@ __aicore__ inline void MegaMoeBF16Forward::DispatchTokens(GMMAddrInfo& gmmAddrIn
     WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID2);
 }
 
-__aicore__ inline bool MegaMoeBF16Forward::UpdateGroupParams(uint32_t expertIdx)
+template <typename TopkWeightT>
+__aicore__ inline bool MegaMoeBF16Forward<TopkWeightT>::UpdateGroupParams(uint32_t expertIdx)
 {
     // baseOffset_ is 0 when groupIdx = 0
     if (expertIdx != 0) {
@@ -926,7 +951,8 @@ __aicore__ inline bool MegaMoeBF16Forward::UpdateGroupParams(uint32_t expertIdx)
     return true;
 }
 
-__aicore__ inline void MegaMoeBF16Forward::UpdateGlobalBuffer(GMMAddrInfo& gmmAddrInfo, uint32_t gmmIndex)
+template <typename TopkWeightT>
+__aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::UpdateGlobalBuffer(GMMAddrInfo& gmmAddrInfo, uint32_t gmmIndex)
 {
     if (gmmIndex == 0) {
         gmmAddrInfo.aGlobal = params_.workspaceInfo.ptrA + Get<IDX_A_OFFSET>(baseOffset_) * sizeof(QuantOutType);
@@ -970,7 +996,8 @@ __aicore__ inline void MegaMoeBF16Forward::UpdateGlobalBuffer(GMMAddrInfo& gmmAd
     groupFlagListGm2_.SetGlobalBuffer(gmmAddrInfo.groupFlagList2);
 }
 
-__aicore__ inline void MegaMoeBF16Forward::ResetTokenPerExpert()
+template <typename TopkWeightT>
+__aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::ResetTokenPerExpert()
 {
     if (aivCoreIdx_ != blockAivNum_ - 1) {
         return;
@@ -994,7 +1021,8 @@ __aicore__ inline void MegaMoeBF16Forward::ResetTokenPerExpert()
     SyncFunc<AscendC::HardEvent::MTE3_S>();
 }
 
-__aicore__ inline void MegaMoeBF16Forward::UnpermuteV2()
+template <typename TopkWeightT>
+__aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::UnpermuteV2()
 {
     if constexpr (g_coreType == AscendC::AIC) {
         return;
@@ -1010,7 +1038,8 @@ __aicore__ inline void MegaMoeBF16Forward::UnpermuteV2()
                                                params_.y2GmAddr, k_, topK_, coreOffset, coreLen);
 }
 
-__aicore__ inline void MegaMoeBF16Forward::CrossRankSyncInWorldSize()
+template <typename TopkWeightT>
+__aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::CrossRankSyncInWorldSize()
 {
     __gm__ int32_t* syncRank = (__gm__ int32_t*)(params_.peermemInfo.ptrBase);
     __gm__ int32_t* syncCount =
@@ -1027,7 +1056,8 @@ __aicore__ inline void MegaMoeBF16Forward::CrossRankSyncInWorldSize()
     *(syncCount + aivCoreIdx_ * 16) = count;
 }
 
-__aicore__ inline void MegaMoeBF16Forward::Process()
+template <typename TopkWeightT>
+__aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::Process()
 {
     using namespace MegaMoeBF16Training;
     const bool transW = params_.tilingData->transW;
@@ -1056,8 +1086,9 @@ __aicore__ inline void MegaMoeBF16Forward::Process()
     }
 }
 
+template <typename TopkWeightT>
 template <uint32_t SaveMode, bool TransW>
-__aicore__ inline void MegaMoeBF16Forward::ProcessSelected()
+__aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::ProcessSelected()
 {
     if (MegaMoeBF16Training::ForwardUsesGmSwiglu(k_, SaveMode)) {
         ProcessWithSaveMode<SaveMode, TransW, true>();
@@ -1066,8 +1097,9 @@ __aicore__ inline void MegaMoeBF16Forward::ProcessSelected()
     }
 }
 
+template <typename TopkWeightT>
 template <uint32_t SaveMode, bool TransW, bool GmSwiglu>
-__aicore__ inline void MegaMoeBF16Forward::ProcessWithSaveMode()
+__aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::ProcessWithSaveMode()
 {
     // The Host enqueues the local token-table memset on this same stream and
     // launches immediately. Reaching this barrier proves
@@ -1089,7 +1121,7 @@ __aicore__ inline void MegaMoeBF16Forward::ProcessWithSaveMode()
     // buffer allocation. UDMA invokes the same helper in its Process.
     bool routedWeightsReady = false;
     if constexpr (g_coreType == AscendC::AIV) {
-        routedWeightsReady = MegaMoeBF16Routing::TryGatherTopkWeights(
+        routedWeightsReady = MegaMoeBF16Routing::TryGatherTopkWeights<TopkWeightT>(
             params_.probsGmAddr, params_.workspaceInfo.expandedRowIdx, params_.peermemInfo.ptrRoutedTopkWeights,
             static_cast<uint64_t>(m_) * topK_, aivCoreIdx_, blockAivNum_, true);
     }

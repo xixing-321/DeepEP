@@ -75,7 +75,7 @@ def parse_args(argv=None):
         default=None,
         help="Explicit ATK ratio limits; default 5 / 1.5 / 1.5, number_count_radio stays 2",
     )
-    parser.add_argument("--suite", choices=("priority", "model", "all"), default=None)
+    parser.add_argument("--suite", choices=("priority", "model", "dtype", "gather", "all"), default=None)
     parser.add_argument(
         "--skip-mxfp8",
         action="store_true",
@@ -108,9 +108,19 @@ def parse_args(argv=None):
     parser.add_argument("--hidden", type=int, default=256)
     parser.add_argument("--gmm-n", type=int, default=1024, help="GMM1 output dimension, equal to 2*F")
     parser.add_argument("--topk", type=int, default=4)
+    parser.add_argument("--topk-weight-dtype", choices=("bf16", "fp32"), default="bf16")
+    parser.add_argument(
+        "--topk-weight-values",
+        choices=("bf16-rounded", "full-precision"),
+        default=None,
+        help="Default: BF16-rounded for BF16, full precision for FP32; rounded FP32 equals BF16 p.float()",
+    )
     parser.add_argument("--expert-per-rank", type=int, default=2)
     parser.add_argument(
-        "--routed-scaling-factor", type=float, default=1.0, help="Scale normalized route weights before BF16 conversion"
+        "--routed-scaling-factor",
+        type=float,
+        default=1.0,
+        help="Scale normalized route weights before dtype conversion",
     )
     parser.add_argument(
         "--routing-mode",
@@ -131,6 +141,10 @@ def parse_args(argv=None):
     parser.add_argument("--shmem-ip-port", default="tcp://127.0.0.1:29862")
     parser.add_argument("--output", type=Path, default=None, help="New report directory")
     args = parser.parse_args(argv)
+    if args.topk_weight_values is None:
+        args.topk_weight_values = "bf16-rounded" if args.topk_weight_dtype == "bf16" else "full-precision"
+    if args.topk_weight_dtype == "bf16" and args.topk_weight_values != "bf16-rounded":
+        parser.error("full-precision route weights require --topk-weight-dtype fp32")
     if (args.list_cases or args.case_id) and not args.suite:
         parser.error("--list-cases and --case-id require --suite")
     if args.skip_mxfp8 and (not args.suite or args.diagnose_mxfp8):
@@ -156,6 +170,8 @@ def parse_args(argv=None):
             "--hidden",
             "--gmm-n",
             "--topk",
+            "--topk-weight-dtype",
+            "--topk-weight-values",
             "--expert-per-rank",
             "--routed-scaling-factor",
             "--routing-mode",
@@ -236,7 +252,7 @@ def suite_cases(args, *, include_skipped=False):
         seen.add(identity)
         if not item.get("covers", "").strip():
             raise ValueError(f"Missing coverage rationale in {identity}")
-        if not item["suites"] or set(item["suites"]) - {"priority", "model"}:
+        if not item["suites"] or set(item["suites"]) - {"priority", "model", "dtype", "gather"}:
             raise ValueError(f"Invalid suite membership in {identity}")
         unknown = set(item) - set(defaults) - {"id", "suites", "covers"}
         if unknown:
@@ -364,6 +380,7 @@ def case_progress(index, count, record, log_path):
         f"M={case['seq']} H={case['hidden']} F={case['gmm_n'] // 2} TopK={case['topk']} "
         f"E/rank={case['expert_per_rank']} save={case['save_gmm1_output']} data={case['data_profile']} "
         f"clip={case['swiglu_limit']} p_scale={case['routed_scaling_factor']} "
+        f"p={case['topk_weight_dtype']}/{case['topk_weight_values']} "
         f"log={log_path}",
         flush=True,
     )
@@ -489,7 +506,7 @@ def run_suite(args):
             flush=True,
         )
     if args.list_cases:
-        print("id\tEP\tM/rank\tH\tF\tTopK\tE/rank\trouting\tdata\tsave\tclip\tp_scale\tseed\tcovers")
+        print("id\tEP\tM/rank\tH\tF\tTopK\tE/rank\trouting\tdata\tsave\tclip\tp_scale\tp_dtype\tp_values\tseed\tcovers")
         for case in cases:
             print(
                 "\t".join(
@@ -508,6 +525,8 @@ def run_suite(args):
                             case["save_gmm1_output"],
                             case["swiglu_limit"],
                             case["routed_scaling_factor"],
+                            case["topk_weight_dtype"],
+                            case["topk_weight_values"],
                             case["seed"],
                             case["covers"],
                         ),
@@ -630,7 +649,7 @@ def installed_root():
 
 
 def make_inputs(args, rank, world, global_tokens=True):
-    """Generate reproducible BF16 CPU snapshots shared by all three paths."""
+    """Generate shared CPU snapshots; preserve the selected route-weight dtype."""
     import torch
 
     def rng(source, stream):
@@ -685,7 +704,7 @@ def make_inputs(args, rank, world, global_tokens=True):
             xs.append(sample(rng(source, 0), (args.seq, args.hidden), 0.1))
             logits = torch.empty((args.seq, args.topk), dtype=torch.float32, device="cpu")
             logits.uniform_(-1, 1, generator=rng(source, 2))
-            probabilities.append((torch.softmax(logits, dim=1) * args.routed_scaling_factor).to(torch.bfloat16))
+            probabilities.append(torch.softmax(logits, dim=1) * args.routed_scaling_factor)
             upstreams.append(sample(rng(source, 3), (args.seq, args.hidden), 0.1))
     ids = torch.cat(all_ids)
     counts = torch.bincount(ids.reshape(-1).long(), minlength=total)
@@ -704,11 +723,17 @@ def make_inputs(args, rank, world, global_tokens=True):
         ),
     }
     apply_data_profile(inputs, args, token_start=0 if global_tokens else rank * args.seq)
+    # Convert once, after profiles. Rounded FP32 and BF16 runs have identical
+    # values and RNG streams; full FP32 retains the router's additional bits.
+    if args.topk_weight_values == "bf16-rounded":
+        inputs["p"] = inputs["p"].to(torch.bfloat16)
+    if args.topk_weight_dtype == "fp32":
+        inputs["p"] = inputs["p"].float()
     return inputs
 
 
 def apply_data_profile(inputs, args, token_start=0):
-    """Alter only the shared BF16 input snapshot, never a reference result."""
+    """Alter only the shared input snapshot, never a reference result."""
     import torch
 
     profile = args.data_profile
@@ -755,8 +780,8 @@ def combine_baseline(partial, args, rank, world, device):
 
     m, h = args.seq, args.hidden
     for destination in range(world):
-        # Every row/slot has one owning expert. FP32 carries BF16 values
-        # exactly; this reduction transports them without combining routes.
+        # Every row/slot has one owning expert. FP32 carries BF16 y/dx and
+        # either BF16 or FP32 dp exactly; no route contributions are combined.
         buffer = torch.zeros((m, args.topk, 2 * h + 1), dtype=torch.float32, device="cpu")
         for route in partial["routes"]:
             mask = route["rows"] // m == destination
@@ -767,7 +792,9 @@ def combine_baseline(partial, args, rank, world, device):
         dist.reduce(buffer, dst=destination)
         if rank == destination:
             ids = partial["ids"][rank * m : (rank + 1) * m]
-            result = unpermute_routes(buffer, ids, device, reference=partial["reference"])
+            result = unpermute_routes(
+                buffer, ids, device, reference=partial["reference"], topk_weight_dtype=partial["topk_weight_dtype"]
+            )
     result.update(dw1=partial["dw1"], dw2=partial["dw2"])
     return result
 
@@ -831,7 +858,9 @@ def phase_timer(rank, phase_seconds):
 
 def local_mem_bytes(args, world):
     needed = (72 << 10) + world * math.ceil(world * args.expert_per_rank / 128) * 128 * 4
-    needed += 4 * args.seq * args.topk * args.hidden + math.ceil(2 * args.seq * args.topk / 512) * 512 + (2 << 20)
+    weight_bytes = 4 if args.topk_weight_dtype == "fp32" else 2
+    needed += 4 * args.seq * args.topk * args.hidden
+    needed += math.ceil(weight_bytes * args.seq * args.topk / 512) * 512 + (2 << 20)
     return args.local_mem_size or math.ceil(max(2 << 30, needed) / (2 << 20)) * (2 << 20)
 
 
@@ -957,7 +986,7 @@ def execute_case(local_rank, args, rank, world, op, local_mem, phase_seconds, ex
         x, ids, p, w1, w2, dy = (
             tensor(inputs["x"][sl], grad=True),
             tensor(inputs["ids"][sl], torch.int32),
-            tensor(inputs["p"][sl], grad=True),
+            tensor(inputs["p"][sl], inputs["p"].dtype, grad=True),
             tensor(inputs["w1"], grad=True),
             tensor(inputs["w2"], grad=True),
             tensor(inputs["dy"][sl]),

@@ -50,5 +50,7 @@ struct MegaMoeTilingData {
     // the effective per-launch token-count exchange protocol here.
     // 0=dense, 1=compact. Experimental variants always keep this at zero.
     uint32_t compactTokenCountExchange{0};
+    // TopK weights and their gradients: 0=BF16, 1=FP32. GMM operands stay BF16.
+    uint32_t topkWeightType{0};
 };
 #endif

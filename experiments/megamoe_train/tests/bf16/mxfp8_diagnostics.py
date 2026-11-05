@@ -58,7 +58,13 @@ def replay_saved_state(inputs, trace, device, planes, limit):
     if not set(planes) <= {"gate", "up"}:
         raise ValueError(f"Unknown saved planes: {planes}")
     rows, slots, counts = (trace[key] for key in ("rows", "slots", "counts"))
-    result = {"ids": inputs["ids"], "routes": [], "counts": counts, "reference": "megamoe"}
+    result = {
+        "ids": inputs["ids"],
+        "routes": [],
+        "counts": counts,
+        "reference": "megamoe",
+        "topk_weight_dtype": inputs["p"].dtype,
+    }
     if not rows.numel():
         result.update(
             dw1=torch.zeros_like(inputs["w1"], device="cpu"),
@@ -69,7 +75,8 @@ def replay_saved_state(inputs, trace, device, planes, limit):
     def tensor(value):
         return value.to(device=device, dtype=torch.bfloat16).contiguous()
 
-    x, p, dy = (tensor(value) for value in (inputs["x"][rows], inputs["p"][rows, slots, None], inputs["dy"][rows]))
+    x, dy = (tensor(value) for value in (inputs["x"][rows], inputs["dy"][rows]))
+    p = inputs["p"][rows, slots, None].to(device=device).contiguous()
     raw_z, dhp = tensor(trace["raw_z"]), tensor(trace["dhp"])
     gate, up = raw_z.chunk(2, dim=-1)
     z = torch.cat(
@@ -80,7 +87,7 @@ def replay_saved_state(inputs, trace, device, planes, limit):
     )
     h = _swiglu_fp32(z, limit, raw_z)
     hp = (h * p.float()).to(torch.bfloat16)
-    dp = (dhp.float() * h.float()).sum(-1).to(torch.bfloat16)
+    dp = (dhp.float() * h.float()).sum(-1).to(p.dtype)
     dz = _swiglu_backward_fp32(dhp.float() * p.float(), z, limit, raw_z)
     weight1 = tensor(inputs["w1"].transpose(1, 2))
     dx = _grouped_matmul(dz, weight1.transpose(1, 2).contiguous(), counts)

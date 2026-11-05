@@ -6,6 +6,7 @@
 
 #include "kernel_operator.h"
 #include "layout/mega_moe_topk_weight_gather_layout.hpp"
+#include <type_traits>
 
 namespace MegaMoeBF16Routing {
 
@@ -124,22 +125,162 @@ __aicore__ inline bool GatherTopkWeightsTwoWindows(GM_ADDR weightsAddr, GM_ADDR 
     return true;
 }
 
-// Shared by BF16 and UDMA before their Dispatch/transport UB setup.
-// No persistent state or tiling changes; false requests the scalar fallback.
-__aicore__ inline bool TryGatherTopkWeights(GM_ADDR weightsAddr, GM_ADDR sortedIndicesAddr, GM_ADDR outputAddr,
-                                            uint64_t totalRoutes, uint32_t coreIndex, uint32_t coreCount,
-                                            bool allowTwoWindows = false)
+template <uint32_t ElementBytes>
+__aicore__ inline void MakeWeightWindowOffsetsFor(AscendC::LocalTensor<int32_t> indices,
+                                                  AscendC::LocalTensor<uint32_t> offsets, uint32_t count,
+                                                  uint32_t windowStart, uint32_t windowRows)
+{
+    auto* in = (__ubuf__ uint32_t*)indices.GetPhyAddr();
+    auto* out = (__ubuf__ uint32_t*)offsets.GetPhyAddr();
+    const uint16_t blocks = static_cast<uint16_t>((count + 63U) / 64U);
+    __VEC_SCOPE__
+    {
+        AscendC::Reg::RegTensor<uint32_t> start, rows, zero;
+        AscendC::Reg::Duplicate(start, windowStart);
+        AscendC::Reg::Duplicate(rows, windowRows);
+        AscendC::Reg::Duplicate(zero, uint32_t{0});
+        uint32_t remaining = count;
+        for (uint16_t block = 0; block < blocks; ++block) {
+            auto valid = AscendC::Reg::UpdateMask<uint32_t>(remaining);
+            AscendC::Reg::RegTensor<uint32_t> index, local, safe;
+            AscendC::Reg::MaskReg belongs;
+            AscendC::Reg::DataCopy(index, in + block * 64U);
+            AscendC::Reg::Sub(local, index, start, valid);
+            // Unsigned subtraction also excludes indices below this window.
+            AscendC::Reg::Compare<uint32_t, AscendC::CMPMODE::LT>(belongs, local, rows, valid);
+            AscendC::Reg::Select<uint32_t>(safe, local, zero, belongs);
+            AscendC::Reg::Muls(safe, safe, uint32_t{ElementBytes}, valid);
+            AscendC::Reg::DataCopy(out + block * 64U, safe, valid);
+        }
+    }
+}
+
+// Merge raw bits so neither BF16 nor FP32 weights undergo a numerical cast.
+template <typename WeightBitsT>
+__aicore__ inline void MergeWeightWindow(AscendC::LocalTensor<int32_t> indices,
+                                         AscendC::LocalTensor<WeightBitsT> accumulated,
+                                         AscendC::LocalTensor<WeightBitsT> candidate, uint32_t count,
+                                         uint32_t windowStart, uint32_t windowRows)
+{
+    auto* idx = (__ubuf__ uint32_t*)indices.GetPhyAddr();
+    auto* dst = (__ubuf__ WeightBitsT*)accumulated.GetPhyAddr();
+    auto* src = (__ubuf__ WeightBitsT*)candidate.GetPhyAddr();
+    const uint16_t blocks = static_cast<uint16_t>((count + 63U) / 64U);
+    __VEC_SCOPE__
+    {
+        AscendC::Reg::RegTensor<uint32_t> start, rows;
+        AscendC::Reg::Duplicate(start, windowStart);
+        AscendC::Reg::Duplicate(rows, windowRows);
+        uint32_t remaining = count;
+        for (uint16_t block = 0; block < blocks; ++block) {
+            auto valid = AscendC::Reg::UpdateMask<uint32_t>(remaining);
+            AscendC::Reg::RegTensor<uint32_t> index, local;
+            AscendC::Reg::MaskReg belongs;
+            AscendC::Reg::DataCopy(index, idx + block * 64U);
+            AscendC::Reg::Sub(local, index, start, valid);
+            AscendC::Reg::Compare<uint32_t, AscendC::CMPMODE::LT>(belongs, local, rows, valid);
+            AscendC::Reg::RegTensor<WeightBitsT> prior, next, result;
+            if constexpr (sizeof(WeightBitsT) == sizeof(uint16_t)) {
+                AscendC::Reg::DataCopy<uint16_t, AscendC::Reg::LoadDist::DIST_UNPACK_B16>(prior, dst + block * 64U);
+                AscendC::Reg::DataCopy<uint16_t, AscendC::Reg::LoadDist::DIST_UNPACK_B16>(next, src + block * 64U);
+                AscendC::Reg::Select<uint32_t>((AscendC::Reg::RegTensor<uint32_t>&)result,
+                                               (AscendC::Reg::RegTensor<uint32_t>&)next,
+                                               (AscendC::Reg::RegTensor<uint32_t>&)prior, belongs);
+                AscendC::Reg::DataCopy<uint16_t, AscendC::Reg::StoreDist::DIST_PACK_B32>(dst + block * 64U, result,
+                                                                                         valid);
+            } else {
+                AscendC::Reg::DataCopy(prior, dst + block * 64U);
+                AscendC::Reg::DataCopy(next, src + block * 64U);
+                AscendC::Reg::Select<uint32_t>(result, next, prior, belongs);
+                AscendC::Reg::DataCopy(dst + block * 64U, result, valid);
+            }
+        }
+    }
+}
+
+template <typename WeightBitsT>
+__aicore__ inline bool GatherTopkWeightsWindows(GM_ADDR weightsAddr, GM_ADDR sortedIndicesAddr, GM_ADDR outputAddr,
+                                                uint64_t totalRoutes,
+                                                const TopkWeightGatherPlanFor<sizeof(WeightBitsT)>& plan)
 {
     using namespace AscendC;
-    const TopkWeightGatherPlan plan(totalRoutes, coreIndex, coreCount, allowTwoWindows);
+    TPipe pipe;
+    TBuf<> sourceBuf, indicesBuf, offsetsBuf, accumulatedBuf, candidateBuf;
+    pipe.InitBuffer(sourceBuf, plan.sourceBytes);
+    pipe.InitBuffer(indicesBuf, plan.kIndexBytes);
+    pipe.InitBuffer(offsetsBuf, plan.kIndexBytes);
+    pipe.InitBuffer(accumulatedBuf, plan.kOutputBytes);
+    pipe.InitBuffer(candidateBuf, plan.kOutputBytes);
+    auto source = sourceBuf.Get<WeightBitsT>();
+    auto indices = indicesBuf.Get<int32_t>();
+    auto offsets = offsetsBuf.Get<uint32_t>();
+    auto accumulated = accumulatedBuf.Get<WeightBitsT>();
+    auto candidate = candidateBuf.Get<WeightBitsT>();
+    GlobalTensor<WeightBitsT> weightsGm, outputGm;
+    GlobalTensor<int32_t> indicesGm;
+    weightsGm.SetGlobalBuffer(reinterpret_cast<__gm__ WeightBitsT*>(weightsAddr));
+    indicesGm.SetGlobalBuffer(reinterpret_cast<__gm__ int32_t*>(sortedIndicesAddr));
+    outputGm.SetGlobalBuffer(reinterpret_cast<__gm__ WeightBitsT*>(outputAddr));
+    for (uint32_t offset = 0; offset < plan.count; offset += plan.kBatchRoutes) {
+        const uint32_t count = plan.BatchCount(offset);
+        SyncFunc<HardEvent::V_MTE2>();
+        SyncFunc<HardEvent::MTE3_V>();
+        DataCopyPad(indices, indicesGm[plan.begin + offset], DataCopyExtParams{1U, count * 4U, 0U, 0U, 0U},
+                    DataCopyPadExtParams<int32_t>{false, 0U, 0U, 0U});
+        for (uint32_t window = 0; window < plan.windowCount; ++window) {
+            const uint32_t first = window * plan.kMaxRoutes;
+            const uint32_t rows = plan.WindowRows(totalRoutes, window);
+            // Drain Gather before reusing the same source window for MTE2.
+            SyncFunc<HardEvent::V_MTE2>();
+            DataCopyPad(source, weightsGm[first],
+                        DataCopyExtParams{1U, rows * uint32_t{sizeof(WeightBitsT)}, 0U, 0U, 0U},
+                        DataCopyPadExtParams<WeightBitsT>{false, 0U, 0U, 0U});
+            SyncFunc<HardEvent::MTE2_V>();
+            MakeWeightWindowOffsetsFor<sizeof(WeightBitsT)>(indices, offsets, count, first, rows);
+            PipeBarrier<PIPE_V>();
+            if (window == 0) {
+                Gather(accumulated, source, offsets, 0U, count);
+            } else {
+                Gather(candidate, source, offsets, 0U, count);
+                PipeBarrier<PIPE_V>();
+                MergeWeightWindow(indices, accumulated, candidate, count, first, rows);
+            }
+        }
+        SyncFunc<HardEvent::V_MTE3>();
+        DataCopyPad(outputGm[plan.begin + offset], accumulated,
+                    DataCopyExtParams{1U, count * uint32_t{sizeof(WeightBitsT)}, 0U, 0U, 0U});
+    }
+    SyncFunc<HardEvent::MTE3_S>();
+    pipe.Destroy();
+    return true;
+}
+
+// The gather pipe is released before Dispatch/transport allocates its UB.
+// The BF16 two-window implementation retains its established instruction path.
+template <typename TopkWeightT = bfloat16_t>
+__aicore__ inline bool TryGatherTopkWeights(GM_ADDR weightsAddr, GM_ADDR sortedIndicesAddr, GM_ADDR outputAddr,
+                                            uint64_t totalRoutes, uint32_t coreIndex, uint32_t coreCount,
+                                            bool allowMultipleWindows = false)
+{
+    using namespace AscendC;
+    static_assert(std::is_same_v<TopkWeightT, bfloat16_t> || std::is_same_v<TopkWeightT, float>,
+                  "TopK weights must be BF16 or FP32");
+    using WeightBitsT = std::conditional_t<sizeof(TopkWeightT) == sizeof(uint16_t), uint16_t, uint32_t>;
+    using Plan = TopkWeightGatherPlanFor<sizeof(TopkWeightT)>;
+    const Plan plan(totalRoutes, coreIndex, coreCount, allowMultipleWindows);
     if (!plan.enabled) {
         return false;
     }
     if (plan.count == 0) {
         return true;
     }
-    if (plan.twoWindows) {
-        return GatherTopkWeightsTwoWindows(weightsAddr, sortedIndicesAddr, outputAddr, totalRoutes, plan);
+    if constexpr (sizeof(TopkWeightT) == sizeof(uint16_t)) {
+        if (plan.twoWindows) {
+            return GatherTopkWeightsTwoWindows(weightsAddr, sortedIndicesAddr, outputAddr, totalRoutes, plan);
+        }
+    }
+    if (plan.windowCount > 1) {
+        return GatherTopkWeightsWindows<WeightBitsT>(weightsAddr, sortedIndicesAddr, outputAddr, totalRoutes, plan);
     }
 
     TPipe pipe;
@@ -147,22 +288,23 @@ __aicore__ inline bool TryGatherTopkWeights(GM_ADDR weightsAddr, GM_ADDR sortedI
     TBuf<> indicesBuf;
     TBuf<> outputBuf;
     pipe.InitBuffer(sourceBuf, plan.sourceBytes);
-    pipe.InitBuffer(indicesBuf, TopkWeightGatherPlan::kIndexBytes);
-    pipe.InitBuffer(outputBuf, TopkWeightGatherPlan::kOutputBytes);
-    auto source = sourceBuf.Get<uint16_t>();
+    pipe.InitBuffer(indicesBuf, Plan::kIndexBytes);
+    pipe.InitBuffer(outputBuf, Plan::kOutputBytes);
+    auto source = sourceBuf.Get<WeightBitsT>();
     auto indices = indicesBuf.Get<int32_t>();
-    auto output = outputBuf.Get<uint16_t>();
-    GlobalTensor<uint16_t> weightsGm;
+    auto output = outputBuf.Get<WeightBitsT>();
+    GlobalTensor<WeightBitsT> weightsGm;
     GlobalTensor<int32_t> indicesGm;
-    GlobalTensor<uint16_t> outputGm;
-    weightsGm.SetGlobalBuffer(reinterpret_cast<__gm__ uint16_t*>(weightsAddr));
+    GlobalTensor<WeightBitsT> outputGm;
+    weightsGm.SetGlobalBuffer(reinterpret_cast<__gm__ WeightBitsT*>(weightsAddr));
     indicesGm.SetGlobalBuffer(reinterpret_cast<__gm__ int32_t*>(sortedIndicesAddr));
-    outputGm.SetGlobalBuffer(reinterpret_cast<__gm__ uint16_t*>(outputAddr));
+    outputGm.SetGlobalBuffer(reinterpret_cast<__gm__ WeightBitsT*>(outputAddr));
 
     // Copy only valid GM bytes; the UB allocation alone is rounded up.
-    DataCopyPad(source, weightsGm, DataCopyExtParams{1U, static_cast<uint32_t>(totalRoutes * 2), 0U, 0U, 0U},
-                DataCopyPadExtParams<uint16_t>{false, 0U, 0U, 0U});
-    for (uint32_t offset = 0; offset < plan.count; offset += TopkWeightGatherPlan::kBatchRoutes) {
+    DataCopyPad(source, weightsGm,
+                DataCopyExtParams{1U, static_cast<uint32_t>(totalRoutes * sizeof(WeightBitsT)), 0U, 0U, 0U},
+                DataCopyPadExtParams<WeightBitsT>{false, 0U, 0U, 0U});
+    for (uint32_t offset = 0; offset < plan.count; offset += Plan::kBatchRoutes) {
         const uint32_t count = plan.BatchCount(offset);
         // Previous Gather must finish reading indices before MTE2 reuses them.
         SyncFunc<HardEvent::V_MTE2>();
@@ -170,14 +312,14 @@ __aicore__ inline bool TryGatherTopkWeights(GM_ADDR weightsAddr, GM_ADDR sortedI
                     DataCopyExtParams{1U, count * uint32_t{sizeof(int32_t)}, 0U, 0U, 0U},
                     DataCopyPadExtParams<int32_t>{false, 0U, 0U, 0U});
         SyncFunc<HardEvent::MTE2_V>();
-        // Gather takes byte offsets. Reinterpret BF16 as uint16, without Cast.
-        Muls(indices, indices, int32_t{2}, count);
+        // Gather addresses raw weight bits by byte offset.
+        Muls(indices, indices, static_cast<int32_t>(sizeof(WeightBitsT)), count);
         PipeBarrier<PIPE_V>();
         SyncFunc<HardEvent::MTE3_V>();
         Gather(output, source, indices.ReinterpretCast<uint32_t>(), 0U, count);
         SyncFunc<HardEvent::V_MTE3>();
         DataCopyPad(outputGm[plan.begin + offset], output,
-                    DataCopyExtParams{1U, count * uint32_t{sizeof(uint16_t)}, 0U, 0U, 0U});
+                    DataCopyExtParams{1U, count * uint32_t{sizeof(WeightBitsT)}, 0U, 0U, 0U});
     }
     // Count notification must not overtake the MTE3 publication to SHMEM.
     // Release this UB phase before FirstBuffInit allocates Dispatch buffers.

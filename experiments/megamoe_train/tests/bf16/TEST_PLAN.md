@@ -1,8 +1,8 @@
-# MegaMoE BF16 典型尺寸测试方案
+# MegaMoE BF16 训练测试方案
 
-更新日期：2026-11-05。当前 [cases.json](cases.json) 仅发布 12 条典型模型尺寸用例：
-Flash、Pro、GLM 各取每 rank M=512、2048、4096、8192。
-其他通用边界、数据分布、保存模式和历史矩阵用例已在仓库外本地归档，不属于当前发布清单。
+当前 [cases.json](cases.json) 保留 12 条典型模型尺寸用例：Flash、Pro、GLM 各取
+每 rank M=512、2048、4096、8192；新增 24 条路由权重类型/保存模式用例及 6 条 FP32
+Gather 边界用例。其他历史数据分布和矩阵用例仍在仓库外归档，不自动恢复。
 清单与设备验收分开记录；设备精度、性能结果对应具体源码提交与构建产物。
 
 ## 1. 范围与模型参数
@@ -25,7 +25,7 @@ Flash、Pro、GLM 各取每 rank M=512、2048、4096、8192。
 | `m8192` | 8192 | 8K token，覆盖持续多块执行与较大参考数据 | 12288 | 8192 |
 
 前缀与后缀组合即 12 个唯一 ID，例如 `flash_m512`、`pro_m4096`、`glm_m8192`。
-全部使用 balanced 路由、random 数据、`save_gmm1_output=bf16` 和 seed=20260825。
+这 12 条使用 balanced 路由、random 数据、BF16 路由权重、`save_gmm1_output=bf16` 和 seed=20260825。
 均衡路由下每专家行数为 M*TopK/E_local，每 rank 接收 M*TopK 条路由。
 
 M 是进入算子的每 rank token 总数，不能直接等同于模型序列长度 S。
@@ -36,9 +36,19 @@ EP 来自设备列表，本组按 EP2/4/8 检查配置合法性，设备资格�
 ## 2. 输入生成与反向含义
 
 单入口是 [test_mega_moe.py](test_mega_moe.py)。每个 source rank 和输入流使用
-独立、固定种子的 Torch CPU Generator；所有参考与融合实现共用同一份 BF16 输入快照。
+独立、固定种子的 Torch CPU Generator；所有参考与融合实现共用同一份 CPU 输入快照。
 x/dy 从 [-0.1,0.1] 均匀采样，w1/w2 从 [-1,1] 均匀采样；路由权重由
-FP32 softmax(logits) 乘模型缩放系数后转换为 BF16。路由 ID 固定、合法且每 token 不重复。
+FP32 softmax(logits) 乘模型缩放系数后按以下选择定型。路由 ID 固定、合法且每 token 不重复。
+
+| 输入选择 | CLI | 用途 |
+| --- | --- | --- |
+| BF16，旧默认 | `--topk-weight-dtype bf16` | 原 BF16 输入行为 |
+| FP32，BF16 有效位 | `--topk-weight-dtype fp32 --topk-weight-values bf16-rounded` | 与同 seed 的 BF16 p.float() 逐位相同；其余输入完全一致 |
+| FP32，完整有效位 | `--topk-weight-dtype fp32` | 默认 full-precision，保留 softmax 的额外有效位，检测隐式降精 |
+
+`--topk-weight-values full-precision` 只允许 FP32。snapshot、NPU BigOp、契约参考和融合
+输入保留所选 p 类型，CPU 真值直接提升到 FP64。dtopk_weights 与 p 类型相同；
+y、dx、dw1、dw2 保持 BF16。每次调用所有 EP rank 必须使用相同 p 类型。
 
 本测试将固定随机 dy 作为上游梯度，执行 y.backward(dy)，数学上对应测试损失
 sum(y*dy)。随机的是反向输入，dx、dtopk_weights、dw1、dw2 都由实际反向计算得到。
@@ -47,8 +57,9 @@ sum(y*dy)。随机的是反向输入，dx、dtopk_weights、dw1、dw2 都由实�
 ## 3. 参考与验收
 
 - [cpu_reference.py](cpu_reference.py)：Torch CPU FP64 前向和 autograd 真值，不插入 BF16 中间舍入。
-- [npu_baseline.py](npu_baseline.py)：`fp32-boundaries-v2` NPU BigOp 作为 ATK 误差基线，
-  使用 FP32 激活、导数、dp 乘积/归约和按 TopK slot 顺序的 FP32 Y/dX 归并，最终张量写回 BF16。
+- [npu_baseline.py](npu_baseline.py)：`fp32-boundaries-v3-topk-dtype` NPU BigOp 作为 ATK 误差基线，
+  使用 FP32 激活、导数、dp 乘积/归约和按 TopK slot 顺序的 FP32 Y/dX 归并；
+  Y/dX 最终写 BF16，dp 写输入 p 的 BF16/FP32 类型，矩阵边界仍为 BF16。
   两个参考角色复用公共数值实现；BF16 保存模式下，ATK 和混合容差直接复用同一份小算子结果。
   保存模式仅决定 Gate/Up 的保存、重算或解码，不选择不同的舍入规则。
 - [atk_compare.py](atk_compare.py)：使用 ATK 26.9.8/private 0.1.0 的
@@ -60,14 +71,24 @@ ATK 最大/平均/RMSE 误差比例门限为 5/1.5/1.5，小值域数量比例�
 BF16 辅助混合容差为 atol=rtol=2^-7、匹配比例>=99%，
 最大绝对误差<=max(0.1,32*ULP)。当前测试要求混合容差、ATK 和 counts 均通过；
 辅助参考不是独立 CPU 真值，混合容差通过不能覆盖 ATK 失败。
+FP32 dtopk_weights 沿用已有 FP32 混合门禁：atol=rtol=2^-13、匹配比例>=99%，
+最大绝对误差<=max(0.01,32*ULP)。ATK actual 和 benchmark 保持同一输出 dtype，
+golden 保持 FP64；本次不修改任何阈值。
 
 ## 4. 执行方式
 
 辅助参考的 CPU 回归使用 `python -m unittest discover -s experiments/megamoe_train/tests/bf16 -p test_reference_contract.py -v`。
-它需要 CPU Torch，检查公共 FP32 H/dH、dp、BF16 输出边界、clipping、按 slot 归并、保存复用，
-以及原有 FP64 真值和 MXFP8 诊断重放；不启动 NPU 或 ATK。
+数值项需要 CPU Torch，检查公共 FP32 H/dH、dp、BF16 输出边界、clipping、按 slot 归并、保存复用，
+以及 FP32 p 的有效位、dP dtype、同输入变体、FP64 真值和 MXFP8 诊断重放；不启动 NPU 或 ATK。
+CLI 默认值、合法参数及用例覆盖检查不依赖 Torch；没有 Torch 时数值项显示 SKIP，不能计为通过。
 
-`priority`、`model`、`all` 当前均选择这 12 条，不再提供已归档的 smoke/core/extended 套件。
+`priority`、`model` 保持选择这 12 条；`dtype` 选择 24 条 H256/F512/M129 小用例，
+覆盖 BF16、BF16-rounded FP32、full-precision FP32 三类 p，逐一组合
+bf16/none/mxfp8/auto 与 clipping 0/0.1。`gather` 选择六条 FP32 full-precision
+用例：M8191/8192/8193、TopK4 或 TopK8，对应 R=M*TopK 为
+32764/32768/32772 和 65528/65536/65544，覆盖 32768 元素窗口的边界和第三窗口尾块。
+exact 数学边界由布局 CPU 测试覆盖；这些 NPU shape 不声称逐整数扫描窗口边界。
+`all` 选择全部 42 条，不再提供已归档的 smoke/core/extended 套件。
 `--case-id` 可重复指定，仅选择清单内的 ID。套件参数由 JSON 决定，不被单例 shape 参数覆盖。
 `--list-cases` 不导入 Torch/ATK，不启动设备：
 
@@ -89,11 +110,24 @@ python -u experiments/megamoe_train/tests/bf16/test_mega_moe.py 0,1 \
 默认跨用例复用 worker/runtime，输入和参考每次重新计算；`--isolate-cases` 使用独立执行器。
 CPU FP64 参考和完整权重梯度可能占用较多主机内存，需要先核对实际容器资源。
 
+类型与窗口专项将上例 `--suite priority` 分别替换为 `--suite dtype`、`--suite gather`。
+M8192/TopK16 的 131072 路由大用例保留为手动单例，不加入 all 的默认范围；获准设备和资源充足时：
+
+```bash
+python -u experiments/megamoe_train/tests/bf16/test_mega_moe.py 0,1 \
+  --seq 8192 --hidden 256 --gmm-n 1024 --topk 16 --expert-per-rank 8 \
+  --topk-weight-dtype fp32 --skip performance --atk-ratios 5 1.5 1.5 \
+  --shmem-ip-port tcp://127.0.0.1:29862
+```
+
 每次输出新目录，保留 suite_summary.json、suite.log、逐用例 summary.json 和逐 rank 指标。
 ATK 失败保留 actual/benchmark/golden 张量。数值失败使整套失败；运行错误停止后续用例，
 不得把 ERROR/NOT_RUN 当作 PASS。记录源码、dirty diff、wheel/SO 哈希、环境、卡号、命令和 seed。
 
 ## 5. 历史证据与未验收范围
+
+新增 dtype/gather 清单及 CPU 回归不等于新设备验证。BF16/FP32 p 的完整保存模式、
+窗口边界与手动大用例需在匹配新 wheel 上逐项记录设备结果；历史 BF16 报告不能代替这些验收。
 
 2026-11-04 的旧快照基于 4dffcfc 加模型用例，Kernel SO SHA256 为
 40925bc7a99d61f1ea5b8cbff9749c9dea7ac975a669e8b1557580eefeb8be26。

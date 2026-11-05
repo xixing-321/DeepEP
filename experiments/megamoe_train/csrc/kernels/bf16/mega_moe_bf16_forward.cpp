@@ -15,6 +15,7 @@
 using namespace AscendC;
 using namespace MegaMoeImpl;
 
+template <typename TopkWeightT>
 __mix__(1, 2) __global__ __aicore__
     void mega_moe_bf16_forward(GM_ADDR context, GM_ADDR x, GM_ADDR topkIds, GM_ADDR topkWeights, GM_ADDR weight1,
                                GM_ADDR weight2, GM_ADDR yOut, GM_ADDR expertTokenNumsOut, GM_ADDR trainingSavedStateGM,
@@ -22,7 +23,7 @@ __mix__(1, 2) __global__ __aicore__
                                MegaMoeTilingData tilingData)
 {
     InitSocState();
-    MegaMoeBF16Forward op;
+    MegaMoeBF16Forward<TopkWeightT> op;
     op.Init(context, x, topkIds, topkWeights, weight1, weight2, nullptr, nullptr, nullptr, nullptr, yOut,
             expertTokenNumsOut, nullptr, nullptr, nullptr, trainingSavedStateGM, &tilingData,
             forwardTransientWorkspaceGM, dispatchOutputGM);
@@ -37,9 +38,15 @@ extern "C" ASCEND_MEGAMOE_EXPORT void deepep_train_mega_moe_bf16_forward_kernel_
 {
     (void)ffts_addr;
     const auto& tiling = *reinterpret_cast<const MegaMoeTilingData*>(tiling_host);
-    mega_moe_bf16_forward<<<block_dim, nullptr, stream>>>(context, x, topk_ids, topk_weights, weight1, weight2, y,
-                                                          expert_token_nums, training_saved_state, dispatch_output,
-                                                          forward_transient_workspace, tiling);
+    if (tiling.topkWeightType == 1U) {
+        mega_moe_bf16_forward<float><<<block_dim, nullptr, stream>>>(
+            context, x, topk_ids, topk_weights, weight1, weight2, y, expert_token_nums, training_saved_state,
+            dispatch_output, forward_transient_workspace, tiling);
+    } else {
+        mega_moe_bf16_forward<bfloat16_t><<<block_dim, nullptr, stream>>>(
+            context, x, topk_ids, topk_weights, weight1, weight2, y, expert_token_nums, training_saved_state,
+            dispatch_output, forward_transient_workspace, tiling);
+    }
 }
 
 // The Host queries the loaded SO, so changing a build option cannot leave

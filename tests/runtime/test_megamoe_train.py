@@ -94,6 +94,45 @@ def test_training_close_drains_stream_and_is_idempotent():
     assert calls == ["sync", "session-close", "op-close"] and op._closed
 
 
+def test_topk_dtype_coordination_rejects_mismatch_and_allows_switching():
+    """Exercise the actual collective check without importing Torch/NPU."""
+    import ast
+
+    source = (
+        Path(__file__).resolve().parents[2]
+        / "experiments/megamoe_train/python/deep_ep_experimental/megamoe_train/bf16.py"
+    )
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "_TrainRuntime")
+    method = next(
+        node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == "validate_topk_weight_type"
+    )
+
+    class Group:
+        peer = None
+
+        def all_gather(self, value, stage):
+            return [value, self.peer if self.peer is not None else value]
+
+    namespace = {"torch": SimpleNamespace(bfloat16="bf16", float32="fp32"), "StoreGroup": Group}
+    exec(compile(ast.Module(body=[method], type_ignores=[]), str(source), "exec"), namespace)
+    check = namespace["validate_topk_weight_type"]
+    group = Group()
+    runtime = SimpleNamespace(group=group)
+    # Several forwards may retain different p dtypes for their later backwards.
+    for stage, dtype in ((0, "bf16"), (0, "fp32"), (1, "fp32"), (1, "bf16")):
+        check(runtime, dtype, stage)
+    group.peer = [0, 1]
+    with pytest.raises(ValueError, match="EP ranks"):
+        check(runtime, "bf16", 0)
+    group.peer = [1, 0]
+    with pytest.raises(ValueError, match="EP ranks"):
+        check(runtime, "bf16", 0)
+    group.peer = None
+    with pytest.raises(ValueError, match="bfloat16 or float32"):
+        check(runtime, "fp16", 0)
+
+
 def test_expert_ready_builds_use_distinct_cache_and_record_actual_policy(monkeypatch, tmp_path):
     import json
     import sys

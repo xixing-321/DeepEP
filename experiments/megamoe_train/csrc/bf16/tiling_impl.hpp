@@ -7,6 +7,7 @@
  * \brief
  */
 
+#include "csrc/kernels/bf16/layout/mega_moe_layout.hpp"
 #include <vector>
 #include <cstring>
 #include <cmath>
@@ -682,7 +683,8 @@ WorkspaceInfo CalcWorkspaceSize(const MegaMoeTilingData& td)
 
 inline size_t CalcBf16EarlyTopkWeightWorkspaceSize(const MegaMoeTilingData& td)
 {
-    return HostCeilAlign(static_cast<int64_t>(td.maxOutputSize) * SIZE_BF_16, ALIGN_512);
+    return HostCeilAlign(
+        static_cast<int64_t>(td.maxOutputSize) * MegaMoeBF16Training::TopkWeightBytes(td.topkWeightType), ALIGN_512);
 }
 
 enum PeerMemIdx {
@@ -720,7 +722,8 @@ PeerMemInfo CalcPeermemSize(const MegaMoeTilingData& td)
 
 inline size_t CalcBf16EarlyTopkWeightPeermemSize(const MegaMoeTilingData& td)
 {
-    return HostCeilAlign(static_cast<int64_t>(td.m) * td.topK * SIZE_BF_16, ALIGN_512);
+    return HostCeilAlign(static_cast<int64_t>(td.m) * td.topK * MegaMoeBF16Training::TopkWeightBytes(td.topkWeightType),
+                         ALIGN_512);
 }
 
 template <typename T>

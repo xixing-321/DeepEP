@@ -205,7 +205,11 @@ ForwardResult MegaMoeBF16Forward(torch::Tensor context, torch::Tensor x, torch::
     CheckNpuContiguous(weight2, "weight2");
     TORCH_CHECK(x.scalar_type() == torch::kBFloat16, "x must be bfloat16");
     TORCH_CHECK(topkIds.scalar_type() == torch::kInt32, "topk_ids must be int32");
-    TORCH_CHECK(topkWeights.scalar_type() == torch::kBFloat16, "topk_weights must be bfloat16");
+    TORCH_CHECK(topkWeights.scalar_type() == torch::kBFloat16 || topkWeights.scalar_type() == torch::kFloat32,
+                "topk_weights must be bfloat16 or float32");
+    const uint32_t topkWeightType = topkWeights.scalar_type() == torch::kFloat32 ? MegaMoeBF16Training::kTopkWeightFp32
+                                                                                 : MegaMoeBF16Training::kTopkWeightBf16;
+    const auto topkWeightBytes = MegaMoeBF16Training::TopkWeightBytes(topkWeightType);
     TORCH_CHECK(weight1.scalar_type() == torch::kBFloat16, "weight1 must be bfloat16");
     TORCH_CHECK(weight2.scalar_type() == torch::kBFloat16, "weight2 must be bfloat16");
     TORCH_CHECK(x.dim() == 2 && topkIds.dim() == 2, "x and topk_ids must be rank-2 tensors");
@@ -233,7 +237,7 @@ ForwardResult MegaMoeBF16Forward(torch::Tensor context, torch::Tensor x, torch::
     MegaMoeTilingData tiling{};
     const auto hostTiling =
         detail::MakeMegaMoeHostTiling(tiling, m, k, n, topk, worldSize, expertPerRank, maxRecvTokens, rank, true,
-                                      swigluLimit, true, save_gmm1_output);
+                                      swigluLimit, true, save_gmm1_output, topkWeightType);
     tiling.transW = weightLayout.transW;
     tiling.transW2 = weightLayout.transW;
     const auto earlyWeightBuffers = detail::GetBf16EarlyTopkWeightBufferBytes(tiling);
@@ -245,8 +249,8 @@ ForwardResult MegaMoeBF16Forward(torch::Tensor context, torch::Tensor x, torch::
         m, k, topk, worldSize, expertPerRank, maxRecvTokens, n,
         MegaMoeBF16Training::SaveGateUpAsMxFp8(tiling.swigluLimit, tiling.savedGateUpMode),
         tiling.savedGateUpMode != MegaMoeBF16Training::kSaveNone,
-        MegaMoeBF16Training::SaveGateUpClipMasks(tiling.swigluLimit, tiling.savedGateUpMode), false);
-    const MegaMoeBF16Training::DispatchOutputLayout dispatchOutputLayout(k, maxRecvTokens);
+        MegaMoeBF16Training::SaveGateUpClipMasks(tiling.swigluLimit, tiling.savedGateUpMode), false, topkWeightBytes);
+    const MegaMoeBF16Training::DispatchOutputLayout dispatchOutputLayout(k, maxRecvTokens, topkWeightBytes);
     const MegaMoeBF16Training::ForwardTransientWorkspaceLayout transientWorkspaceLayout(n, expertPerRank,
                                                                                         maxRecvTokens);
     const MegaMoeBF16Training::ForwardDispatchTileReadyLayout dispatchTileReadyLayout(n, expertPerRank, maxRecvTokens);
@@ -318,7 +322,11 @@ BackwardResult MegaMoeBF16Backward(torch::Tensor context, torch::Tensor gradY, t
                 "MegaMoe BF16 backward max_recv_tokens exceeds int32 routing capacity");
     TORCH_CHECK(k % 256 == 0 && n % 512 == 0, "MegaMoe BF16 backward requires k % 256 == 0 and n % 512 == 0");
     TORCH_CHECK(gradY.scalar_type() == torch::kBFloat16, "grad_y must be bfloat16");
-    TORCH_CHECK(topkWeights.scalar_type() == torch::kBFloat16, "topk_weights must be bfloat16");
+    TORCH_CHECK(topkWeights.scalar_type() == torch::kBFloat16 || topkWeights.scalar_type() == torch::kFloat32,
+                "topk_weights must be bfloat16 or float32");
+    const uint32_t topkWeightType = topkWeights.scalar_type() == torch::kFloat32 ? MegaMoeBF16Training::kTopkWeightFp32
+                                                                                 : MegaMoeBF16Training::kTopkWeightBf16;
+    const auto topkWeightBytes = MegaMoeBF16Training::TopkWeightBytes(topkWeightType);
     TORCH_CHECK(weight1.scalar_type() == torch::kBFloat16, "weight1 must be bfloat16");
     TORCH_CHECK(weight2.scalar_type() == torch::kBFloat16, "weight2 must be bfloat16");
     TORCH_CHECK(expertTokenNums.scalar_type() == torch::kInt32, "expert_token_nums must be int32");
@@ -328,7 +336,7 @@ BackwardResult MegaMoeBF16Backward(torch::Tensor context, torch::Tensor gradY, t
     CheckNpuContiguous(weight2, "weight2");
     CheckNpuContiguous(trainingSavedState, "training_saved_state");
     CheckNpuContiguous(dispatchOutput, "dispatch_output");
-    const MegaMoeBF16Training::DispatchOutputLayout dispatchOutputLayout(k, maxRecvTokens);
+    const MegaMoeBF16Training::DispatchOutputLayout dispatchOutputLayout(k, maxRecvTokens, topkWeightBytes);
     TORCH_CHECK(dispatchOutput.scalar_type() == torch::kUInt8 &&
                     static_cast<uint64_t>(dispatchOutput.numel()) >= dispatchOutputLayout.totalBytes,
                 "dispatch_output must be an NPU UInt8 tensor with at least ", dispatchOutputLayout.totalBytes,
@@ -337,7 +345,7 @@ BackwardResult MegaMoeBF16Backward(torch::Tensor context, torch::Tensor gradY, t
     MegaMoeTilingData tiling{};
     const auto hostTiling =
         detail::MakeMegaMoeHostTiling(tiling, m, k, n, topk, worldSize, expertPerRank, maxRecvTokens, rank, true,
-                                      swigluLimit, true, save_gmm1_output);
+                                      swigluLimit, true, save_gmm1_output, topkWeightType);
     tiling.transW = weightLayout.transW;
     tiling.transW2 = weightLayout.transW;
     const auto earlyWeightBuffers = detail::GetBf16EarlyTopkWeightBufferBytes(tiling);
@@ -368,7 +376,7 @@ BackwardResult MegaMoeBF16Backward(torch::Tensor context, torch::Tensor gradY, t
     const std::size_t alignedDpPartialTiles = Bf16Align(dpPartialTiles * sizeof(float), 32ULL) / sizeof(float);
     TORCH_CHECK((alignedDpPartialTiles + kA5Fp32PerVectorRegister - 1) * sizeof(float) <= kBackwardTopkPartialUbBytes,
                 "MegaMoe BF16 backward n=", n, " exceeds the P6 partial-reduction UB capacity");
-    const std::size_t ubTopkBytes = kBackwardTopkPartialUbBytes + Bf16Align(1024ULL * sizeof(uint16_t), 32ULL);
+    const std::size_t ubTopkBytes = kBackwardTopkPartialUbBytes + Bf16Align(1024ULL * topkWeightBytes, 32ULL);
     const std::size_t ubResetBytes = MegaMoeBF16Training::ForwardDispatchUbLayout::kCountResetChunkBytes;
     // These phases own UB at different times. Include the post-P6 count
     // reset and the P6 route buffer, not just the P0 and SwiGLU allocations.
@@ -387,7 +395,7 @@ BackwardResult MegaMoeBF16Backward(torch::Tensor context, torch::Tensor gradY, t
         m, k, topk, worldSize, expertPerRank, maxRecvTokens, n,
         MegaMoeBF16Training::SaveGateUpAsMxFp8(tiling.swigluLimit, tiling.savedGateUpMode),
         tiling.savedGateUpMode != MegaMoeBF16Training::kSaveNone,
-        MegaMoeBF16Training::SaveGateUpClipMasks(tiling.swigluLimit, tiling.savedGateUpMode), false);
+        MegaMoeBF16Training::SaveGateUpClipMasks(tiling.swigluLimit, tiling.savedGateUpMode), false, topkWeightBytes);
     TORCH_CHECK(static_cast<std::size_t>(trainingSavedState.numel()) * trainingSavedState.element_size() >=
                     savedStateLayout.totalBytes,
                 "MegaMoe BF16 training_saved_state is too small: need ", savedStateLayout.totalBytes, " bytes");

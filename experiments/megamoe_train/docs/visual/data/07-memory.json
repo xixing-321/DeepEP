@@ -39,7 +39,7 @@
       "subtitle": "容量不等于本次真实接收行数",
       "symbol": "DispatchOutputLayout / TrainingSavedStateLayout",
       "description": [
-        "Host按max_recv_tokens=R、hidden=H、中间宽F及保存模式预留张量空间。每个专家实际M_e和行前缀由本轮计数决定。布局按字节对齐，不能用M×TopK替换所有R，也不能把capacity当作专家GEMM的实际M。"
+        "Host按max_recv_tokens=R、hidden=H、中间宽F、保存模式和p类型预留张量空间；p每项BF16为2B、FP32为4B。每个专家实际M_e和行前缀由本轮计数决定。布局按字节对齐，不能用M×TopK替换所有R，也不能把capacity当作专家GEMM的实际M。"
       ],
       "reads": [
         "R、H、F、TopK、EP、E_local",
@@ -72,7 +72,7 @@
       "subtitle": "反向 dW1 与激活梯度要继续读取",
       "symbol": "ForwardWorkspaceInfo：dispatchOutputBase",
       "description": [
-        "普通BF16采用split-state：packed X与packed p放在独立dispatch_output字节张量中。前向Dispatch写入它们，反向分别用X计算dW1、用p计算Hp与dH。其生命周期跨越forward返回，不能当成forward transient随即释放。"
+        "普通BF16采用split-state：packed X与原类型BF16/FP32 packed p放在独立dispatch_output字节张量中。p类型与Gate/Up保存模式独立，none也保留p。前向Dispatch写入它们，反向分别用X计算dW1、用p计算Hp与dH。其生命周期跨越forward返回，不能当成forward transient随即释放。"
       ],
       "reads": [
         "dispatchOutputBase",
@@ -80,7 +80,7 @@
       ],
       "writes": [
         "ptrA [R,H] BF16",
-        "ptrDispatchedTopkWeights [R] BF16"
+        "ptrDispatchedTopkWeights [R]，与 p 同类型"
       ],
       "waits": [
         "匹配反向读完之前保存该张量"
@@ -125,7 +125,7 @@
         },
         {
           "path": "experiments/megamoe_train/csrc/kernels/bf16/mega_moe_bf16_forward.hpp",
-          "anchor": "__aicore__ inline void MegaMoeBF16Forward::SaveForwardState()",
+          "anchor": "__aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::SaveForwardState()",
           "before": 0,
           "after": 18
         }
@@ -254,7 +254,7 @@
       "sources": [
         {
           "path": "experiments/megamoe_train/csrc/kernels/bf16/mega_moe_bf16_forward.hpp",
-          "anchor": "__aicore__ inline void MegaMoeBF16Forward::CopyGMToGMTopkWeights(",
+          "anchor": "__aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::CopyGMToGMTopkWeights(",
           "before": 0,
           "after": 21
         }
@@ -528,7 +528,7 @@
         },
         {
           "path": "experiments/megamoe_train/csrc/kernels/bf16/mega_moe_bf16_backward.hpp",
-          "anchor": "__aicore__ inline void MegaMoeBF16Backward::UnpermuteBackward()",
+          "anchor": "__aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::UnpermuteBackward()",
           "before": 0,
           "after": 14
         }
@@ -567,17 +567,17 @@
       "lane": "m_peer",
       "step": 15,
       "title": "P6复用ptrD开头存紧凑dp表",
-      "subtitle": "一条 route 一个BF16标量，不带H步长",
+      "subtitle": "一条 route 一个原类型标量，不带H步长",
       "symbol": "ReduceAndRouteTopkGrad / UnpermuteTopkGrad",
       "description": [
-        "P6将FP32 partial归约、舍入为BF16 route标量，回写源rank ptrD连续位置。此时ptrD不再解释为[M×TopK,H]矩阵，而是一维排序route表。dp发送全局完成后，UnpermuteTopkGrad只做逆置换复制到[M,TopK]，不把TopK槽相加。"
+        "P6将FP32 partial以FP32归约，按p类型生成BF16或FP32 route标量，回写源rank ptrD连续位置。此时ptrD不再解释为[M×TopK,H]矩阵，而是一维排序route表。dp发送全局完成后，UnpermuteTopkGrad按16/32位原样逆置换复制到[M,TopK]，不把TopK槽相加。"
       ],
       "reads": [
         "FP32 dp partial",
         "原 route 逆置换"
       ],
       "writes": [
-        "ptrD [M×TopK] BF16 dp",
+        "ptrD [M×TopK] BF16 或 FP32 dp",
         "grad_topk_weights [M,TopK]"
       ],
       "waits": [
@@ -593,7 +593,7 @@
         },
         {
           "path": "experiments/megamoe_train/csrc/kernels/bf16/mega_moe_bf16_backward.hpp",
-          "anchor": "    __gm__ uint16_t* routedDp = reinterpret_cast<__gm__ uint16_t*>(params_.peermemInfo.ptrD);",
+          "anchor": "    __gm__ GradientBits* routedDp = reinterpret_cast<__gm__ GradientBits*>(params_.peermemInfo.ptrD);",
           "before": 2,
           "after": 8
         }

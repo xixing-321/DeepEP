@@ -52,7 +52,8 @@ def compare_with_atk(actual, baseline, truth, directory, ratios, *, outputs=OUTP
 
     This is CompareExecutor's three-role contract, called separately for the
     five files in one rank, or the selected cached outputs. Keep the golden
-    tensor in FP64 and actual/benchmark in their original BF16 dtype.
+    tensor in FP64 and actual/benchmark in their original output dtype:
+    BF16, except dtopk_weights follows the BF16/FP32 route-weight input.
     Retain failing triples for later diagnosis.
     """
     outputs = tuple(outputs)

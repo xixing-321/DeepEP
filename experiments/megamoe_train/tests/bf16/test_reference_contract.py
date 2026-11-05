@@ -15,6 +15,60 @@ except ModuleNotFoundError as error:
     torch = None
 
 
+class RunnerConfiguration(unittest.TestCase):
+    def setUp(self):
+        import test_mega_moe
+
+        self.runner = test_mega_moe
+        self.enterContext(patch.dict("os.environ", {}, clear=True))
+
+    def test_route_weight_defaults_and_invalid_precision_request(self):
+        args = self.runner.parse_args(["0,1"])
+        self.assertEqual((args.topk_weight_dtype, args.topk_weight_values), ("bf16", "bf16-rounded"))
+        args = self.runner.parse_args(["0,1", "--topk-weight-dtype", "fp32"])
+        self.assertEqual((args.topk_weight_dtype, args.topk_weight_values), ("fp32", "full-precision"))
+        with self.assertRaises(SystemExit):
+            self.runner.parse_args(["0,1", "--topk-weight-values", "full-precision"])
+
+    def test_suites_preserve_models_and_cover_each_weight_save_clip_combination(self):
+        model = self.runner.suite_cases(self.runner.parse_args(["0,1", "--suite", "priority"]))
+        self.assertEqual(
+            {case["id"] for case in model},
+            {f"{name}_m{rows}" for name in ("flash", "pro", "glm") for rows in (512, 2048, 4096, 8192)},
+        )
+        args = self.runner.parse_args(["0,1", "--suite", "dtype"])
+        cases = self.runner.suite_cases(args)
+        actual = {
+            (
+                case["topk_weight_dtype"],
+                case["topk_weight_values"],
+                case["save_gmm1_output"],
+                bool(case["swiglu_limit"]),
+            )
+            for case in cases
+        }
+        expected = {
+            (dtype, values, mode, clipped)
+            for dtype, values in (("bf16", "bf16-rounded"), ("fp32", "bf16-rounded"), ("fp32", "full-precision"))
+            for mode in ("bf16", "none", "mxfp8", "auto")
+            for clipped in (False, True)
+        }
+        self.assertEqual(actual, expected)
+        self.assertEqual(len(cases), len(expected))
+        for case in cases:
+            child = self.runner.parse_args(self.runner.case_argv(args, case, 0, "output"))
+            self.assertEqual(child.topk_weight_dtype, case["topk_weight_dtype"])
+            self.assertEqual(child.topk_weight_values, case["topk_weight_values"])
+
+    def test_gather_cases_cross_fp32_windows_and_parse_at_supported_ep_sizes(self):
+        for devices in ("0,1", "0,1,2,3", "0,1,2,3,4,5,6,7"):
+            args = self.runner.parse_args([devices, "--suite", "gather"])
+            cases = self.runner.suite_cases(args)
+            self.assertEqual({case["seq"] * case["topk"] for case in cases}, {32764, 32768, 32772, 65528, 65536, 65544})
+            for case in cases:
+                self.runner.parse_args(self.runner.case_argv(args, case, 0, "output"))
+
+
 def cpu_grouped_matmul(tokens, weights, counts):
     # Replace only the device GEMM boundary; exercise the real activation path.
     assert tokens.dtype == weights.dtype == torch.bfloat16
@@ -127,6 +181,52 @@ class ReferenceContract(unittest.TestCase):
         torch.testing.assert_close(trace["dhp"], torch.tensor([[0.75, -0.74609375]], dtype=torch.bfloat16))
         self.assertEqual(trace["dp"].item(), torch.tensor((0.75 - 0.74609375) * h).bfloat16().item())
 
+    def test_fp32_probability_bits_reach_hp_and_dp_keeps_input_dtype(self):
+        inputs = self.inputs(1.0)
+        inputs["p"] = torch.tensor([[1.0038]], dtype=torch.float32)
+        for reference in ("bigop", "megamoe"):
+            with self.subTest(reference=reference):
+                full, rounded = {}, {}
+                self.baseline.run_baseline(inputs, "cpu", 0, reference=reference, trace=full)
+                rounded_inputs = {**inputs, "p": inputs["p"].bfloat16().float()}
+                self.baseline.run_baseline(rounded_inputs, "cpu", 0, reference=reference, trace=rounded)
+                self.assertFalse(torch.equal(full["hp"], rounded["hp"]))
+                self.assertEqual(full["dp"].dtype, torch.float32)
+                self.assertNotEqual(full["dp"].item(), full["dp"].bfloat16().float().item())
+                self.assertAlmostEqual(full["dp"].item(), 0.75 * 1.3125 / (1 + math.exp(-1)), delta=1e-7)
+
+    def test_fp32_route_transport_preserves_dp_bits_and_slot_identity(self):
+        ids = torch.tensor([[0, 1]], dtype=torch.int32)
+        buffer = torch.tensor([[[1, 2, 0.1001], [-1, -2, 0.2003]]], dtype=torch.float32)
+        result = self.baseline.unpermute_routes(buffer, ids, "cpu", topk_weight_dtype=torch.float32)
+        self.assertEqual(result["dtopk_weights"].dtype, torch.float32)
+        torch.testing.assert_close(result["dtopk_weights"], buffer[:, :, -1], rtol=0, atol=0)
+        self.assertFalse(torch.equal(result["dtopk_weights"], result["dtopk_weights"].bfloat16().float()))
+        self.assertEqual(result["y"].item(), 0)
+        self.assertEqual(result["dx"].item(), 0)
+
+    def test_generated_probability_variants_share_all_other_inputs(self):
+        from test_mega_moe import make_inputs, parse_args
+
+        self.enterContext(patch.dict("os.environ", {}, clear=True))
+        for profile in ("random", "equal_weights", "one_hot_weights"):
+            with self.subTest(profile=profile):
+                flags = ["0,1", "--seq", "3", "--data-profile", profile]
+                bf16 = make_inputs(parse_args(flags), 0, 2)
+                rounded = make_inputs(
+                    parse_args(flags + ["--topk-weight-dtype", "fp32", "--topk-weight-values", "bf16-rounded"]), 0, 2
+                )
+                full = make_inputs(parse_args(flags + ["--topk-weight-dtype", "fp32"]), 0, 2)
+                self.assertEqual(bf16["p"].dtype, torch.bfloat16)
+                self.assertEqual(rounded["p"].dtype, torch.float32)
+                self.assertEqual(full["p"].dtype, torch.float32)
+                torch.testing.assert_close(rounded["p"], bf16["p"].float(), rtol=0, atol=0)
+                if profile == "random":
+                    self.assertFalse(torch.equal(full["p"], rounded["p"]))
+                for name in bf16.keys() - {"p"}:
+                    torch.testing.assert_close(bf16[name], rounded[name], rtol=0, atol=0)
+                    torch.testing.assert_close(bf16[name], full[name], rtol=0, atol=0)
+
     def test_route_combine_keeps_fp32_cancellation_and_slot_order(self):
         ids = torch.tensor([[0, 1, 2]], dtype=torch.int32)
         for reference in ("bigop", "megamoe"):
@@ -183,6 +283,17 @@ class ReferenceContract(unittest.TestCase):
             self.assertAlmostEqual(result[name].item(), value, delta=1e-14)
         torch.testing.assert_close(result["dw1"].flatten(), torch.tensor([dg, du], dtype=torch.float64))
 
+    def test_cpu_truth_does_not_round_fp32_probability_to_bf16(self):
+        from cpu_reference import run_reference
+
+        inputs = self.inputs(1.0)
+        inputs["p"] = torch.tensor([[1.0038]], dtype=torch.float32)
+        result = run_reference(inputs, 0, chunk_rows=1)
+        expected = 1.3125 / (1 + math.exp(-1)) * inputs["p"].item()
+        self.assertAlmostEqual(result["y"].item(), expected, delta=1e-14)
+        self.assertGreater(abs(result["y"].item() - 1.3125 / (1 + math.exp(-1))), 0.001)
+        self.assertEqual(result["dtopk_weights"].dtype, torch.float64)
+
     def test_saved_state_replay_uses_same_fp32_contract(self):
         import mxfp8_diagnostics
 
@@ -197,6 +308,27 @@ class ReferenceContract(unittest.TestCase):
             torch.testing.assert_close(stages[name], trace[name], rtol=0, atol=0)
         for name in ("dw1", "dw2"):
             torch.testing.assert_close(actual[name], expected[name], rtol=0, atol=0)
+
+    def test_saved_references_and_replay_keep_fp32_probability_gradient(self):
+        import mxfp8_diagnostics
+
+        self.enterContext(patch.object(mxfp8_diagnostics, "_grouped_matmul", cpu_grouped_matmul))
+        self.enterContext(patch.object(mxfp8_diagnostics, "_grouped_wgrad", cpu_grouped_wgrad))
+        inputs = self.inputs(1.0, ffn=32)
+        inputs["p"] = torch.tensor([[1.0038]], dtype=torch.float32)
+        for mode in ("bf16", "none", "mxfp8"):
+            for clip in (0.0, 0.1):
+                with self.subTest(mode=mode, clip=clip):
+                    trace = {}
+                    result = self.baseline.run_baseline(inputs, "cpu", 0, mode, clip, trace=trace)
+                    self.assertEqual(result["topk_weight_dtype"], torch.float32)
+                    self.assertEqual(result["routes"][0]["dp"].dtype, torch.float32)
+                    if mode == "mxfp8":
+                        replay, stages = mxfp8_diagnostics.replay_saved_state(
+                            inputs, trace, "cpu", {"gate", "up"}, clip
+                        )
+                        self.assertEqual(stages["dp"].dtype, torch.float32)
+                        torch.testing.assert_close(replay["routes"][0]["dp"], result["routes"][0]["dp"], rtol=0, atol=0)
 
     def test_clipping_gradient_masks_remain_effective(self):
         gate_up = torch.tensor([[2, -2]], dtype=torch.bfloat16)

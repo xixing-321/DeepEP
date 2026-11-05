@@ -105,7 +105,11 @@ multi-node transport, EP subgroups and larger EP sizes need separate
 qualification before deployment; StoreGroup test coverage and the API's upper
 rank bound are not guarantees for those integration paths or topologies.
 
-- `x`: `[M,H]`, `topk_ids`: `[M,T]` int32, `topk_weights`: `[M,T]` BF16.
+- `x`: `[M,H]` BF16, `topk_ids`: `[M,T]` int32,
+  `topk_weights`: `[M,T]` BF16 or FP32. `dtopk_weights` has the same dtype as
+  `topk_weights`; FP32 probabilities retain their extra mantissa bits through
+  dispatch and activation weighting. All EP ranks must use the same route-weight
+  dtype for a call. Tensor dtype selects the native path; no new public API flag is needed.
   Tensor inputs are contiguous and reside on the construction NPU.
 - Canonical `w1=[E,2F,H]`, `w2=[E,H,F]`; alternative layouts
   `w1=[E,H,2F]`, `w2=[E,F,H]` are also supported. Gradients use the input layouts.
@@ -160,9 +164,9 @@ test using `(y * grad_y).sum()`; framework short-training review remains require
 
 ## Tests
 
-The published [case manifest](tests/bf16/cases.json) contains only 12 typical
-BF16 model-dimension cases. Other boundary, data-profile, saved-mode and historical
-matrix cases are deferred and are not part of the repository manifest.
+The published [case manifest](tests/bf16/cases.json) retains 12 typical model-dimension
+cases and adds a route-weight dtype suite and an FP32 Gather boundary suite.
+Other historical data-profile and matrix cases remain outside this manifest.
 
 | Model dimensions | H | F / GMM1 N | TopK | Experts/rank | Clip | Route-weight scale | M/rank |
 | --- | ---: | --- | ---: | ---: | ---: | ---: | --- |
@@ -170,7 +174,7 @@ matrix cases are deferred and are not part of the repository manifest.
 | Pro | 7168 | 3072 / 6144 | 6 | 4 | 10 | 2.5 | 512 / 2048 / 4096 / 8192 |
 | GLM | 6144 | 2048 / 4096 | 8 | 8 | 0 | 2.5 | 512 / 2048 / 4096 / 8192 |
 
-All cases use balanced routing, BF16 saving and seed 20260825. These are synthetic
+The 12 model cases use balanced routing, BF16 route weights, BF16 saving and seed 20260825. These are synthetic
 operator tests with reduced expert counts, not full-model or convergence validation.
 M means tokens entering the operator per rank; EP alone does not split M.
 The upstream dy is fixed-seed random input shared by all comparison paths;
@@ -183,8 +187,7 @@ There is one entry, `tests/bf16/test_mega_moe.py`, with these helpers:
 - `npu_baseline.py`: FP32-boundary NPU BigOp and the auxiliary numerical-contract reference.
 - `atk_compare.py`: the private ATK CV double-benchmark comparator.
 - `precision_metrics.py`: exact counts and mixed-tolerance reports.
-- `mxfp8_diagnostics.py`: optional diagnosis for explicitly configured inputs;
-  the published manifest contains no MXFP8 cases.
+- `mxfp8_diagnostics.py`: optional diagnosis for cases resolving to MXFP8.
 
 ### Run the typical cases
 
@@ -213,7 +216,11 @@ python -u experiments/megamoe_train/tests/bf16/test_mega_moe.py 0,1 \
   --shmem-ip-port tcp://127.0.0.1:29862
 ```
 
-`--suite model` and `--suite all` select the same 12 published cases.
+`--suite priority` and `--suite model` retain the same 12 model cases.
+`--suite dtype` selects 24 small cases: BF16 p, BF16-rounded FP32 p and full-precision
+FP32 p, each with `bf16/none/mxfp8/auto` saving and clipping off/on.
+`--suite gather` selects six FP32 cases below, at and above 32768 and 65536 source
+routes (`M*TopK`). `--suite all` selects all 42 cases.
 The deferred smoke/core/extended suites are no longer accepted.
 Without --skip, precision runs before performance. `--case-id` is repeatable;
 suite shapes come from the manifest. Standalone explicit shape arguments remain
@@ -224,10 +231,38 @@ workers/runtime per case. CPU FP64 and complete gradient tensors can require
 substantial host RAM; check actual container resources before selecting EP2/4/8.
 SHMEM uses the supplied port and Gloo uses port+2; both must be available.
 
+### Route-weight dtype checks
+
+The standalone test option `--topk-weight-dtype bf16/fp32` defaults to BF16.
+FP32 defaults to `--topk-weight-values full-precision`; explicitly select
+`bf16-rounded` to compare the same values as the BF16 input converted with `.float()`.
+The latter preserves all other seeded inputs. CPU snapshots, the fused operator,
+BigOp and the FP64 truth consume the selected p without an extra BF16 conversion.
+Suite parameters, including p dtype and values, come from the manifest.
+
+```bash
+# All save modes, with clipping off/on and both FP32 input-value variants.
+python -u experiments/megamoe_train/tests/bf16/test_mega_moe.py 0,1 \
+  --suite dtype --skip performance --shmem-ip-port tcp://127.0.0.1:29862
+
+# FP32 multi-window source-table boundaries; check host RAM and device capacity.
+python -u experiments/megamoe_train/tests/bf16/test_mega_moe.py 0,1 \
+  --suite gather --skip performance --shmem-ip-port tcp://127.0.0.1:29862
+
+# Optional larger case: 131072 source routes, kept outside the suite manifest.
+python -u experiments/megamoe_train/tests/bf16/test_mega_moe.py 0,1 \
+  --seq 8192 --hidden 256 --gmm-n 1024 --topk 16 --expert-per-rank 8 \
+  --topk-weight-dtype fp32 --skip performance \
+  --shmem-ip-port tcp://127.0.0.1:29862
+```
+
+These are test configurations, not claims of device qualification. Run them only
+on authorized idle devices with adequate memory; record the tested build and EP.
+
 ### Precision decisions and reports
 
 Precision uses ATK cv_fused_double_benchmark by default. The fused output is actual,
-FP32-boundary BigOp (`fp32-boundaries-v2`) is benchmark, and unchanged CPU FP64 is golden. Every rank and
+FP32-boundary BigOp (`fp32-boundaries-v3-topk-dtype`) is benchmark, and unchanged CPU FP64 is golden. Every rank and
 each of y, dx, dtopk_weights, dw1 and dw2 are compared separately. Explicit limits
 are max/mean/RMSE=5/1.5/1.5 and number_count_radio=2. ATK and the internal plugin
 must be installed in the same Python as the DeepEP wheel; missing or invalid
@@ -235,7 +270,7 @@ comparators fail the run rather than falling back to a substitute formula.
 
 Mixed tolerance remains an auxiliary check against the MegaMoE numerical contract:
 FP32 activation/derivatives, BF16 tensor boundaries, FP32 dp products/reduction,
-and ordered FP32 y/dx combine with a final BF16 cast. BigOp uses the same numerical
+dp stored in the input p dtype, and ordered FP32 y/dx combine with a final BF16 cast. BigOp uses the same numerical
 boundaries and shared activation/derivative helpers; BF16 saved mode reuses its
 result for both checks. Gate/Up are reused from forward when saved, and recomputed
 for save=none. Passing the auxiliary contract
