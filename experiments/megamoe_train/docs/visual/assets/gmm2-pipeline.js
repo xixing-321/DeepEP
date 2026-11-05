@@ -1,3 +1,6 @@
+// Copyright (c) 2026, Lu Lu
+// Modified by xixing 2026
+
 // Each lane advances independently. A gate records when its producer retires.
 const pipelineSource = (node, index = 0) => ({ node, index });
 function createPipelineSchedule() {

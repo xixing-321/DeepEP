@@ -1,4 +1,6 @@
-// Copyright (c) 2026, DeepEP contributors.
+// Copyright (c) 2026, Lu Lu
+// Modified by xixing 2026
+
 // Generate the offline reader, source map and repository documentation together.
 import fs from 'node:fs';
 import path from 'node:path';

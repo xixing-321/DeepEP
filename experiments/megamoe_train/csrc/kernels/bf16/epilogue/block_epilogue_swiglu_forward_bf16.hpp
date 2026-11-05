@@ -1,6 +1,7 @@
+// Copyright (c) 2026, Lu Lu
+// Modified by xixing 2026
+
 /*
- * Copyright (c) 2026 Huawei Technologies Co., Ltd.
- *
  * BF16 SwiGLU epilogue for the DeepEP MegaMoe pipeline. At entry, BF16
  * Gate/Up occupy two UB tiles: the UB handoff path waits for GMM1 Fixpipe,
  * while the GM staging path first fills them through LoadRawTile().

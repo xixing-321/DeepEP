@@ -1,3 +1,6 @@
+// Copyright (c) 2026, Lu Lu
+// Modified by xixing 2026
+
 // Two representative core groups per rank feed the local and cross-rank gates.
 const pipelineParts = [0, 1];
 // Several representative GMM1 tasks can read the same ready input partition.

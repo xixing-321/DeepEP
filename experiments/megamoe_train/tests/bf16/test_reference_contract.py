@@ -1,3 +1,6 @@
+# Copyright (c) 2026, Lu Lu
+# Modified by xixing 2026
+
 """CPU regressions for the ATK runner's contract reference, without NPU calls."""
 
 import math

@@ -1,5 +1,8 @@
+// Copyright (c) 2026, Lu Lu
+// Modified by guofanfeng 2026
+// Modified by xixing 2026
+
 /*
- * Copyright (c) 2026 Huawei Technologies Co., Ltd.
  * Quantization arithmetic adapted from the W8A8 block_epilogue_swiglu_mx_quant.h
  * (CANN Open Software License Agreement Version 2.0). See LICENSE for details.
  * Storage compression only: forward arithmetic still consumes raw BF16.

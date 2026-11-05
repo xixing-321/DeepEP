@@ -1,3 +1,6 @@
+// Copyright (c) 2026, Lu Lu
+// Modified by xixing 2026
+
 // Fixed-input teaching scenes. Values are CPU arithmetic, never device timing.
 import fs from 'node:fs';
 import path from 'node:path';

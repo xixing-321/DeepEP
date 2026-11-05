@@ -1,3 +1,7 @@
+/* Copyright (c) 2026, Lu Lu
+ * Modified by xixing 2026
+ */
+
 /* These rules style only the three learning scenes, not the existing graphs. */
 .learning-canvas .learning-scene{max-width:1220px;margin:0 auto;padding:20px 22px 30px;color:#263750;line-height:1.65}
 .learning-canvas [hidden]{display:none!important}
