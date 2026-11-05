@@ -1,3 +1,6 @@
+# Copyright (c) 2026, Lu Lu
+# Modified by guofanfeng 2026
+
 """NPU small-op reference with MegaMoE's declared numerical boundaries.
 
 BigOp and the auxiliary contract reference share FP32 activation/derivative
