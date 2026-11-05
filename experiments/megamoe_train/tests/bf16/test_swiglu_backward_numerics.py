@@ -32,8 +32,8 @@ class SwiGLUBackwardNumerics(unittest.TestCase):
     def test_rebuilt_h_matches_forward_counterexample(self):
         got = packed([1.0], [1.3125], [1.0], [1.0])
         self.assertEqual(float(got["Hp"][0, 0]), 0.9609375)
-        # The former separate-SiLU path produced 0.95703125 instead.
-        self.assertEqual(float(got["dpPartials"][0, 0]), 256 * 0.9609375)
+        h = np.float64(1.3125) / (1.0 + np.exp(np.float64(-1.0)))
+        np.testing.assert_allclose(got["dpPartials"][0, 0], 256 * h, rtol=1e-6)
 
     def test_gradients_against_smooth_subgraph_finite_differences(self):
         # Independent scalar derivative values rounded to BF16. The former
@@ -53,7 +53,7 @@ class SwiGLUBackwardNumerics(unittest.TestCase):
                     p = np.resize(np.array([0.10009765625, 0.5, 1.0], np.float32), rows)
                     dhp = np.resize(np.array([0.75, -0.875, 0.3125], np.float32), rows)
                     got = packed(g, u, dhp, p, limit)
-                    dh = bf16_round(p * dhp).astype(np.float64)
+                    dh = p.astype(np.float64) * dhp.astype(np.float64)
                     gc = np.minimum(g, limit) if limit else g
                     uc = np.clip(u, -limit, limit) if limit else u
                     gc, uc = gc.astype(np.float64), uc.astype(np.float64)
@@ -75,17 +75,27 @@ class SwiGLUBackwardNumerics(unittest.TestCase):
                         self.assertTrue(np.all(actual_g[g > limit] == 0))
                         self.assertTrue(np.all(actual_u[(u < -limit) | (u > limit)] == 0))
 
-    def test_dp_partial_keeps_fp32_product(self):
+    def test_dp_partial_keeps_fp32_activation_and_product(self):
         got = packed([1.0], [1.3125], [0.75], [1.0])
-        # The exact FP32 product 0.720703125 would round to 0.71875 in BF16.
-        self.assertEqual(float(got["dpPartials"][0, 0]), 256 * 0.720703125)
+        h = np.float64(1.3125) / (1.0 + np.exp(np.float64(-1.0)))
+        np.testing.assert_allclose(got["dpPartials"][0, 0], 256 * 0.75 * h, rtol=1e-6)
 
-    def test_dh_bf16_boundary_is_retained(self):
-        g, u, p, dhp = [1.0], [1.3125], [0.10009765625], [0.75]
-        got = packed(g, u, dhp, p)
-        dh = bf16_round(bf16_round(p) * bf16_round(dhp))
-        silu = np.float32(1.0) / (np.float32(1.0) + np.exp(np.float32(-1.0)))
-        self.assertEqual(float(got["gradZ"][0, 256]), float(bf16_round(dh * silu)[0]))
+    def test_h_stays_fp32_until_route_weighting(self):
+        for rows in (1, 127, 128, 129):
+            with self.subTest(rows=rows):
+                got = packed([1.0] * rows, [1.3125] * rows, [0.75] * rows,
+                             [0.00099945068359375] * rows)
+                # R(R(H)*p) gives 0.0009613037109375 for this input.
+                self.assertTrue(np.all(got["Hp"][:rows] == 0.000957489013671875))
+
+    def test_dh_stays_fp32_until_activation_derivatives(self):
+        for rows in (1, 127, 128, 129):
+            with self.subTest(rows=rows):
+                got = packed([1.0] * rows, [1.3125] * rows, [0.75] * rows,
+                             [0.10009765625] * rows)
+                # A BF16 dH intermediate gives dGate=0.091796875.
+                self.assertTrue(np.all(got["gradZ"][:rows, :256] == 0.09130859375))
+                self.assertTrue(np.all(got["gradZ"][:rows, 256:] == 0.054931640625))
 
 
 if __name__ == "__main__":

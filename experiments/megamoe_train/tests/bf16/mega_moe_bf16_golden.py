@@ -284,10 +284,11 @@ def generate(
             gmm1 = bf16_round(x[token_indices] @ weight1_fp32.T)
             del weight1_fp32
             gate, up = np.split(gmm1, 2, axis=1)
-            swiglu = bf16_round(gate / (1.0 + np.exp(-gate)) * up)
+            swiglu = gate / (1.0 + np.exp(-gate)) * up
             if early_topk_weight:
                 route_indices = token_and_route[:, 1]
-                swiglu = bf16_round(swiglu * topk_weights[token_indices, route_indices, None])
+                swiglu = swiglu * topk_weights[token_indices, route_indices, None]
+            swiglu = bf16_round(swiglu)
             del gmm1, gate, up
             weight2_fp32 = bf16_bits_to_float32(weight2)
             gmm2 = bf16_round(swiglu @ weight2_fp32.T)

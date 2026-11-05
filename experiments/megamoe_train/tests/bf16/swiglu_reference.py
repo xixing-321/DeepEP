@@ -93,16 +93,16 @@ def reference_packed_intermediates(
             up_ind = (~(up_low | up_high)).astype(np.float32)
         sigmoid = 1.0 / (1.0 + np.exp(-gate))
         # Match the forward epilogue's gate / (1 + exp(-gate)), keeping
-        # SiLU and the Up product in FP32 until the BF16 H boundary.
+        # SiLU, H and route weighting in FP32 until the BF16 Hp boundary.
         silu = gate / (1.0 + np.exp(-gate))
-        h = bf16_round(silu * up)
+        h = silu * up
         hp = bf16_round(p[:, None] * h)
 
         d_hp = bf16_round(d_o @ w2[expert].astype(np.float32))
-        # Reconstructed H must be the same BF16 activation as forward H.
-        # Keep dH's BF16 tensor boundary, but no standalone BF16 SiLU/dS.
+        # Reconstruct forward's FP32 H and keep route weighting in FP32.
+        # Hp and gradZ are the BF16 tensor boundaries.
         dp_products = d_hp * h
-        d_h = bf16_round(p[:, None] * d_hp)
+        d_h = p[:, None] * d_hp
         d_up = d_h * silu * up_ind
         d_gate = d_h * up * (sigmoid * (1.0 + gate * (1.0 - sigmoid))) * gate_ind
         grad_z = bf16_round(np.concatenate([d_gate, d_up], axis=1))
