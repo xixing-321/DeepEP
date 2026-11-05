@@ -111,6 +111,9 @@ rank bound are not guarantees for those integration paths or topologies.
   dispatch and activation weighting. All EP ranks must use the same route-weight
   dtype for a call. Tensor dtype selects the native path; no new public API flag is needed.
   Tensor inputs are contiguous and reside on the construction NPU.
+- Install the Host extension and device library from the same complete wheel.
+  Shared tiling includes the route-weight dtype; mixing an older SO with a newer
+  extension is unsupported even though library names and public calls are unchanged.
 - Canonical `w1=[E,2F,H]`, `w2=[E,H,F]`; alternative layouts
   `w1=[E,H,2F]`, `w2=[E,F,H]` are also supported. Gradients use the input layouts.
 - `max_recv_tokens` bounds received routed rows on each rank. The conservative
