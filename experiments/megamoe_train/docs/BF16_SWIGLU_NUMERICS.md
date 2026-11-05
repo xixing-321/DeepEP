@@ -116,10 +116,14 @@ H、dH 和 dp 乘积均不插入 BF16 中间舍入；Hp、dGate/dUp 仍写 BF16�
 | 参考 | 作用 | 实现 |
 | --- | --- | --- |
 | MegaMoE 契约参考 | 混合容差检查；匹配本文 FP32 H/dH、BF16 Hp/dZ、FP32 Y/dX/dp 归约 | [npu_baseline.py](../tests/bf16/npu_baseline.py)，`reference="megamoe"` |
-| 独立原始 BF16 BigOp | ATK 双标杆的 BF16 误差基线；保留其原始小算子舍入 | [npu_baseline.py](../tests/bf16/npu_baseline.py)，`reference="bigop"` |
+| FP32 边界 BigOp，`fp32-boundaries-v2` | ATK 的 NPU 小算子基线；与融合算子统一本文精度与舍入边界 | [npu_baseline.py](../tests/bf16/npu_baseline.py)，`reference="bigop"` |
 | CPU FP64 真值 | 从公共输入建立数学前反向图，不插入 BF16 中间边界 | [cpu_reference.py](../tests/bf16/cpu_reference.py) |
 
-ATK 门限和独立 BigOp 保持各自定义。MXFP8 诊断重放采用同一份 MegaMoE 契约；测试
+BigOp 与契约参考共享 FP32 激活、导数和归并实现；BF16 保存时，两项检查复用同一份结果。
+clipping 在 FP32 中进行，掩码依原始 Gate/Up 判断，边界值保留梯度。BF16 保存模式直接复用
+前向原始 Gate/Up，save=none 才重算。最终 BF16 转换采用最近偶数舍入。公共数值规则适用于
+所有已有保存模式，当前发布用例仍仅覆盖 BF16 保存。CPU FP64 真值和 ATK 门限不变，旧
+BigOp 结果保留原版本标识。MXFP8 诊断重放采用同一份 MegaMoE 契约；测试
 范围和具名历史结果见 [TEST_PLAN.md](../tests/bf16/TEST_PLAN.md)。
 
 ## 源码入口与回归例

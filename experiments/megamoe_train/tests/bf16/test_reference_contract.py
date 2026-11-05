@@ -56,25 +56,109 @@ class ReferenceContract(unittest.TestCase):
         }
 
     def test_fp32_h_rounds_only_after_route_weight(self):
-        trace = {}
-        result = self.baseline.run_baseline(self.inputs(0.00099945068359375), "cpu", 0, trace=trace)
-        self.assertEqual(trace["h"].dtype, torch.float32)
-        self.assertAlmostEqual(trace["h"].item(), 1.3125 / (1 + math.exp(-1)), delta=1e-7)
-        self.assertEqual(trace["hp"].dtype, torch.bfloat16)
-        self.assertEqual(result["routes"][0]["y"].item(), 0.000957489013671875)
+        for reference in ("bigop", "megamoe"):
+            with self.subTest(reference=reference):
+                trace = {}
+                result = self.baseline.run_baseline(
+                    self.inputs(0.00099945068359375), "cpu", 0, reference=reference, trace=trace
+                )
+                self.assertEqual(trace["h"].dtype, torch.float32)
+                self.assertAlmostEqual(trace["h"].item(), 1.3125 / (1 + math.exp(-1)), delta=1e-7)
+                self.assertEqual(trace["hp"].dtype, torch.bfloat16)
+                self.assertEqual(result["routes"][0]["y"].item(), 0.000957489013671875)
 
     def test_fp32_dh_reaches_activation_derivative(self):
-        trace = {}
-        self.baseline.run_baseline(self.inputs(0.10009765625), "cpu", 0, trace=trace)
-        self.assertEqual(trace["dz"].dtype, torch.bfloat16)
-        self.assertEqual(trace["dz"][0, 0].item(), 0.09130859375)
-        self.assertEqual(trace["dz"][0, 1].item(), 0.054931640625)
+        for reference in ("bigop", "megamoe"):
+            with self.subTest(reference=reference):
+                trace = {}
+                self.baseline.run_baseline(self.inputs(0.10009765625), "cpu", 0, reference=reference, trace=trace)
+                self.assertEqual(trace["dz"].dtype, torch.bfloat16)
+                self.assertEqual(trace["dz"][0, 0].item(), 0.09130859375)
+                self.assertEqual(trace["dz"][0, 1].item(), 0.054931640625)
 
-    def test_independent_bigop_keeps_its_original_bf16_h(self):
+    def test_bigop_and_contract_share_numeric_boundaries(self):
+        bigop, contract = {}, {}
+        inputs = self.inputs(0.10009765625)
+        self.baseline.run_baseline(inputs, "cpu", 0, reference="bigop", trace=bigop)
+        self.baseline.run_baseline(inputs, "cpu", 0, reference="megamoe", trace=contract)
+        for name in ("h", "hp", "dhp", "dp", "dz"):
+            torch.testing.assert_close(bigop[name], contract[name], rtol=0, atol=0)
+        self.assertEqual(bigop["h"].dtype, torch.float32)
+
+    def test_saved_bf16_reuses_unmodified_forward_gate_up(self):
+        captured = []
+
+        def activation(z, *args):
+            captured.append(z)
+            return original(z, *args)
+
+        original = self.baseline._swiglu_fp32
+        with patch.object(self.baseline, "_swiglu_fp32", side_effect=activation):
+            self.baseline.run_baseline(self.inputs(0.5), "cpu", 0, swiglu_limit=0.1, reference="bigop")
+        self.assertEqual(len(captured), 2)
+        self.assertIs(captured[0], captured[1])
+        torch.testing.assert_close(captured[0], torch.tensor([[1, 1.3125]], dtype=torch.bfloat16))
+
+    def test_non_bf16_clipping_limit_stays_fp32(self):
         trace = {}
-        self.baseline.run_baseline(self.inputs(0.10009765625), "cpu", 0, reference="bigop", trace=trace)
-        self.assertEqual(trace["h"].dtype, torch.bfloat16)
-        self.assertEqual(trace["h"].item(), 0.95703125)
+        self.baseline.run_baseline(self.inputs(0.5), "cpu", 0, swiglu_limit=0.1, reference="bigop", trace=trace)
+        expected_h = 0.1 / (1 + math.exp(-0.1)) * 0.1
+        self.assertAlmostEqual(trace["h"].item(), expected_h, delta=1e-9)
+        self.assertEqual(trace["dz"].count_nonzero().item(), 0)
+
+    def test_clipping_retains_gradient_on_inclusive_boundaries(self):
+        z = torch.tensor([[1.5, 1.5], [1.5078125, 1.5], [1.5, -1.5], [1.5, -1.5078125]], dtype=torch.bfloat16)
+        dz = self.baseline._swiglu_backward_fp32(torch.ones((4, 1)), z, 1.5)
+        self.assertTrue(bool((dz[[0, 2], 0] != 0).all()))
+        self.assertTrue(bool((dz[:3, 1] != 0).all()))
+        self.assertEqual(dz[1, 0].item(), 0)
+        self.assertEqual(dz[3, 1].item(), 0)
+
+    def test_dp_multiplies_and_reduces_in_fp32(self):
+        inputs = self.inputs(1.0, ffn=2)
+        inputs["w1"][0, 1, 0], inputs["w1"][0, 3, 0], inputs["w2"][0, 0, 1] = 1, 1.3125, -0.99609375
+        trace = {}
+        self.baseline.run_baseline(inputs, "cpu", 0, reference="bigop", trace=trace)
+        h = 1.3125 / (1 + math.exp(-1))
+        self.assertEqual(trace["dp"].dtype, torch.bfloat16)
+        torch.testing.assert_close(trace["dhp"], torch.tensor([[0.75, -0.74609375]], dtype=torch.bfloat16))
+        self.assertEqual(trace["dp"].item(), torch.tensor((0.75 - 0.74609375) * h).bfloat16().item())
+
+    def test_route_combine_keeps_fp32_cancellation_and_slot_order(self):
+        ids = torch.tensor([[0, 1, 2]], dtype=torch.int32)
+        for reference in ("bigop", "megamoe"):
+            with self.subTest(reference=reference):
+                buffer = torch.tensor([[[256, -256, 0.125], [1, -1, -0.5], [-256, 256, 1.0]]])
+                result = self.baseline.unpermute_routes(buffer, ids, "cpu", reference=reference)
+                self.assertEqual(result["y"].item(), 1)
+                self.assertEqual(result["dx"].item(), -1)
+                torch.testing.assert_close(result["dtopk_weights"], buffer[:, :, -1].bfloat16())
+                buffer[0, :, 0] = torch.tensor([2**24, 1, -(2**24)])
+                result = self.baseline.unpermute_routes(buffer, ids, "cpu", reference=reference)
+                self.assertEqual(result["y"].item(), 0)
+
+    def test_final_bf16_cast_rounds_halfway_values_to_even(self):
+        buffer = torch.tensor([[[1, -1, 0], [2**-8, -(2**-8), 0]], [[1.0078125, -1.0078125, 0], [2**-8, -(2**-8), 0]]])
+        ids = torch.tensor([[0, 1], [0, 1]], dtype=torch.int32)
+        result = self.baseline.unpermute_routes(buffer, ids, "cpu", reference="bigop")
+        torch.testing.assert_close(result["y"], torch.tensor([[1], [1.015625]], dtype=torch.bfloat16))
+        torch.testing.assert_close(result["dx"], -result["y"])
+
+    def test_bf16_reference_covers_row_boundaries_and_empty_experts(self):
+        for rows in (1, 127, 128, 129):
+            with self.subTest(rows=rows):
+                inputs = self.inputs(0.00099945068359375)
+                for name in ("x", "ids", "p", "dy"):
+                    inputs[name] = inputs[name].repeat(rows, 1)
+                for name in ("w1", "w2"):
+                    inputs[name] = torch.cat((inputs[name], torch.zeros_like(inputs[name])))
+                result = self.baseline.run_baseline(inputs, "cpu", 0, reference="bigop")
+                self.assertEqual(result["counts"].tolist(), [rows, 0])
+                self.assertEqual(tuple(result["routes"][0]["y"].shape), (rows, 1))
+                self.assertTrue(bool((result["routes"][0]["y"] == 0.000957489013671875).all()))
+                for name in ("dw1", "dw2"):
+                    self.assertEqual(result[name].dtype, torch.bfloat16)
+                    self.assertEqual(result[name][1].count_nonzero().item(), 0)
 
     def test_cpu_truth_keeps_fp64_mathematical_values(self):
         from cpu_reference import run_reference
