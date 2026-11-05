@@ -21,7 +21,7 @@
     "probabilities": [0.25, 0.25, 0.125, 0.125, 0.125, 0.125],
     "sourceOrder": "expert 升序；同 expert 按本源 rank 的 token、slot 升序",
     "receiveOrder": "每个 expert 先 source rank 升序，再按该源中的 expert 行序",
-    "reference": "tests/bf16/test_mega_moe_backward.py::reference_backward 的 np.argwhere(expert_ids == expert) 遍历约定",
+    "reference": "tests/bf16/cpu_reference.py::run_reference 的 (ids == expert).nonzero(as_tuple=True) 按 token、slot 遍历约定",
     "rowMeaning": "本页行号使用上述 CPU 参考排列；设备同专家键的顺序以前向生成的实际索引为准。",
     "expectedRowsPerSourceExpert": 768,
     "expectedRowsPerExpert": 6144,
