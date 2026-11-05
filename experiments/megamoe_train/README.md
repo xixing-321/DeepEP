@@ -31,7 +31,9 @@ counterparts; the public training interface is `MegaMoeBF16Train`.
 ## Build and installation
 
 Use the root build workflow on Linux, CANN 9.2.0, Ascend950, Python >=3.11 and a
-compatible PyTorch/torch_npu installation. Initialize the pinned submodules:
+compatible PyTorch/torch_npu installation.
+Build in the target runtime image; transferred wheels must match its Python/Torch
+ABI and system libraries, including glibc. Initialize the pinned submodules:
 
 ```bash
 git submodule update --init third-party/shmem third-party/catlass
