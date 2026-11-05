@@ -2,7 +2,7 @@
 
 按项目结构、调用链、三核流水和内存复用逐层阅读。默认场景为 Ascend950、save=bf16、H7168/F3072、关闭 clipping。
 
-源码快照：[3d9303b](https://github.com/xixing-321/DeepEP/tree/3d9303b33c63126227e87e6977009dafbd9b7f93)。
+源码快照：[41c6ee4](https://github.com/xixing-321/DeepEP/tree/41c6ee44c9cd0a048b0f27c6e1f02569d7c97c69)。
 
 [离线交互页面](index.html) · [完整调用点与源码](CALLPOINTS.md) · [维护方法](MAINTAINING.md)
 
@@ -15,6 +15,8 @@
 本地用浏览器打开 index.html，即可点击节点查看读写、等待和带行号源码。仓库网页可以直接阅读下方图文，通过调用点表跳转源码。
 
 普通浏览器保留 **复制定位路径**：按 **Ctrl+P** 粘贴并回车，打开对应源码和行号。
+
+数值与验证：[BF16/FP32 舍入规则](../BF16_SWIGLU_NUMERICS.md) · [测试参考与验收](../../tests/bf16/TEST_PLAN.md)。BigOp 与契约参考共用 FP32 激活、导数及归并规则，CPU FP64 真值独立计算。
 
 ## 三个阅读场景
 
