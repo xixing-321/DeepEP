@@ -119,6 +119,10 @@ def replay_saved_state(inputs, trace, device, planes, limit):
 
 
 def runtime_identity():
+    from deep_ep._native import require_native
+
+    require_native("MegaMoE MXFP8 diagnostics")
+
     def fingerprint(path):
         path = Path(path).resolve()
         with path.open("rb") as stream:

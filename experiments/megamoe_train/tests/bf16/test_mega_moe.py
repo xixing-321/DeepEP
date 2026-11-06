@@ -1481,8 +1481,10 @@ def prepare_worker(local_rank, args, rank, world, phase_seconds):
     with phase("device_setup"):
         torch.npu.set_device(local_rank)
         installed_root()
-        for name in ("deep_ep._C", "deep_ep_experimental.megamoe_train._C"):
-            importlib.import_module(name)
+        from deep_ep._native import require_native
+
+        require_native("MegaMoE BF16 precision validation")
+        importlib.import_module("deep_ep_experimental.megamoe_train._C")
         from deep_ep_experimental.megamoe_train import MegaMoeBF16Train
 
     with phase("process_group_setup"):

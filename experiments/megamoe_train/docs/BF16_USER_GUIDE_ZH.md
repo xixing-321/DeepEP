@@ -30,7 +30,7 @@ MegaMoE：dispatch → GMM1 → SwiGLU → GMM2 → combine
 
 BF16/FP32 p 共用 `MegaMoeBF16Train`、训练 `_C` 扩展和 `libdeepep_megamoe_train_bf16.so` 名称；旧 BF16 调用无需改名或增加必填参数。但 typed tiling 与 p/dp 字节布局需要配套 Host/Device，不能只替换旧安装中的一个 SO。
 
-首次检查安装时，在源码目录以外导入两个原生扩展。检查 `PYTHONPATH` 中的空项或末尾冒号，避免当前源码目录覆盖已安装包；完整 wheel 安装后再进行本文示例。
+首次检查安装时，在源码目录以外按[构建检查步骤](../../../.agent/skills/megamoe_train/build-megamoe-train/SKILL.md#4-检查安装与原生扩展加载)先调用根 `require_native()` 校验并预加载包内 SHMEM，再导入训练原生扩展；不要直接导入扩展绕过根加载器。正常构造 `MegaMoeBF16Train` 会执行这一步，无需框架侧额外调用。检查 `PYTHONPATH` 中的空项或末尾冒号，避免当前源码目录覆盖已安装包；完整 wheel 安装后再进行本文示例。
 
 ## 2. 最小示例
 

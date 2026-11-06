@@ -183,14 +183,26 @@ def test_training_wrapper_passes_debug_option_to_owning_runtime(monkeypatch, deb
 
     package = ModuleType("training_wrapper_projection")
     package.__path__ = []
-    package._C = SimpleNamespace(BF16=lambda *args: object())
+    loaded = []
+
+    def require_training_native(operation):
+        loaded.append(operation)
+        return SimpleNamespace(megamoe_train_workspace_address=lambda native: 1234)
+
+    def extension_attribute(name):
+        if name != "_C":
+            raise AttributeError(name)
+        assert loaded == ["MegaMoeBF16Train"], "Root loader must preload the bundled SHMEM closure"
+        return SimpleNamespace(BF16=lambda *args: object())
+
+    package.__getattr__ = extension_attribute
     monkeypatch.setitem(sys.modules, package.__name__, package)
     namespace = {
         "__name__": package.__name__ + ".bf16",
         "__package__": package.__name__,
         "torch": SimpleNamespace(nn=SimpleNamespace(Module=Module), empty=lambda *a, **kw: object(), bfloat16="bf16"),
         "npu_api": lambda: SimpleNamespace(current_stream=lambda: object()),
-        "require_native": lambda operation: SimpleNamespace(megamoe_train_workspace_address=lambda native: 1234),
+        "require_native": require_training_native,
         "_TrainRuntime": runtime,
     }
     exec(compile(ast.Module(body=[cls], type_ignores=[]), str(source), "exec"), namespace)
@@ -199,6 +211,67 @@ def test_training_wrapper_passes_debug_option_to_owning_runtime(monkeypatch, deb
     namespace["MegaMoeBF16Train"](group, 2 << 20, **kwargs)
     assert len(calls) == 1
     assert calls[0][1]["debug_collectives"] is debug
+
+
+def test_precision_worker_bootstraps_root_before_training_extension(monkeypatch):
+    """Execute the real worker setup without a framework, device or native DLL."""
+    import ast
+    from contextlib import nullcontext
+    from datetime import timedelta
+    import sys
+    from types import ModuleType
+    from urllib.parse import urlsplit
+
+    import deep_ep._native as root_native
+
+    source = Path(__file__).resolve().parents[2] / "experiments/megamoe_train/tests/bf16/test_mega_moe.py"
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    worker = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "prepare_worker")
+    events = []
+    torch = ModuleType("torch")
+    torch.__path__ = []
+    torch.npu = SimpleNamespace(set_device=lambda device: events.append("device"))
+    distributed = ModuleType("torch.distributed")
+    distributed.TCPStore = lambda *args, **kwargs: object()
+    distributed.init_process_group = lambda *args, **kwargs: events.append("group")
+    torch.distributed = distributed
+    package = ModuleType("deep_ep_experimental")
+    package.__path__ = []
+    training = ModuleType("deep_ep_experimental.megamoe_train")
+    operator = object()
+    training.MegaMoeBF16Train = operator
+    for name, module in {
+        "torch": torch,
+        "torch.distributed": distributed,
+        "torch_npu": ModuleType("torch_npu"),
+        "deep_ep_experimental": package,
+        "deep_ep_experimental.megamoe_train": training,
+    }.items():
+        monkeypatch.setitem(sys.modules, name, module)
+
+    def root_loader(operation):
+        events.append("root-loader")
+        return object()
+
+    def training_import(name):
+        assert name == "deep_ep_experimental.megamoe_train._C"
+        assert "root-loader" in events, "Training DLL import bypassed the bundled SHMEM loader"
+        events.append("training-extension")
+        return object()
+
+    monkeypatch.setattr(root_native, "require_native", root_loader)
+    namespace = {
+        "phase_timer": lambda *args: lambda stage: nullcontext(),
+        "log_visible": lambda rank: False,
+        "installed_root": lambda: None,
+        "importlib": SimpleNamespace(import_module=training_import),
+        "urlsplit": urlsplit,
+        "timedelta": timedelta,
+    }
+    exec(compile(ast.Module(body=[worker], type_ignores=[]), str(source), "exec"), namespace)
+    args = SimpleNamespace(devices=[3, 5], shmem_ip_port="tcp://127.0.0.1:29862", timeout=120)
+    assert namespace["prepare_worker"](0, args, 0, 2, {}) is operator
+    assert events == ["device", "root-loader", "training-extension", "group"]
 
 
 @pytest.mark.parametrize("debug", [False, True])

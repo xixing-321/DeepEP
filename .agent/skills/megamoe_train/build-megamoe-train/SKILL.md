@@ -168,7 +168,9 @@ import sys
 import torch
 import torch_npu
 import deep_ep
-import deep_ep._C as core_native
+from deep_ep._native import require_native
+
+core_native = require_native("MegaMoE training installation check")
 from deep_ep_experimental.megamoe_train import MegaMoeBF16Train
 from deep_ep_experimental.megamoe_train import _C as train_native
 

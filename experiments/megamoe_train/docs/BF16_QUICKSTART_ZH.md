@@ -9,7 +9,7 @@
 
    ```bash
    cd /tmp
-   python -c "import deep_ep, deep_ep_experimental.megamoe_train; print('ok')"
+   python -c "import torch, torch_npu; from deep_ep._native import require_native; require_native('MegaMoE training installation check'); from deep_ep_experimental.megamoe_train import _C; print(_C.__file__)"
    ```
 
 2. 已加载与 wheel 匹配的 CANN 环境。wheel 自带 SHMEM 运行库，运行时不需要 `SHMEM_ROOT` 或外部 SHMEM 动态库路径；使用新进程，避免预加载另一套 SHMEM。

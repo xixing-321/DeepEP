@@ -39,6 +39,9 @@ python -m pip install --force-reinstall --no-deps dist/*.whl
 libraries under `deep_ep/.libs` and records their hashes. Installed training loads
 those libraries through the root loader; only the matching CANN environment is
 needed at run time. Do not preload another SHMEM SDK into the same process.
+For a native import check, follow the [build skill](../../.agent/skills/megamoe_train/build-megamoe-train/SKILL.md#4-检查安装与原生扩展加载):
+call the root `require_native()` loader before importing the training extension.
+Normal `MegaMoeBF16Train` construction performs this bootstrap automatically.
 
 The option defaults to OFF:
 

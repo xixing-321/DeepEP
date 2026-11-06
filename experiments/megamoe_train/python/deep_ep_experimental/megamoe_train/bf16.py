@@ -97,14 +97,14 @@ class MegaMoeBF16Train(torch.nn.Module):
         super().__init__()
         if ep_group is None:
             raise ValueError("Pass an existing EP ProcessGroup or StoreGroup")
-        from . import _C
-
         self._npu = npu_api()
         self._stream = self._npu.current_stream()
+        native = require_native("MegaMoeBF16Train")
+        from . import _C
+
         self._runtime = _TrainRuntime(ep_group, local_mem_size, timeout, debug_collectives=debug_collectives)
         # Root Session memset must finish on every peer before any generation signal.
         self._runtime.barrier()
-        native = require_native("MegaMoeBF16Train")
         address = native.megamoe_train_workspace_address(self._runtime.native)
         like = torch.empty((), device=f"npu:{self._runtime.device}", dtype=torch.bfloat16)
         self._executor = _C.BF16(address, local_mem_size, self._runtime.rank, self._runtime.world_size, like)
