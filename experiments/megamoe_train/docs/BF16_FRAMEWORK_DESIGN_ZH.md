@@ -30,7 +30,7 @@ y, counts = op(
 op.close()
 ```
 
-构造函数为 `MegaMoeBF16Train(ep_group, local_mem_size, *, timeout=120)`。计算接口为 `forward(x, topk_ids, topk_weights, w1, w2, max_recv_tokens, *, swiglu_limit=0.0, save_gmm1_output="bf16")`。
+构造函数为 `MegaMoeBF16Train(ep_group, local_mem_size, *, timeout=120, debug_collectives=False)`。计算接口为 `forward(x, topk_ids, topk_weights, w1, w2, max_recv_tokens, *, swiglu_limit=0.0, save_gmm1_output="bf16")`。
 
 令 `M` 为当前 rank 的输入 token 数，`H` 为 hidden 维，`F` 为专家中间维，`T` 为每个 token 的路由数量，`E` 为每个 rank 的本地专家数，`EP` 为进程组大小。
 
@@ -39,6 +39,7 @@ op.close()
 | `ep_group` | 已有 ProcessGroup 或 StoreGroup | 提供 EP 身份和初始化协调；不能为 `None`，由调用方持有 |
 | `local_mem_size` | 整数，字节 | 当前 rank 的对称窗口容量，至少 2 MiB，按 2 MiB 对齐 |
 | `timeout` | 整数，1..3600 秒 | SHMEM 初始化和控制操作超时；group 自身超时另由调用方设置 |
+| `debug_collectives` | bool，默认 `False` | 各 rank 构造时设置一致；开启后逐次集体检查前向／反向阶段及路由权重 dtype |
 | `x` | BF16 `[M,H]` | 当前源 rank 的输入 |
 | `topk_ids` | int32 `[M,T]` | 全局专家编号，按 `ep_rank * E + local_expert` 解释 |
 | `topk_weights` | BF16 或 FP32 `[M,T]` | 对应路由权重，可参与求导；所有 EP rank 在同次调用中使用相同 dtype |
@@ -50,9 +51,12 @@ op.close()
 | `y` | BF16 `[M,H]` | combine 回当前源 rank 的输出 |
 | `counts` | int32 `[E]` | 本地各专家接收的路由行数，不参与求导 |
 
-每次前向和反向都在启动原生算子前集体检查调用阶段与路由权重 dtype。
+默认在每次前向和反向启动原生算子前只做本地路由权重 dtype 合法性检查，不为此增加跨 rank collective。
+各 rank 仍须保证同次调用的 dtype 一致，并以相容顺序调用前后向。
+设置 `debug_collectives=True` 后，每次原生调用前集体检查前向／反向阶段和 dtype；此检查包含 Host 协调与等待，性能结果需记录该设置。
+它不检查图身份或全部调用参数，也不保证完整操作序列正确；某个 rank 未参加调用或提前退出时，不能依靠它保证其他 rank 正常退出。
+本地校验报错后由训练框架终止整个分布式作业。
 同一实例可以按各 rank 一致的顺序切换 BF16／FP32，排队的计算图保留各自 p 的 dtype。
-此检查包含一次 Host 协调；端到端耗时需包含这项开销。
 
 Tensor 输入必须连续并位于构造时选定的同一 NPU。也支持权重布局 `w1=[E,H,2F]`、`w2=[E,F,H]`；Host 按形状识别，返回的权重梯度保持输入布局。
 
@@ -132,7 +136,7 @@ C++ 计算完整四类梯度，没有根据单个输入的 `requires_grad` 选�
 
 构造前，调用方先创建 EP group、选定本地 NPU，并设置各 rank 一致且可达的独立 `DEEPEP_SHMEM_ENDPOINT`。该端口用于 SHMEM bootstrap，不应与训练框架 rendezvous 或测试协调服务争用同一监听端口。
 
-构造时，`_TrainRuntime` 选择根扩展的 `create_megamoe_train_runtime`，协调容量、超时、bootstrap 地址和设备映射，并进行进程级互斥检查。根 Session 初始化 SHMEM、申请并清零对称窗口；模块执行 barrier 后，执行器借用窗口地址，保存各 peer 地址的持久 context。
+构造时，`_TrainRuntime` 选择根扩展的 `create_megamoe_train_runtime`，协调容量、超时、bootstrap 地址、设备映射和 `debug_collectives` 设置，并进行进程级互斥检查。各 rank 的 `debug_collectives` 不一致会在创建 SHMEM 资源前被拒绝。根 Session 初始化 SHMEM、申请并清零对称窗口；模块执行 barrier 后，执行器借用窗口地址，保存各 peer 地址的持久 context。
 
 训练 Session 使用 **MTE/default**。已有 ProcessGroup 或 StoreGroup 提供 rank/size 及初始化协调，实际 token 和梯度搬运由设备内核访问 SHMEM peer 窗口完成。传入 HCCL ProcessGroup不表示数据面改为 HCCL，也不表示跨节点传输已经通过验收。
 

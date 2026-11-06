@@ -19,8 +19,12 @@ class _TrainRuntime(Runtime):
     _megamoe_train = True
 
     def validate_topk_weight_type(self, dtype, stage):
-        """Check each launch collectively before interpreting symmetric offsets."""
+        """Check dtype locally, with optional cross-rank dtype and phase checks."""
         code = {torch.bfloat16: 0, torch.float32: 1}.get(dtype, -1)
+        if not self.debug_collectives:
+            if code < 0:
+                raise ValueError("topk_weights must be bfloat16 or float32")
+            return
         local_values = [stage, code]
         if isinstance(self.group, StoreGroup):
             values = self.group.all_gather(local_values, "training TopK weight configuration")
@@ -89,7 +93,7 @@ class MegaMoeBF16Train(torch.nn.Module):
     streams, and simultaneous inference/communication owners are unsupported.
     """
 
-    def __init__(self, ep_group, local_mem_size, *, timeout=120):
+    def __init__(self, ep_group, local_mem_size, *, timeout=120, debug_collectives=False):
         super().__init__()
         if ep_group is None:
             raise ValueError("Pass an existing EP ProcessGroup or StoreGroup")
@@ -97,7 +101,7 @@ class MegaMoeBF16Train(torch.nn.Module):
 
         self._npu = npu_api()
         self._stream = self._npu.current_stream()
-        self._runtime = _TrainRuntime(ep_group, local_mem_size, timeout)
+        self._runtime = _TrainRuntime(ep_group, local_mem_size, timeout, debug_collectives=debug_collectives)
         # Root Session memset must finish on every peer before any generation signal.
         self._runtime.barrier()
         native = require_native("MegaMoeBF16Train")

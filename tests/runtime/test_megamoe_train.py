@@ -94,8 +94,9 @@ def test_training_close_drains_stream_and_is_idempotent():
     assert calls == ["sync", "session-close", "op-close"] and op._closed
 
 
-def test_topk_dtype_coordination_rejects_mismatch_and_allows_switching():
-    """Exercise the actual collective check without importing Torch/NPU."""
+@pytest.fixture
+def topk_dtype_check():
+    """Exercise the actual source method body without importing Torch/NPU."""
     import ast
 
     source = (
@@ -111,26 +112,141 @@ def test_topk_dtype_coordination_rejects_mismatch_and_allows_switching():
     class Group:
         peer = None
 
+        def __init__(self):
+            self.calls = []
+
         def all_gather(self, value, stage):
+            self.calls.append((value, stage))
             return [value, self.peer if self.peer is not None else value]
 
     namespace = {"torch": SimpleNamespace(bfloat16="bf16", float32="fp32"), "StoreGroup": Group}
     exec(compile(ast.Module(body=[method], type_ignores=[]), str(source), "exec"), namespace)
-    check = namespace["validate_topk_weight_type"]
-    group = Group()
-    runtime = SimpleNamespace(group=group)
-    # Several forwards may retain different p dtypes for their later backwards.
-    for stage, dtype in ((0, "bf16"), (0, "fp32"), (1, "fp32"), (1, "bf16")):
-        check(runtime, dtype, stage)
-    group.peer = [0, 1]
-    with pytest.raises(ValueError, match="EP ranks"):
-        check(runtime, "bf16", 0)
-    group.peer = [1, 0]
-    with pytest.raises(ValueError, match="EP ranks"):
-        check(runtime, "bf16", 0)
-    group.peer = None
+    return namespace["validate_topk_weight_type"], Group
+
+
+@pytest.mark.parametrize("debug", [False, True])
+def test_topk_local_dtype_check_always_rejects_unsupported_dtype(topk_dtype_check, debug):
+    check, group_type = topk_dtype_check
+    group = group_type()
+    runtime = SimpleNamespace(group=group, debug_collectives=debug)
     with pytest.raises(ValueError, match="bfloat16 or float32"):
         check(runtime, "fp16", 0)
+    if not debug:
+        assert not group.calls
+
+
+@pytest.mark.parametrize("debug", [False, True])
+def test_mixed_queued_dtype_launches_do_not_require_one_persistent_dtype(topk_dtype_check, debug):
+    check, group_type = topk_dtype_check
+    group = group_type()
+    runtime = SimpleNamespace(group=group, debug_collectives=debug)
+    # Different forwards may retain their own p dtype until reverse backwards.
+    # This is dtype/stage agreement, not a graph-identity or full order protocol.
+    for stage, dtype in ((0, "bf16"), (0, "fp32"), (1, "fp32"), (1, "bf16")):
+        check(runtime, dtype, stage)
+    assert len(group.calls) == (4 if debug else 0)
+
+
+@pytest.mark.parametrize("peer", [[0, 1], [1, 0]])
+def test_debug_topk_coordination_rejects_peer_dtype_or_stage(topk_dtype_check, peer):
+    check, group_type = topk_dtype_check
+    group = group_type()
+    runtime = SimpleNamespace(group=group, debug_collectives=True)
+    group.peer = peer
+    with pytest.raises(ValueError, match="EP ranks"):
+        check(runtime, "bf16", 0)
+    assert len(group.calls) == 1
+
+
+@pytest.mark.parametrize("debug", [False, True])
+def test_training_wrapper_passes_debug_option_to_owning_runtime(monkeypatch, debug):
+    """Exercise the real constructor's default and explicit debug forwarding."""
+    import ast
+    import sys
+    from types import ModuleType
+
+    source = (
+        Path(__file__).resolve().parents[2]
+        / "experiments/megamoe_train/python/deep_ep_experimental/megamoe_train/bf16.py"
+    )
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "MegaMoeBF16Train")
+    calls = []
+    session = SimpleNamespace(native=object(), device=0, rank=0, world_size=2, barrier=lambda: None)
+
+    def runtime(*args, **kwargs):
+        calls.append((args, kwargs))
+        return session
+
+    class Module:
+        pass
+
+    package = ModuleType("training_wrapper_projection")
+    package.__path__ = []
+    package._C = SimpleNamespace(BF16=lambda *args: object())
+    monkeypatch.setitem(sys.modules, package.__name__, package)
+    namespace = {
+        "__name__": package.__name__ + ".bf16",
+        "__package__": package.__name__,
+        "torch": SimpleNamespace(nn=SimpleNamespace(Module=Module), empty=lambda *a, **kw: object(), bfloat16="bf16"),
+        "npu_api": lambda: SimpleNamespace(current_stream=lambda: object()),
+        "require_native": lambda operation: SimpleNamespace(megamoe_train_workspace_address=lambda native: 1234),
+        "_TrainRuntime": runtime,
+    }
+    exec(compile(ast.Module(body=[cls], type_ignores=[]), str(source), "exec"), namespace)
+    group = object()
+    kwargs = {"debug_collectives": True} if debug else {}
+    namespace["MegaMoeBF16Train"](group, 2 << 20, **kwargs)
+    assert len(calls) == 1
+    assert calls[0][1]["debug_collectives"] is debug
+
+
+@pytest.mark.parametrize("debug", [False, True])
+@pytest.mark.parametrize("peer_mismatch", [False, True])
+def test_training_bootstrap_agrees_on_debug_before_creating_native_owner(monkeypatch, debug, peer_mismatch):
+    """Training uses the common one-time configuration gate, even with debug off."""
+
+    class Group:
+        def rank(self):
+            return 0
+
+        def size(self):
+            return 2
+
+        def all_gather(self, value, stage):
+            assert stage == "runtime configuration"
+            peer = list(value)
+            peer[6] = 1  # A distinct local NPU on the same mocked Linux host.
+            if peer_mismatch:
+                peer[-1] ^= 16  # The shared runtime wire bit for debug_collectives.
+            return [value, peer]
+
+    created = []
+    native = SimpleNamespace(
+        Runtime=lambda *args: pytest.fail("selected core factory"),
+        create_megamoe_train_runtime=lambda *args: created.append(args) or SimpleNamespace(close=lambda: None),
+        runtime_busy=lambda: False,
+    )
+    monkeypatch.setattr(_runtime, "StoreGroup", Group)
+    monkeypatch.setattr(_runtime, "require_native", lambda operation: native)
+    monkeypatch.setattr(_runtime, "_OWNER", None)
+    monkeypatch.setattr(_runtime, "_host_boot_id", lambda: "same-host")
+    monkeypatch.setattr(
+        _runtime,
+        "npu_api",
+        lambda: SimpleNamespace(
+            current_device=lambda: 0, Stream=lambda **kwargs: SimpleNamespace(synchronize=lambda: None)
+        ),
+    )
+    monkeypatch.setenv("DEEPEP_SHMEM_ENDPOINT", "tcp://127.0.0.1:29862")
+    if peer_mismatch:
+        with pytest.raises(ValueError, match="debug_collectives"):
+            TrainingRuntime(Group(), 2 << 20, debug_collectives=debug)
+        assert not created and _runtime._OWNER is None
+    else:
+        runtime = TrainingRuntime(Group(), 2 << 20, debug_collectives=debug)
+        assert runtime.debug_collectives is debug and len(created) == 1
+        runtime.close()
 
 
 def test_expert_ready_builds_use_distinct_cache_and_record_actual_policy(monkeypatch, tmp_path):

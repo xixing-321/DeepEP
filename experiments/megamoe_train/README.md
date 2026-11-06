@@ -102,6 +102,18 @@ Pass an existing ProcessGroup or a `deep_ep` StoreGroup as `ep_group`; the
 caller owns that group. The training Runtime owns a root Session and selects
 the MTE backend. Do not construct a second DeepEP buffer or inference runtime
 concurrently in the same process.
+
+The constructor accepts `timeout=120` and `debug_collectives=False` as keyword-only
+arguments. By default, route-weight dtype is checked locally without a dtype
+collective before each forward or backward. All EP ranks must still use the same
+route-weight dtype and compatible call order. Set `debug_collectives=True` on every
+rank to check the forward/backward stage and dtype collectively before each native
+launch. Runtime initialization checks that this setting agrees across ranks before
+creating SHMEM resources. Debug checks add Host coordination and waiting; record
+the setting when measuring performance. They do not validate shapes or graph
+identities, or guarantee the complete operation sequence. If a rank exits early
+or raises a local validation error, the framework must terminate the whole job.
+
 Device qualification is single-node. ProcessGroup-based training integration,
 multi-node transport, EP subgroups and larger EP sizes need separate
 qualification before deployment; StoreGroup test coverage and the API's upper
@@ -111,7 +123,7 @@ rank bound are not guarantees for those integration paths or topologies.
   `topk_weights`: `[M,T]` BF16 or FP32. `dtopk_weights` has the same dtype as
   `topk_weights`; FP32 probabilities retain their extra mantissa bits through
   dispatch and activation weighting. All EP ranks must use the same route-weight
-  dtype for a call. Tensor dtype selects the native path; no new public API flag is needed.
+  dtype for a call. Tensor dtype selects the native path.
   Tensor inputs are contiguous and reside on the construction NPU.
 - Install the Host extension and device library from the same complete wheel.
   Shared tiling includes the route-weight dtype; mixing an older SO with a newer
