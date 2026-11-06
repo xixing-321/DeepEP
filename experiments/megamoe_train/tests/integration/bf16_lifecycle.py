@@ -61,7 +61,8 @@ def main():
         assert values[1].grad.dtype == values[1].dtype
         return [y.detach().cpu(), counts.cpu(), *(value.grad.cpu() for value in values)]
 
-    op = MegaMoeBF16Train(group, capacity)
+    # Peer dtype mismatches are rejected by the opt-in collective diagnostics.
+    op = MegaMoeBF16Train(group, capacity, debug_collectives=True)
     expect_error(lambda: MegaMoeBF16Train(group, capacity), "already owns")
     expect_error(
         lambda: forward(op, "bf16", 0.0, torch.float32 if rank % 2 else torch.bfloat16),
