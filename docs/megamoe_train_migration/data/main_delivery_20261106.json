@@ -1,0 +1,4055 @@
+{
+  "date": "2026-11-06",
+  "delivery": {
+    "upstream_main": "89e19399260c16c483b3614f57d2e3c90eb9fc2e",
+    "main_product_commit": "0b5f385fd404a09446d317235d5e31c01471ed94",
+    "main_delivery_commit": "3f8f3004885fa47c05a78fbce61fc183136a220d",
+    "training_product_commit": "2d6d450",
+    "preserved_xx_commit": "273ef3fece1f6111694133d412171e70739cc477",
+    "formal_changed_files": 164,
+    "formal_tree_files": 644,
+    "main_has_process_directory": false,
+    "main_has_pages_deployment": false,
+    "upstream_pr_created": false
+  },
+  "dependencies": {
+    "shmem": "836d3fd6f9c2f3b10a6acac36ccfd531b104d4a7",
+    "catlass": "2b4bd7cbf7e67ebab23d7d5a99d472c83f90d9a1"
+  },
+  "final_artifact": {
+    "wheel_sha256": "e44fdc98979753917e286e0fcd052ef99205d70e9ab67001b6bd731368a9c952",
+    "wheel_bytes": 6488172,
+    "source_commit": "3f8f3004885fa47c05a78fbce61fc183136a220d",
+    "source_fingerprint": "a9d7368133a9c133d84c39234bb5e4947bec9b61d7b386467e345241b6571014",
+    "source_archive_sha256": "4477e374f00e50855d4a999c3dc0163ba9dc926226b6d22f7cb2019c6e347267",
+    "source_clean": true,
+    "native_and_all_package_python_identical_to_precision_wheel": true,
+    "native_hashes": {
+      "deep_ep/_C.cpython-312-aarch64-linux-gnu.so": "b6d2a56144bb25fd4ac6a42a5c0ad9cd8cfe75443fd313dfd42c386d03f67957",
+      "deep_ep/_clos_C.cpython-312-aarch64-linux-gnu.so": "16a7ec9999a6e8c649fcdfbee9d2d64878e0e8ba2ba739cec6decf102db5b5a8",
+      "deep_ep/libdeepep_clos_kernels.so": "ce7a2f63d4cf7c80d4e8bacc934d9b28ebdcca2e6cc8bfcb54a3b5de9f632a38",
+      "deep_ep/libdeepep_kernels.so": "7bae335714deb88f25b4c4c948d57429be119c639340bff1e33d32f671e92ebf",
+      "deep_ep/.libs/aclshmem_bootstrap_config_store.so": "89ecfbab893b15d3d1eca6ae342583ba72f7a122099f111260568e8bfdbe4e9f",
+      "deep_ep/.libs/aclshmem_bootstrap_uid.so": "743db111103e45b2ae0f8631b6b946fe87fdb0105958dcc52fc68ed101696007",
+      "deep_ep/.libs/libshmem.so": "d8b80ac4458a4c5bd572fc6f3a07315363fad01b523af9d419857e5ee8e505b5",
+      "deep_ep/.libs/libshmem_utils.so": "b4bf855df5745453e2f5060db59391fde6acada425c33013354e033f31e3fd11",
+      "deep_ep_experimental/megamoe_train/_C.cpython-312-aarch64-linux-gnu.so": "45c5f29a27099055dbe4b247c1e1a85f295eb08c024f8e2029c2f361195bd5a0",
+      "deep_ep_experimental/megamoe_train/libdeepep_megamoe_train_bf16.so": "b199d89f36eace7e8ae659d179e29590469e25cea46e9df10dad892e5d043154"
+    },
+    "python_hashes": {
+      "ascend_deepep/__init__.py": "fcadcff73d1fff079ff17c28ab600373a6f3198a10c00950bf47a91fea82762b",
+      "deep_ep/__init__.py": "37075426e38e6ffdf145a9f41ddb71f6bdea5dff7f2b60ec45343fedb97f3982",
+      "deep_ep/_backend_lock.py": "c0da65ed79f0bb3bfb4a9dd03046a4ee5409ca2d3e24ef0bf8c8c257fc8b2bf7",
+      "deep_ep/_compat.py": "62237647237e12524280219506ba3c54aae2843d947989811af672802dd8241c",
+      "deep_ep/_config.py": "440f3df00a3e461646301b878aa9ed91d65daf4d041d8273a95b46cd84eef7da",
+      "deep_ep/_machine.py": "87da48e40073b737c758e0c64b1a49d1d20ddeb690b3696a2f97a2b657e91bbb",
+      "deep_ep/_native.py": "7407fb87a6a96a344d2996733e678fa5fe241d1dca96e3ed35fb4f661e53d224",
+      "deep_ep/_runtime.py": "fb7faae2de88655b03c816cb9610f82b4a7a8f2739367c335c2a90dcf7048c00",
+      "deep_ep/_store.py": "5615f1e28642f9fb9b8e98e29b3e41eca0da45272ab5f5dcbaebeeff611f5fdd",
+      "deep_ep/buffer.py": "beb6f46a4a925e98f9a29fb83572acfa99616683a84da5fcbaba97356d80fdb0",
+      "deep_ep/backends/__init__.py": "25b48db5abf04a769169cfdf3d9314ce1210a2e57a187fef833f503f4cc86719",
+      "deep_ep/backends/direct/__init__.py": "a528b9c7c862148c0b831e8cff0b0cf746cbdbbcd2bf6c7615ac1a2145b13073",
+      "deep_ep/backends/direct/_build_config.py": "28c85cca23b0b6786057e9932d96f8e930a5600e877459580d6cb5118fba17ff",
+      "deep_ep/backends/direct/_native.py": "5b113b291a037c5173c7bfa5b3fbf5163e5bcd34e4ede9bfb0e6ab8562995e0e",
+      "deep_ep/backends/direct/api.py": "ab3e58d8d12128fe90a03092cdfc98d56f9ab9c8912d01285f7a29c85ea8160a",
+      "deep_ep/backends/direct/buffer.py": "2e4f99bec911b21eb368f9e4bc3a64de173038f789b7dfea82617d39b6020b26",
+      "deep_ep/backends/direct/config.py": "dd53d8e355dfca505a63b2dd49046821a3d9f64f3b0186d7fc6c04526bd2a2ab",
+      "deep_ep/backends/direct/dtypes.py": "0dcb8c487d2b9253f2eab5305e23aa98cfe9937a1ca033542d0bfc690f73acae",
+      "deep_ep/backends/direct/elastic.py": "be85f6a9e5404324b53256ac58470c1f863f6940e64c80481b31bb2e6ecffeef",
+      "deep_ep/backends/direct/event.py": "8ed4f8e2ad28f67f3f5c8f3159a8f34d9b1cd766c0e9b76319e2ab8158a263e3",
+      "deep_ep/backends/direct/expand.py": "f9f552767c6f0590929a982467997f3df2f34c62bbdfe33c1ee1fa94cc930dfe",
+      "deep_ep/backends/direct/resources.py": "c52f47d784b022c0ce4f18b48b74b5d3403ea553fc5d47b7a54192a5bf2ac7a4",
+      "deep_ep/backends/direct/udma_policy.py": "5f7cbf5395fe52224d51ebef505ba453bfef8a662afa5fc6bca62ccd6717d587",
+      "deep_ep/backends/direct/utils/__init__.py": "3feab0866b8fe30859461b5229564db2b95040a372989631e916682aeae32f1b",
+      "deep_ep/backends/global_clos/__init__.py": "3fa3a1830b97577741f73e6183a3f9c9c19934f6c0ef46cdf1b8330ca0227f84",
+      "deep_ep/backends/mesh_clos/__init__.py": "e76f28760e90250c0d4e69723d5fbce0730d2fa3b59626279e8cdfaf95e2550b",
+      "deep_ep/backends/mesh_clos/_elastic_layout.py": "d8facd3e423690a498fc985366b669547919369e86c16fedfe1e9a5a2e7b3a04",
+      "deep_ep/backends/mesh_clos/buffer.py": "4b39df131d68cfa5bce64cac7dc3310d68de78a99b6e10d41f2bace3a879081c",
+      "deep_ep/backends/mesh_clos/elastic.py": "48081b1e4172cafc652dc75b87edfda1f96378c891313fed63ef99f103b012c9",
+      "deep_ep/backends/mesh_pcie/__init__.py": "e5a94ce3c037eea786cbf7fa0b4e49f1439989b4a4e00f28544d0da6627a9a20",
+      "deep_ep/buffers/__init__.py": "69ac499c3a40a02e73ab60985605c4e148c878bbed11c9235e436c04ec7468bc",
+      "deep_ep/buffers/_combine_reuse.py": "9747538b6575b752ea44469ad94e9490f824d7e2c941452bb3cf06deafd26250",
+      "deep_ep/buffers/_elastic_layout.py": "ac8acec17f2dc757fc17a05e0cd58e8b72faa60393f24c1c3115ada9f145c4bf",
+      "deep_ep/buffers/elastic.py": "d729b63aeda095bb1f20afb6bb8530d115982e3173c634c856fe33892d658a06",
+      "deep_ep/buffers/legacy.py": "6cace67ffe59f3b753a0aced2231c54b905b9a85f6cfe2093f2974a97695d3bd",
+      "deep_ep/utils/__init__.py": "4d14d0e5f513f96e5a3b94bc9cf555ccd393cd84963cba5e193e284301496aea",
+      "deep_ep/utils/envs.py": "f8fc080cae7e557e8679c62e56bad737cecab90bbc850aa039dcbca7424cd3eb",
+      "deep_ep/utils/event.py": "9dc4337c58f5c0358e93a8c3b38d8ce4a0cc00db5289950c4fd87e42cd95e923",
+      "deep_ep/utils/math.py": "570de00effd8248abc4fb88abce58d2a3919c08ffcb1d5eb1dec759496ba5620",
+      "deep_ep/utils/testing.py": "e0be4d05ffa253d0d6bdfb9385190dd82214f74615e294c7c7cde98181ff6e01",
+      "deep_ep_experimental/__init__.py": "ea81729d16659a9ac47b73722f1cd02d9467788dfd140f3eff01023bfecfc889",
+      "deep_ep_experimental/megamoe_train/__init__.py": "4e31e346c2e2b7f86e1844b7eeec7fe3007a32ce7a03ddc7da03630c60643fe1",
+      "deep_ep_experimental/megamoe_train/bf16.py": "86bb936a2721c1323df007efd97b83c50798295113edee5c02c1a11d1cc3a232"
+    }
+  },
+  "cpu_checks": {
+    "linux_runtime_passed": 300,
+    "reference_contract_passed": 23,
+    "windows_training_runtime_passed": 24,
+    "formal_files_precommit_passed": true
+  },
+  "visual": {
+    "main_source_commit": "0b5f385fd404a09446d317235d5e31c01471ed94",
+    "source_files": 24,
+    "build": "PASS",
+    "check": "PASS",
+    "editor": "PASS",
+    "browser": "PASS",
+    "vsix": "PASS",
+    "main_site_url": "",
+    "training_site_retained": true
+  },
+  "precision": {
+    "scope": "Ascend950 EP2 precision qualification; no performance sampling",
+    "complete": true,
+    "driver_exit_code": 0,
+    "counts": {
+      "PASS": 9,
+      "FAIL": 0,
+      "ERROR": 0,
+      "NOT_RUN": 0
+    },
+    "environment": {
+      "cann": "9.2.0",
+      "cann_internal_version": "V100R001C12SPC001B237",
+      "compiler_timestamp": "20261015_201912253",
+      "python": "3.12.13",
+      "torch": "2.10.0+cpu",
+      "torch_npu": "2.10.0.post6",
+      "atk": "26.9.8",
+      "atk_private_precision": "0.1.0"
+    },
+    "implementation": {
+      "evaluated_wheel_sha256": "e6f94ebfda5547dffb36ddd3173ac5afdddc001009815475c3a8263dc965942f",
+      "train_kernel_sha256": "b199d89f36eace7e8ae659d179e29590469e25cea46e9df10dad892e5d043154",
+      "bf16_python_sha256": "86bb936a2721c1323df007efd97b83c50798295113edee5c02c1a11d1cc3a232",
+      "precision_cli_sha256": "fa622e744ae70a26f9bd698721d88be1301d98297e529e08dcffe27721d00264",
+      "precision_plan_sha256": "b5ab23f229025161d1d8ac4d079014ea65bb590f0bf64a3878744765e8d35bae"
+    },
+    "protocol": {
+      "ep": 2,
+      "seed": 20260825,
+      "atk_provider": "private",
+      "atk_standard": "cv_fused_double_benchmark",
+      "thresholds": {
+        "max_re_ratio": 5.0,
+        "avg_re_ratio": 1.5,
+        "root_mean_squared_ratio": 1.5,
+        "number_count_radio": 2
+      },
+      "thresholds_changed": false,
+      "counts": "exact",
+      "outputs": [
+        "y",
+        "dx",
+        "dtopk_weights",
+        "dw1",
+        "dw2"
+      ],
+      "bf16_p_values": "bf16-rounded",
+      "fp32_p_values": "full-precision",
+      "same_p_values_across_dtypes": false
+    },
+    "cases": [
+      {
+        "id": "tail_h7168_bf16",
+        "shape": {
+          "ep": 2,
+          "m_per_source": 129,
+          "hidden": 7168,
+          "ffn": 3072,
+          "topk": 6,
+          "experts_per_rank": 4
+        },
+        "topk_weight_dtype": "bf16",
+        "save": "bf16",
+        "swiglu_limit": 10,
+        "status": "PASS",
+        "cli_exit_code": 0,
+        "ranks": [
+          {
+            "rank": 0,
+            "passed": true,
+            "counts_passed": true,
+            "outputs": {
+              "y": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 924672,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 0.5,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    129,
+                    7168
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 100.06113272010404,
+                    "Actual_平均相对误差": 0.020619739505029693,
+                    "Actual_均方根误差": 0.30003569647320416,
+                    "Actual_误差均衡性": -4.023330986679422e-05,
+                    "Actual_小值域数错数量": 43,
+                    "Benchmark_最大相对误差": 100.06113272010404,
+                    "Benchmark_平均相对误差": 0.020619739505029693,
+                    "Benchmark_均方根误差": 0.30003569647320416,
+                    "Benchmark_误差均衡性": -4.023330986679422e-05,
+                    "Benchmark_小值域数错数量": 43,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 1.0,
+                    "误差均衡性差值": 4.023330986679422e-05,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              },
+              "dx": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 924672,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 16.0,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    129,
+                    7168
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 266.72454190651325,
+                    "Actual_平均相对误差": 0.025855760572027098,
+                    "Actual_均方根误差": 0.6144482504444889,
+                    "Actual_误差均衡性": -0.00015272699373349293,
+                    "Actual_小值域数错数量": 24,
+                    "Benchmark_最大相对误差": 266.72454190651325,
+                    "Benchmark_平均相对误差": 0.025855760572027098,
+                    "Benchmark_均方根误差": 0.6144482504444889,
+                    "Benchmark_误差均衡性": -0.00015272699373349293,
+                    "Benchmark_小值域数错数量": 24,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 1.0,
+                    "误差均衡性差值": 0.00015272699373349293,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              },
+              "dtopk_weights": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 774,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 512.0,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    129,
+                    6
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 1.8420868229726075,
+                    "Actual_平均相对误差": 0.011555114694081284,
+                    "Actual_均方根误差": 2.8261975946694426,
+                    "Actual_误差均衡性": -0.0036051158204971085,
+                    "Actual_小值域数错数量": 0,
+                    "Benchmark_最大相对误差": 1.8420868229726075,
+                    "Benchmark_平均相对误差": 0.011555114694081284,
+                    "Benchmark_均方根误差": 2.8261975946694426,
+                    "Benchmark_误差均衡性": -0.0036051158204971085,
+                    "Benchmark_小值域数错数量": 1,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 1.0,
+                    "误差均衡性差值": 0.0036051158204971085,
+                    "小值域数错误差比例": 0.0
+                  }
+                }
+              },
+              "dw1": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 176160768,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 0.1,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    4,
+                    6144,
+                    7168
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 162.53277346217257,
+                    "Actual_平均相对误差": 0.010360356960372605,
+                    "Actual_均方根误差": 0.004884331322933308,
+                    "Actual_误差均衡性": -5.612408732918389e-08,
+                    "Actual_小值域数错数量": 675530,
+                    "Benchmark_最大相对误差": 162.53277346217257,
+                    "Benchmark_平均相对误差": 0.010360356960372605,
+                    "Benchmark_均方根误差": 0.004884331322933308,
+                    "Benchmark_误差均衡性": -5.612408732918389e-08,
+                    "Benchmark_小值域数错数量": 675530,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 1.0,
+                    "误差均衡性差值": 5.612408732918389e-08,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              },
+              "dw2": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 88080384,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 0.1,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    4,
+                    7168,
+                    3072
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 3.4902652973636656,
+                    "Actual_平均相对误差": 0.00991541742155784,
+                    "Actual_均方根误差": 0.0028078710567894355,
+                    "Actual_误差均衡性": 2.2038747277786158e-07,
+                    "Actual_小值域数错数量": 341976,
+                    "Benchmark_最大相对误差": 3.4902652973636656,
+                    "Benchmark_平均相对误差": 0.00991541742155784,
+                    "Benchmark_均方根误差": 0.0028078710567894355,
+                    "Benchmark_误差均衡性": 2.2038747277786158e-07,
+                    "Benchmark_小值域数错数量": 341976,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 0.7188149905380955,
+                    "误差均衡性差值": 2.2038747277786158e-07,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              }
+            }
+          },
+          {
+            "rank": 1,
+            "passed": true,
+            "counts_passed": true,
+            "outputs": {
+              "y": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 924672,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 8.0,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    129,
+                    7168
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 140.97466528748032,
+                    "Actual_平均相对误差": 0.021536627573313486,
+                    "Actual_均方根误差": 0.3002017296464825,
+                    "Actual_误差均衡性": -2.9469108905778267e-05,
+                    "Actual_小值域数错数量": 26,
+                    "Benchmark_最大相对误差": 140.97466528748032,
+                    "Benchmark_平均相对误差": 0.021536627573313486,
+                    "Benchmark_均方根误差": 0.3002017296464825,
+                    "Benchmark_误差均衡性": -2.9469108905778267e-05,
+                    "Benchmark_小值域数错数量": 26,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 1.0,
+                    "误差均衡性差值": 2.9469108905778267e-05,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              },
+              "dx": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 924672,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 4.0,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    129,
+                    7168
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 341.00750354031186,
+                    "Actual_平均相对误差": 0.0285658643234108,
+                    "Actual_均方根误差": 0.6327751757229478,
+                    "Actual_误差均衡性": 1.259674256684428e-05,
+                    "Actual_小值域数错数量": 29,
+                    "Benchmark_最大相对误差": 341.00750354031186,
+                    "Benchmark_平均相对误差": 0.0285658643234108,
+                    "Benchmark_均方根误差": 0.6327751757229478,
+                    "Benchmark_误差均衡性": 1.259674256684428e-05,
+                    "Benchmark_小值域数错数量": 29,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 1.0,
+                    "误差均衡性差值": 1.259674256684428e-05,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              },
+              "dtopk_weights": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 774,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 256.0,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    129,
+                    6
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 3.546076729420075,
+                    "Actual_平均相对误差": 0.018763925108402787,
+                    "Actual_均方根误差": 2.8647924298990475,
+                    "Actual_误差均衡性": -0.0035209203849183913,
+                    "Actual_小值域数错数量": 0,
+                    "Benchmark_最大相对误差": 3.546076729420075,
+                    "Benchmark_平均相对误差": 0.018763925108402787,
+                    "Benchmark_均方根误差": 2.8647924298990475,
+                    "Benchmark_误差均衡性": -0.0035209203849183913,
+                    "Benchmark_小值域数错数量": 1,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 1.0,
+                    "误差均衡性差值": 0.0035209203849183913,
+                    "小值域数错误差比例": 0.0
+                  }
+                }
+              },
+              "dw1": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 176160768,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 0.125,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    4,
+                    6144,
+                    7168
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 111.86134494606549,
+                    "Actual_平均相对误差": 0.009979620616208874,
+                    "Actual_均方根误差": 0.003619967492810695,
+                    "Actual_误差均衡性": -8.105732237616726e-08,
+                    "Actual_小值域数错数量": 698825,
+                    "Benchmark_最大相对误差": 111.86134494606549,
+                    "Benchmark_平均相对误差": 0.009979620616208874,
+                    "Benchmark_均方根误差": 0.003619967492810695,
+                    "Benchmark_误差均衡性": -8.105732237616726e-08,
+                    "Benchmark_小值域数错数量": 698825,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 0.9267116781595379,
+                    "误差均衡性差值": 8.105732237616726e-08,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              },
+              "dw2": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 88080384,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 0.1,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    4,
+                    7168,
+                    3072
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 3.6620883189272173,
+                    "Actual_平均相对误差": 0.009827957059193808,
+                    "Actual_均方根误差": 0.00271755189467465,
+                    "Actual_误差均衡性": -1.7433021306677157e-08,
+                    "Actual_小值域数错数量": 354665,
+                    "Benchmark_最大相对误差": 3.6620883189272173,
+                    "Benchmark_平均相对误差": 0.009827957059193808,
+                    "Benchmark_均方根误差": 0.00271755189467465,
+                    "Benchmark_误差均衡性": -1.7433021306677157e-08,
+                    "Benchmark_小值域数错数量": 354665,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 0.6956932850367104,
+                    "误差均衡性差值": 1.7433021306677157e-08,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "id": "tail_h7168_fp32",
+        "shape": {
+          "ep": 2,
+          "m_per_source": 129,
+          "hidden": 7168,
+          "ffn": 3072,
+          "topk": 6,
+          "experts_per_rank": 4
+        },
+        "topk_weight_dtype": "fp32",
+        "save": "bf16",
+        "swiglu_limit": 10,
+        "status": "PASS",
+        "cli_exit_code": 0,
+        "ranks": [
+          {
+            "rank": 0,
+            "passed": true,
+            "counts_passed": true,
+            "outputs": {
+              "y": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 924672,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 0.5,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    129,
+                    7168
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 94.81133460262745,
+                    "Actual_平均相对误差": 0.02141509851055882,
+                    "Actual_均方根误差": 0.29989573894316307,
+                    "Actual_误差均衡性": -1.4188568955517442e-05,
+                    "Actual_小值域数错数量": 44,
+                    "Benchmark_最大相对误差": 94.81133460262745,
+                    "Benchmark_平均相对误差": 0.02141509851055882,
+                    "Benchmark_均方根误差": 0.29989573894316307,
+                    "Benchmark_误差均衡性": -1.4188568955517442e-05,
+                    "Benchmark_小值域数错数量": 44,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 1.0,
+                    "误差均衡性差值": 1.4188568955517442e-05,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              },
+              "dx": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 924672,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 16.0,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    129,
+                    7168
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 349.0166244153337,
+                    "Actual_平均相对误差": 0.025607813715715275,
+                    "Actual_均方根误差": 0.6150888600361906,
+                    "Actual_误差均衡性": -0.00011374822803834606,
+                    "Actual_小值域数错数量": 27,
+                    "Benchmark_最大相对误差": 349.0166244153337,
+                    "Benchmark_平均相对误差": 0.025607813715715275,
+                    "Benchmark_均方根误差": 0.6150888600361906,
+                    "Benchmark_误差均衡性": -0.00011374822803834606,
+                    "Benchmark_小值域数错数量": 27,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 1.0,
+                    "误差均衡性差值": 0.00011374822803834606,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              },
+              "dtopk_weights": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "float32",
+                  "atol": 0.0001220703125,
+                  "rtol": 0.0001220703125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 774,
+                  "max_abs": 0.00048828125,
+                  "max_abs_limit": 0.01,
+                  "max_abs_index": 336
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.float32",
+                  "shape": [
+                    129,
+                    6
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 1.8372337060533726,
+                    "Actual_平均相对误差": 0.01129577530135902,
+                    "Actual_均方根误差": 2.4716708498960864,
+                    "Actual_误差均衡性": -0.003600902944843002,
+                    "Actual_小值域数错数量": 0,
+                    "Benchmark_最大相对误差": 1.8371702666165197,
+                    "Benchmark_平均相对误差": 0.011295701874072916,
+                    "Benchmark_均方根误差": 2.4716730454095646,
+                    "Benchmark_误差均衡性": -0.0036008189887615193,
+                    "Benchmark_小值域数错数量": 1,
+                    "最大相对误差比例": 1.0000345310600796,
+                    "平均相对误差比例": 1.0000065004624699,
+                    "均方根误差比例": 0.999999111729813,
+                    "误差均衡性差值": 0.003600902944843002,
+                    "小值域数错误差比例": 0.0
+                  }
+                }
+              },
+              "dw1": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 176160768,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 0.1,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    4,
+                    6144,
+                    7168
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 175.08782048484628,
+                    "Actual_平均相对误差": 0.01037810628151634,
+                    "Actual_均方根误差": 0.0048793013023220606,
+                    "Actual_误差均衡性": 8.282128670824223e-08,
+                    "Actual_小值域数错数量": 674756,
+                    "Benchmark_最大相对误差": 175.08782048484628,
+                    "Benchmark_平均相对误差": 0.01037810628151634,
+                    "Benchmark_均方根误差": 0.0048793013023220606,
+                    "Benchmark_误差均衡性": 8.282128670824223e-08,
+                    "Benchmark_小值域数错数量": 674756,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 1.0,
+                    "误差均衡性差值": 8.282128670824223e-08,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              },
+              "dw2": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 88080384,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 0.1,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    4,
+                    7168,
+                    3072
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 2.9828719883699217,
+                    "Actual_平均相对误差": 0.009926536411590402,
+                    "Actual_均方根误差": 0.0028132371558261143,
+                    "Actual_误差均衡性": -1.2515482236968054e-07,
+                    "Actual_小值域数错数量": 341885,
+                    "Benchmark_最大相对误差": 2.9828719883699217,
+                    "Benchmark_平均相对误差": 0.009926536411590402,
+                    "Benchmark_均方根误差": 0.0028132371558261143,
+                    "Benchmark_误差均衡性": -1.2515482236968054e-07,
+                    "Benchmark_小值域数错数量": 341885,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 0.7201887118914853,
+                    "误差均衡性差值": 1.2515482236968054e-07,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              }
+            }
+          },
+          {
+            "rank": 1,
+            "passed": true,
+            "counts_passed": true,
+            "outputs": {
+              "y": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 924672,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 8.0,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    129,
+                    7168
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 105.64071101114794,
+                    "Actual_平均相对误差": 0.02103057253771359,
+                    "Actual_均方根误差": 0.30053899482063773,
+                    "Actual_误差均衡性": -1.554736150547964e-05,
+                    "Actual_小值域数错数量": 35,
+                    "Benchmark_最大相对误差": 105.64071101114794,
+                    "Benchmark_平均相对误差": 0.02103057253771359,
+                    "Benchmark_均方根误差": 0.30053899482063773,
+                    "Benchmark_误差均衡性": -1.554736150547964e-05,
+                    "Benchmark_小值域数错数量": 35,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 1.0,
+                    "误差均衡性差值": 1.554736150547964e-05,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              },
+              "dx": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 924672,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 4.0,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    129,
+                    7168
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 920.6939128065776,
+                    "Actual_平均相对误差": 0.02966242290854577,
+                    "Actual_均方根误差": 0.633212687823921,
+                    "Actual_误差均衡性": -6.8885529881069825e-06,
+                    "Actual_小值域数错数量": 25,
+                    "Benchmark_最大相对误差": 920.6939128065776,
+                    "Benchmark_平均相对误差": 0.02966242290854577,
+                    "Benchmark_均方根误差": 0.633212687823921,
+                    "Benchmark_误差均衡性": -6.8885529881069825e-06,
+                    "Benchmark_小值域数错数量": 25,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 1.0,
+                    "误差均衡性差值": 6.8885529881069825e-06,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              },
+              "dtopk_weights": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "float32",
+                  "atol": 0.0001220703125,
+                  "rtol": 0.0001220703125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 774,
+                  "max_abs": 0.00048828125,
+                  "max_abs_limit": 0.01,
+                  "max_abs_index": 43
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.float32",
+                  "shape": [
+                    129,
+                    6
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 3.5504580568852364,
+                    "Actual_平均相对误差": 0.018492252549023834,
+                    "Actual_均方根误差": 2.508977016193056,
+                    "Actual_误差均衡性": -0.003588425981277146,
+                    "Actual_小值域数错数量": 0,
+                    "Benchmark_最大相对误差": 3.55028280378663,
+                    "Benchmark_平均相对误差": 0.018492118134565385,
+                    "Benchmark_均方根误差": 2.5089799428331743,
+                    "Benchmark_误差均衡性": -0.0035884898240740133,
+                    "Benchmark_小值域数错数量": 1,
+                    "最大相对误差比例": 1.0000493631376124,
+                    "平均相对误差比例": 1.0000072687432273,
+                    "均方根误差比例": 0.9999988335338723,
+                    "误差均衡性差值": 0.003588425981277146,
+                    "小值域数错误差比例": 0.0
+                  }
+                }
+              },
+              "dw1": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 176160768,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 0.125,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    4,
+                    6144,
+                    7168
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 111.18787025139352,
+                    "Actual_平均相对误差": 0.010005187351450135,
+                    "Actual_均方根误差": 0.003631406660809556,
+                    "Actual_误差均衡性": -1.0970472881324171e-07,
+                    "Actual_小值域数错数量": 699121,
+                    "Benchmark_最大相对误差": 111.18787025139352,
+                    "Benchmark_平均相对误差": 0.010005187351450135,
+                    "Benchmark_均方根误差": 0.003631406660809556,
+                    "Benchmark_误差均衡性": -1.0970472881324171e-07,
+                    "Benchmark_小值域数错数量": 699121,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 0.9296401051672464,
+                    "误差均衡性差值": 1.0970472881324171e-07,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              },
+              "dw2": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 88080384,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 0.1,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    4,
+                    7168,
+                    3072
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 3.143464645723595,
+                    "Actual_平均相对误差": 0.00980918233711608,
+                    "Actual_均方根误差": 0.0027097395088288897,
+                    "Actual_误差均衡性": 4.89684211567067e-07,
+                    "Actual_小值域数错数量": 354045,
+                    "Benchmark_最大相对误差": 3.143464645723595,
+                    "Benchmark_平均相对误差": 0.00980918233711608,
+                    "Benchmark_均方根误差": 0.0027097395088288897,
+                    "Benchmark_误差均衡性": 4.89684211567067e-07,
+                    "Benchmark_小值域数错数量": 354045,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 0.6936933142601958,
+                    "误差均衡性差值": 4.89684211567067e-07,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "id": "ready_h3584_bf16",
+        "shape": {
+          "ep": 2,
+          "m_per_source": 512,
+          "hidden": 3584,
+          "ffn": 2048,
+          "topk": 6,
+          "experts_per_rank": 4
+        },
+        "topk_weight_dtype": "bf16",
+        "save": "bf16",
+        "swiglu_limit": 0,
+        "status": "PASS",
+        "cli_exit_code": 0,
+        "ranks": [
+          {
+            "rank": 0,
+            "passed": true,
+            "counts_passed": true,
+            "outputs": {
+              "y": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 1835008,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 4.0,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    512,
+                    3584
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 49.863343702562915,
+                    "Actual_平均相对误差": 0.019104103200111855,
+                    "Actual_均方根误差": 0.12029197423310319,
+                    "Actual_误差均衡性": -2.7237272126717783e-06,
+                    "Actual_小值域数错数量": 171,
+                    "Benchmark_最大相对误差": 49.863343702562915,
+                    "Benchmark_平均相对误差": 0.019104103200111855,
+                    "Benchmark_均方根误差": 0.12029197423310319,
+                    "Benchmark_误差均衡性": -2.7237272126717783e-06,
+                    "Benchmark_小值域数错数量": 171,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 1.0,
+                    "误差均衡性差值": 2.7237272126717783e-06,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              },
+              "dx": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 1835008,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 2.0,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    512,
+                    3584
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 76.97726094534184,
+                    "Actual_平均相对误差": 0.019819225702208797,
+                    "Actual_均方根误差": 0.1713693814378923,
+                    "Actual_误差均衡性": 1.804151749584815e-05,
+                    "Actual_小值域数错数量": 136,
+                    "Benchmark_最大相对误差": 76.97726094534184,
+                    "Benchmark_平均相对误差": 0.019819225702208797,
+                    "Benchmark_均方根误差": 0.1713693814378923,
+                    "Benchmark_误差均衡性": 1.804151749584815e-05,
+                    "Benchmark_小值域数错数量": 136,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 1.0,
+                    "误差均衡性差值": 1.804151749584815e-05,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              },
+              "dtopk_weights": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 3072,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 16.0,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    512,
+                    6
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 3.4159252879374553,
+                    "Actual_平均相对误差": 0.015898648351259027,
+                    "Actual_均方根误差": 0.8064197971921404,
+                    "Actual_误差均衡性": -0.00020188744975498498,
+                    "Actual_小值域数错数量": 0,
+                    "Benchmark_最大相对误差": 3.4159252879374553,
+                    "Benchmark_平均相对误差": 0.015898648351259027,
+                    "Benchmark_均方根误差": 0.8064197971921404,
+                    "Benchmark_误差均衡性": -0.00020188744975498498,
+                    "Benchmark_小值域数错数量": 1,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 1.0,
+                    "误差均衡性差值": 0.00020188744975498498,
+                    "小值域数错误差比例": 0.0
+                  }
+                }
+              },
+              "dw1": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 58720256,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 0.1,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    4,
+                    4096,
+                    3584
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 2.9960097056434054,
+                    "Actual_平均相对误差": 0.010263603950024016,
+                    "Actual_均方根误差": 0.0027132216988553838,
+                    "Actual_误差均衡性": 1.54332859423367e-07,
+                    "Actual_小值域数错数量": 231649,
+                    "Benchmark_最大相对误差": 2.9960097056434054,
+                    "Benchmark_平均相对误差": 0.010263603950024016,
+                    "Benchmark_均方根误差": 0.0027132216988553838,
+                    "Benchmark_误差均衡性": 1.54332859423367e-07,
+                    "Benchmark_小值域数错数量": 231649,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 0.6945847549069782,
+                    "误差均衡性差值": 1.54332859423367e-07,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              },
+              "dw2": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 29360128,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 0.1,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    4,
+                    3584,
+                    2048
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 2.621546741759084,
+                    "Actual_平均相对误差": 0.010365892431922192,
+                    "Actual_均方根误差": 0.0026993376964607367,
+                    "Actual_误差均衡性": 2.2020851229599948e-08,
+                    "Actual_小值域数错数量": 116944,
+                    "Benchmark_最大相对误差": 2.621546741759084,
+                    "Benchmark_平均相对误差": 0.010365892431922192,
+                    "Benchmark_均方根误差": 0.0026993376964607367,
+                    "Benchmark_误差均衡性": 2.2020851229599948e-08,
+                    "Benchmark_小值域数错数量": 116944,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 0.6910304502939486,
+                    "误差均衡性差值": 2.2020851229599948e-08,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              }
+            }
+          },
+          {
+            "rank": 1,
+            "passed": true,
+            "counts_passed": true,
+            "outputs": {
+              "y": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 1835008,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 2.0,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    512,
+                    3584
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 67.71082248832981,
+                    "Actual_平均相对误差": 0.019003097184696522,
+                    "Actual_均方根误差": 0.12005958321932016,
+                    "Actual_误差均衡性": -8.999544426652108e-07,
+                    "Actual_小值域数错数量": 187,
+                    "Benchmark_最大相对误差": 67.71082248832981,
+                    "Benchmark_平均相对误差": 0.019003097184696522,
+                    "Benchmark_均方根误差": 0.12005958321932016,
+                    "Benchmark_误差均衡性": -8.999544426652108e-07,
+                    "Benchmark_小值域数错数量": 187,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 1.0,
+                    "误差均衡性差值": 8.999544426652108e-07,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              },
+              "dx": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 1835008,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 0.1,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    512,
+                    3584
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 105.4676546977494,
+                    "Actual_平均相对误差": 0.01987946449390039,
+                    "Actual_均方根误差": 0.17091724145609716,
+                    "Actual_误差均衡性": 3.4777804344479404e-05,
+                    "Actual_小值域数错数量": 136,
+                    "Benchmark_最大相对误差": 105.4676546977494,
+                    "Benchmark_平均相对误差": 0.01987946449390039,
+                    "Benchmark_均方根误差": 0.17091724145609716,
+                    "Benchmark_误差均衡性": 3.4777804344479404e-05,
+                    "Benchmark_小值域数错数量": 136,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 1.0,
+                    "误差均衡性差值": 3.4777804344479404e-05,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              },
+              "dtopk_weights": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 3072,
+                  "max_abs": 0.0009765625,
+                  "max_abs_limit": 0.1,
+                  "max_abs_index": 2949
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    512,
+                    6
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 24.752745121298375,
+                    "Actual_平均相对误差": 0.02822963131471908,
+                    "Actual_均方根误差": 0.8169373418759095,
+                    "Actual_误差均衡性": 0.001113960049334919,
+                    "Actual_小值域数错数量": 0,
+                    "Benchmark_最大相对误差": 24.752745121298375,
+                    "Benchmark_平均相对误差": 0.028229377160921467,
+                    "Benchmark_均方根误差": 0.8169369446549076,
+                    "Benchmark_误差均衡性": 0.0011137058955169824,
+                    "Benchmark_小值域数错数量": 1,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0000090031670257,
+                    "均方根误差比例": 1.0000004862321437,
+                    "误差均衡性差值": 0.001113960049334919,
+                    "小值域数错误差比例": 0.0
+                  }
+                }
+              },
+              "dw1": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 58720256,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 0.1,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    4,
+                    4096,
+                    3584
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 2.7320960708349773,
+                    "Actual_平均相对误差": 0.01026437601136562,
+                    "Actual_均方根误差": 0.002718414419587045,
+                    "Actual_误差均衡性": 8.769235309558983e-09,
+                    "Actual_小值域数错数量": 228797,
+                    "Benchmark_最大相对误差": 2.7320960708349773,
+                    "Benchmark_平均相对误差": 0.01026437601136562,
+                    "Benchmark_均方根误差": 0.002718414419587045,
+                    "Benchmark_误差均衡性": 8.769235309558983e-09,
+                    "Benchmark_小值域数错数量": 228797,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 0.6959140914142835,
+                    "误差均衡性差值": 8.769235309558983e-09,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              },
+              "dw2": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 29360128,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 0.125,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    4,
+                    3584,
+                    2048
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 2.432413690988624,
+                    "Actual_平均相对误差": 0.010396582827685666,
+                    "Actual_均方根误差": 0.002708707599702125,
+                    "Actual_误差均衡性": -6.44140199146226e-07,
+                    "Actual_小值域数错数量": 116207,
+                    "Benchmark_最大相对误差": 2.432413690988624,
+                    "Benchmark_平均相对误差": 0.010396582827685666,
+                    "Benchmark_均方根误差": 0.002708707599702125,
+                    "Benchmark_误差均衡性": -6.44140199146226e-07,
+                    "Benchmark_小值域数错数量": 116207,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 0.693429145523744,
+                    "误差均衡性差值": 6.44140199146226e-07,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "id": "ready_h3584_fp32",
+        "shape": {
+          "ep": 2,
+          "m_per_source": 512,
+          "hidden": 3584,
+          "ffn": 2048,
+          "topk": 6,
+          "experts_per_rank": 4
+        },
+        "topk_weight_dtype": "fp32",
+        "save": "bf16",
+        "swiglu_limit": 0,
+        "status": "PASS",
+        "cli_exit_code": 0,
+        "ranks": [
+          {
+            "rank": 0,
+            "passed": true,
+            "counts_passed": true,
+            "outputs": {
+              "y": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 1835008,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 4.0,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    512,
+                    3584
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 66.26098438901386,
+                    "Actual_平均相对误差": 0.01916551338832503,
+                    "Actual_均方根误差": 0.12014150661351733,
+                    "Actual_误差均衡性": -7.293123456291494e-06,
+                    "Actual_小值域数错数量": 182,
+                    "Benchmark_最大相对误差": 66.26098438901386,
+                    "Benchmark_平均相对误差": 0.01916551338832503,
+                    "Benchmark_均方根误差": 0.12014150661351733,
+                    "Benchmark_误差均衡性": -7.293123456291494e-06,
+                    "Benchmark_小值域数错数量": 182,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 1.0,
+                    "误差均衡性差值": 7.293123456291494e-06,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              },
+              "dx": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 1835008,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 2.0,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    512,
+                    3584
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 81.79912768209012,
+                    "Actual_平均相对误差": 0.01995515371553691,
+                    "Actual_均方根误差": 0.1712565539316641,
+                    "Actual_误差均衡性": 3.994948961851819e-05,
+                    "Actual_小值域数错数量": 136,
+                    "Benchmark_最大相对误差": 81.79912768209012,
+                    "Benchmark_平均相对误差": 0.01995515371553691,
+                    "Benchmark_均方根误差": 0.1712565539316641,
+                    "Benchmark_误差均衡性": 3.994948961851819e-05,
+                    "Benchmark_小值域数错数量": 136,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 1.0,
+                    "误差均衡性差值": 3.994948961851819e-05,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              },
+              "dtopk_weights": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "float32",
+                  "atol": 0.0001220703125,
+                  "rtol": 0.0001220703125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 3072,
+                  "max_abs": 0.0001220703125,
+                  "max_abs_limit": 0.01,
+                  "max_abs_index": 301
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.float32",
+                  "shape": [
+                    512,
+                    6
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 3.4106795749507977,
+                    "Actual_平均相对误差": 0.015613002925921896,
+                    "Actual_均方根误差": 0.7013481875916858,
+                    "Actual_误差均衡性": -0.0001510148921613433,
+                    "Actual_小值域数错数量": 0,
+                    "Benchmark_最大相对误差": 3.4104864812212274,
+                    "Benchmark_平均相对误差": 0.015612838144007725,
+                    "Benchmark_均方根误差": 0.7013474046712493,
+                    "Benchmark_误差均衡性": -0.00015101572925995053,
+                    "Benchmark_小值域数错数量": 1,
+                    "最大相对误差比例": 1.0000566176498964,
+                    "平均相对误差比例": 1.000010554257506,
+                    "均方根误差比例": 1.0000011163090237,
+                    "误差均衡性差值": 0.0001510148921613433,
+                    "小值域数错误差比例": 0.0
+                  }
+                }
+              },
+              "dw1": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 58720256,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 0.1,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    4,
+                    4096,
+                    3584
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 2.5042928497506107,
+                    "Actual_平均相对误差": 0.010255990256778395,
+                    "Actual_均方根误差": 0.002711657177506805,
+                    "Actual_误差均衡性": 1.7841687183280945e-07,
+                    "Actual_小值域数错数量": 231683,
+                    "Benchmark_最大相对误差": 2.5042928497506107,
+                    "Benchmark_平均相对误差": 0.010255990256778395,
+                    "Benchmark_均方根误差": 0.002711657177506805,
+                    "Benchmark_误差均衡性": 1.7841687183280945e-07,
+                    "Benchmark_小值域数错数量": 231683,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 0.6941842374417421,
+                    "误差均衡性差值": 1.7841687183280945e-07,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              },
+              "dw2": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 29360128,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 0.1,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    4,
+                    3584,
+                    2048
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 2.478969615001759,
+                    "Actual_平均相对误差": 0.010387019167880466,
+                    "Actual_均方根误差": 0.0027029747610238406,
+                    "Actual_误差均衡性": -4.286919631218881e-07,
+                    "Actual_小值域数错数量": 116898,
+                    "Benchmark_最大相对误差": 2.478969615001759,
+                    "Benchmark_平均相对误差": 0.010387019167880466,
+                    "Benchmark_均方根误差": 0.0027029747610238406,
+                    "Benchmark_误差均衡性": -4.286919631218881e-07,
+                    "Benchmark_小值域数错数量": 116898,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 0.6919615388221032,
+                    "误差均衡性差值": 4.286919631218881e-07,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              }
+            }
+          },
+          {
+            "rank": 1,
+            "passed": true,
+            "counts_passed": true,
+            "outputs": {
+              "y": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 1835008,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 2.0,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    512,
+                    3584
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 77.06623350864388,
+                    "Actual_平均相对误差": 0.019472293429248718,
+                    "Actual_均方根误差": 0.12027748550000333,
+                    "Actual_误差均衡性": 2.000777206399428e-05,
+                    "Actual_小值域数错数量": 188,
+                    "Benchmark_最大相对误差": 77.06623350864388,
+                    "Benchmark_平均相对误差": 0.019472293429248718,
+                    "Benchmark_均方根误差": 0.12027748550000333,
+                    "Benchmark_误差均衡性": 2.000777206399428e-05,
+                    "Benchmark_小值域数错数量": 188,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 1.0,
+                    "误差均衡性差值": 2.000777206399428e-05,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              },
+              "dx": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 1835008,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 0.1,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    512,
+                    3584
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 79.41959230255394,
+                    "Actual_平均相对误差": 0.020031143532310704,
+                    "Actual_均方根误差": 0.1710777039275518,
+                    "Actual_误差均衡性": 2.7456557978073762e-05,
+                    "Actual_小值域数错数量": 129,
+                    "Benchmark_最大相对误差": 79.41959230255394,
+                    "Benchmark_平均相对误差": 0.020031143532310704,
+                    "Benchmark_均方根误差": 0.1710777039275518,
+                    "Benchmark_误差均衡性": 2.7456557978073762e-05,
+                    "Benchmark_小值域数错数量": 129,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 1.0,
+                    "误差均衡性差值": 2.7456557978073762e-05,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              },
+              "dtopk_weights": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "float32",
+                  "atol": 0.0001220703125,
+                  "rtol": 0.0001220703125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 3072,
+                  "max_abs": 0.0001220703125,
+                  "max_abs_limit": 0.01,
+                  "max_abs_index": 226
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.float32",
+                  "shape": [
+                    512,
+                    6
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 24.725833917110243,
+                    "Actual_平均相对误差": 0.027956414811615465,
+                    "Actual_均方根误差": 0.7180526259365357,
+                    "Actual_误差均衡性": 0.0010386844677078213,
+                    "Actual_小值域数错数量": 0,
+                    "Benchmark_最大相对误差": 24.725193174153386,
+                    "Benchmark_平均相对误差": 0.027956347017226015,
+                    "Benchmark_均方根误差": 0.7180528095352252,
+                    "Benchmark_误差均衡性": 0.0010386155501231832,
+                    "Benchmark_小值域数错数量": 1,
+                    "最大相对误差比例": 1.0000259145783956,
+                    "平均相对误差比例": 1.0000024250088686,
+                    "均方根误差比例": 0.999999744310325,
+                    "误差均衡性差值": 0.0010386844677078213,
+                    "小值域数错误差比例": 0.0
+                  }
+                }
+              },
+              "dw1": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 58720256,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 0.1,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    4,
+                    4096,
+                    3584
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 2.801067520594304,
+                    "Actual_平均相对误差": 0.010277803004410477,
+                    "Actual_均方根误差": 0.0027218234246619553,
+                    "Actual_误差均衡性": -2.3051634335601173e-07,
+                    "Actual_小值域数错数量": 228902,
+                    "Benchmark_最大相对误差": 2.801067520594304,
+                    "Benchmark_平均相对误差": 0.010277803004410477,
+                    "Benchmark_均方根误差": 0.0027218234246619553,
+                    "Benchmark_误差均衡性": -2.3051634335601173e-07,
+                    "Benchmark_小值域数错数量": 228902,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 0.6967867967134606,
+                    "误差均衡性差值": 2.3051634335601173e-07,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              },
+              "dw2": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 29360128,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 0.125,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    4,
+                    3584,
+                    2048
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 2.644237972439278,
+                    "Actual_平均相对误差": 0.01038263912833459,
+                    "Actual_均方根误差": 0.0027049969063182426,
+                    "Actual_误差均衡性": -8.050060521844161e-07,
+                    "Actual_小值域数错数量": 116270,
+                    "Benchmark_最大相对误差": 2.644237972439278,
+                    "Benchmark_平均相对误差": 0.01038263912833459,
+                    "Benchmark_均方根误差": 0.0027049969063182426,
+                    "Benchmark_误差均衡性": -8.050060521844161e-07,
+                    "Benchmark_小值域数错数量": 116270,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 0.6924792080174701,
+                    "误差均衡性差值": 8.050060521844161e-07,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "id": "ready_h7168_bf16",
+        "shape": {
+          "ep": 2,
+          "m_per_source": 512,
+          "hidden": 7168,
+          "ffn": 3072,
+          "topk": 6,
+          "experts_per_rank": 4
+        },
+        "topk_weight_dtype": "bf16",
+        "save": "bf16",
+        "swiglu_limit": 10,
+        "status": "PASS",
+        "cli_exit_code": 0,
+        "ranks": [
+          {
+            "rank": 0,
+            "passed": true,
+            "counts_passed": true,
+            "outputs": {
+              "y": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 3670016,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 0.5,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    512,
+                    7168
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 174.05971741621815,
+                    "Actual_平均相对误差": 0.020805985951071495,
+                    "Actual_均方根误差": 0.29995105548372203,
+                    "Actual_误差均衡性": -2.7774201108928737e-06,
+                    "Actual_小值域数错数量": 167,
+                    "Benchmark_最大相对误差": 174.05971741621815,
+                    "Benchmark_平均相对误差": 0.020805985951071495,
+                    "Benchmark_均方根误差": 0.29995105548372203,
+                    "Benchmark_误差均衡性": -2.7774201108928737e-06,
+                    "Benchmark_小值域数错数量": 167,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 1.0,
+                    "误差均衡性差值": 2.7774201108928737e-06,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              },
+              "dx": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 3670016,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 16.0,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    512,
+                    7168
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 280.33939767179385,
+                    "Actual_平均相对误差": 0.025190319895486868,
+                    "Actual_均方根误差": 0.5735538047500521,
+                    "Actual_误差均衡性": -5.604960035959522e-05,
+                    "Actual_小值域数错数量": 89,
+                    "Benchmark_最大相对误差": 280.33939767179385,
+                    "Benchmark_平均相对误差": 0.025190319895486868,
+                    "Benchmark_均方根误差": 0.5735538047500521,
+                    "Benchmark_误差均衡性": -5.604960035959522e-05,
+                    "Benchmark_小值域数错数量": 89,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 1.0,
+                    "误差均衡性差值": 5.604960035959522e-05,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              },
+              "dtopk_weights": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 3072,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 512.0,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    512,
+                    6
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 8.040747850660198,
+                    "Actual_平均相对误差": 0.0209415187306323,
+                    "Actual_均方根误差": 2.897588906862177,
+                    "Actual_误差均衡性": -0.0008059287296236234,
+                    "Actual_小值域数错数量": 0,
+                    "Benchmark_最大相对误差": 8.040747850660198,
+                    "Benchmark_平均相对误差": 0.0209415187306323,
+                    "Benchmark_均方根误差": 2.897588906862177,
+                    "Benchmark_误差均衡性": -0.0008059287296236234,
+                    "Benchmark_小值域数错数量": 1,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 1.0,
+                    "误差均衡性差值": 0.0008059287296236234,
+                    "小值域数错误差比例": 0.0
+                  }
+                }
+              },
+              "dw1": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 176160768,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 0.5,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    4,
+                    6144,
+                    7168
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 178.8572063953531,
+                    "Actual_平均相对误差": 0.01224378122489187,
+                    "Actual_均方根误差": 0.008854806383103778,
+                    "Actual_误差均衡性": -1.4973111243250237e-07,
+                    "Actual_小值域数错数量": 338646,
+                    "Benchmark_最大相对误差": 178.8572063953531,
+                    "Benchmark_平均相对误差": 0.01224378122489187,
+                    "Benchmark_均方根误差": 0.008854806383103778,
+                    "Benchmark_误差均衡性": -1.4973111243250237e-07,
+                    "Benchmark_小值域数错数量": 338646,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 1.0,
+                    "误差均衡性差值": 1.4973111243250237e-07,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              },
+              "dw2": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 88080384,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 0.1,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    4,
+                    7168,
+                    3072
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 5.5970300860148425,
+                    "Actual_平均相对误差": 0.01149359498643319,
+                    "Actual_均方根误差": 0.005488124804373386,
+                    "Actual_误差均衡性": 2.624683954110402e-07,
+                    "Actual_小值域数错数量": 169953,
+                    "Benchmark_最大相对误差": 5.5970300860148425,
+                    "Benchmark_平均相对误差": 0.01149359498643319,
+                    "Benchmark_均方根误差": 0.005488124804373386,
+                    "Benchmark_误差均衡性": 2.624683954110402e-07,
+                    "Benchmark_小值域数错数量": 169953,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 1.0,
+                    "误差均衡性差值": 2.624683954110402e-07,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              }
+            }
+          },
+          {
+            "rank": 1,
+            "passed": true,
+            "counts_passed": true,
+            "outputs": {
+              "y": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 3670016,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 32.0,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    512,
+                    7168
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 173.6442431475215,
+                    "Actual_平均相对误差": 0.020841632101600626,
+                    "Actual_均方根误差": 0.300322554298381,
+                    "Actual_误差均衡性": -3.0324583974116076e-05,
+                    "Actual_小值域数错数量": 140,
+                    "Benchmark_最大相对误差": 173.6442431475215,
+                    "Benchmark_平均相对误差": 0.020841632101600626,
+                    "Benchmark_均方根误差": 0.300322554298381,
+                    "Benchmark_误差均衡性": -3.0324583974116076e-05,
+                    "Benchmark_小值域数错数量": 140,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 1.0,
+                    "误差均衡性差值": 3.0324583974116076e-05,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              },
+              "dx": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 3670016,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 16.0,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    512,
+                    7168
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 872.3737794415454,
+                    "Actual_平均相对误差": 0.026691119875695682,
+                    "Actual_均方根误差": 0.5814566939433138,
+                    "Actual_误差均衡性": -1.1355258514497109e-05,
+                    "Actual_小值域数错数量": 117,
+                    "Benchmark_最大相对误差": 872.3737794415454,
+                    "Benchmark_平均相对误差": 0.026691119875695682,
+                    "Benchmark_均方根误差": 0.5814566939433138,
+                    "Benchmark_误差均衡性": -1.1355258514497109e-05,
+                    "Benchmark_小值域数错数量": 117,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 1.0,
+                    "误差均衡性差值": 1.1355258514497109e-05,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              },
+              "dtopk_weights": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 3072,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 64.0,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    512,
+                    6
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 12.188675385766278,
+                    "Actual_平均相对误差": 0.020612018509729085,
+                    "Actual_均方根误差": 2.892945427529208,
+                    "Actual_误差均衡性": -0.004258841327488569,
+                    "Actual_小值域数错数量": 0,
+                    "Benchmark_最大相对误差": 12.188675385766278,
+                    "Benchmark_平均相对误差": 0.020612018509729085,
+                    "Benchmark_均方根误差": 2.892945427529208,
+                    "Benchmark_误差均衡性": -0.004258841327488569,
+                    "Benchmark_小值域数错数量": 1,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 1.0,
+                    "误差均衡性差值": 0.004258841327488569,
+                    "小值域数错误差比例": 0.0
+                  }
+                }
+              },
+              "dw1": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 176160768,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 0.25,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    4,
+                    6144,
+                    7168
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 64.63828524574868,
+                    "Actual_平均相对误差": 0.011839785038723773,
+                    "Actual_均方根误差": 0.006726002481457452,
+                    "Actual_误差均衡性": -4.693837252012828e-08,
+                    "Actual_小值域数错数量": 335419,
+                    "Benchmark_最大相对误差": 64.63828524574868,
+                    "Benchmark_平均相对误差": 0.011839785038723773,
+                    "Benchmark_均方根误差": 0.006726002481457452,
+                    "Benchmark_误差均衡性": -4.693837252012828e-08,
+                    "Benchmark_小值域数错数量": 335419,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 1.0,
+                    "误差均衡性差值": 4.693837252012828e-08,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              },
+              "dw2": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 88080384,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 0.125,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    4,
+                    7168,
+                    3072
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 4.941324342106241,
+                    "Actual_平均相对误差": 0.011516687133813576,
+                    "Actual_均方根误差": 0.0055028800068629815,
+                    "Actual_误差均衡性": 2.557359818787262e-07,
+                    "Actual_小值域数错数量": 169646,
+                    "Benchmark_最大相对误差": 4.941324342106241,
+                    "Benchmark_平均相对误差": 0.011516687133813576,
+                    "Benchmark_均方根误差": 0.0055028800068629815,
+                    "Benchmark_误差均衡性": 2.557359818787262e-07,
+                    "Benchmark_小值域数错数量": 169646,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 1.0,
+                    "误差均衡性差值": 2.557359818787262e-07,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "id": "ready_h7168_fp32",
+        "shape": {
+          "ep": 2,
+          "m_per_source": 512,
+          "hidden": 7168,
+          "ffn": 3072,
+          "topk": 6,
+          "experts_per_rank": 4
+        },
+        "topk_weight_dtype": "fp32",
+        "save": "bf16",
+        "swiglu_limit": 10,
+        "status": "PASS",
+        "cli_exit_code": 0,
+        "ranks": [
+          {
+            "rank": 0,
+            "passed": true,
+            "counts_passed": true,
+            "outputs": {
+              "y": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 3670016,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 0.5,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    512,
+                    7168
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 106.00122858504295,
+                    "Actual_平均相对误差": 0.020933968878930228,
+                    "Actual_均方根误差": 0.30019940674931067,
+                    "Actual_误差均衡性": -1.1640297657874782e-05,
+                    "Actual_小值域数错数量": 167,
+                    "Benchmark_最大相对误差": 106.00122858504295,
+                    "Benchmark_平均相对误差": 0.020933968878930228,
+                    "Benchmark_均方根误差": 0.30019940674931067,
+                    "Benchmark_误差均衡性": -1.1640297657874782e-05,
+                    "Benchmark_小值域数错数量": 167,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 1.0,
+                    "误差均衡性差值": 1.1640297657874782e-05,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              },
+              "dx": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 3670016,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 16.0,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    512,
+                    7168
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 483.15534262317766,
+                    "Actual_平均相对误差": 0.025399155925185102,
+                    "Actual_均方根误差": 0.5736322937496859,
+                    "Actual_误差均衡性": -5.652423001482048e-05,
+                    "Actual_小值域数错数量": 104,
+                    "Benchmark_最大相对误差": 483.15534262317766,
+                    "Benchmark_平均相对误差": 0.025399155925185102,
+                    "Benchmark_均方根误差": 0.5736322937496859,
+                    "Benchmark_误差均衡性": -5.652423001482048e-05,
+                    "Benchmark_小值域数错数量": 104,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 1.0,
+                    "误差均衡性差值": 5.652423001482048e-05,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              },
+              "dtopk_weights": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "float32",
+                  "atol": 0.0001220703125,
+                  "rtol": 0.0001220703125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 3072,
+                  "max_abs": 0.00048828125,
+                  "max_abs_limit": 0.01,
+                  "max_abs_index": 336
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.float32",
+                  "shape": [
+                    512,
+                    6
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 8.016305001684222,
+                    "Actual_平均相对误差": 0.02068604134784577,
+                    "Actual_均方根误差": 2.530387610602144,
+                    "Actual_误差均衡性": -0.000814239606207704,
+                    "Actual_小值域数错数量": 0,
+                    "Benchmark_最大相对误差": 8.016114254813727,
+                    "Benchmark_平均相对误差": 0.020685940152328438,
+                    "Benchmark_均方根误差": 2.5303888614921006,
+                    "Benchmark_误差均衡性": -0.0008142683439145137,
+                    "Benchmark_小值域数错数量": 1,
+                    "最大相对误差比例": 1.0000237954281128,
+                    "平均相对误差比例": 1.0000048919950741,
+                    "均方根误差比例": 0.9999995056530735,
+                    "误差均衡性差值": 0.000814239606207704,
+                    "小值域数错误差比例": 0.0
+                  }
+                }
+              },
+              "dw1": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 176160768,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 0.5,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    4,
+                    6144,
+                    7168
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 137.50102398396962,
+                    "Actual_平均相对误差": 0.01225753637471679,
+                    "Actual_均方根误差": 0.008855360961208238,
+                    "Actual_误差均衡性": -4.815344130492388e-07,
+                    "Actual_小值域数错数量": 338176,
+                    "Benchmark_最大相对误差": 137.50102398396962,
+                    "Benchmark_平均相对误差": 0.01225753637471679,
+                    "Benchmark_均方根误差": 0.008855360961208238,
+                    "Benchmark_误差均衡性": -4.815344130492388e-07,
+                    "Benchmark_小值域数错数量": 338176,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 1.0,
+                    "误差均衡性差值": 4.815344130492388e-07,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              },
+              "dw2": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 88080384,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 0.1,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    4,
+                    7168,
+                    3072
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 6.05281046923802,
+                    "Actual_平均相对误差": 0.011495557441511631,
+                    "Actual_均方根误差": 0.005489905715425433,
+                    "Actual_误差均衡性": 2.708600899416309e-07,
+                    "Actual_小值域数错数量": 169717,
+                    "Benchmark_最大相对误差": 6.05281046923802,
+                    "Benchmark_平均相对误差": 0.011495557441511631,
+                    "Benchmark_均方根误差": 0.005489905715425433,
+                    "Benchmark_误差均衡性": 2.708600899416309e-07,
+                    "Benchmark_小值域数错数量": 169717,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 1.0,
+                    "误差均衡性差值": 2.708600899416309e-07,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              }
+            }
+          },
+          {
+            "rank": 1,
+            "passed": true,
+            "counts_passed": true,
+            "outputs": {
+              "y": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 3670016,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 32.0,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    512,
+                    7168
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 155.9411209561295,
+                    "Actual_平均相对误差": 0.0206457434999068,
+                    "Actual_均方根误差": 0.29998950498714083,
+                    "Actual_误差均衡性": -1.6820293049646024e-05,
+                    "Actual_小值域数错数量": 143,
+                    "Benchmark_最大相对误差": 155.9411209561295,
+                    "Benchmark_平均相对误差": 0.0206457434999068,
+                    "Benchmark_均方根误差": 0.29998950498714083,
+                    "Benchmark_误差均衡性": -1.6820293049646024e-05,
+                    "Benchmark_小值域数错数量": 143,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 1.0,
+                    "误差均衡性差值": 1.6820293049646024e-05,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              },
+              "dx": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 3670016,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 16.0,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    512,
+                    7168
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 451.6156142818224,
+                    "Actual_平均相对误差": 0.02671421647634021,
+                    "Actual_均方根误差": 0.5814227945786493,
+                    "Actual_误差均衡性": -4.578516482549316e-05,
+                    "Actual_小值域数错数量": 96,
+                    "Benchmark_最大相对误差": 451.6156142818224,
+                    "Benchmark_平均相对误差": 0.02671421647634021,
+                    "Benchmark_均方根误差": 0.5814227945786493,
+                    "Benchmark_误差均衡性": -4.578516482549316e-05,
+                    "Benchmark_小值域数错数量": 96,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 1.0,
+                    "误差均衡性差值": 4.578516482549316e-05,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              },
+              "dtopk_weights": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "float32",
+                  "atol": 0.0001220703125,
+                  "rtol": 0.0001220703125,
+                  "matched_ratio": 0.9996744791666666,
+                  "bad": 1,
+                  "numel": 3072,
+                  "max_abs": 0.00048828125,
+                  "max_abs_limit": 0.01,
+                  "max_abs_index": 125
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.float32",
+                  "shape": [
+                    512,
+                    6
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 12.204152510646868,
+                    "Actual_平均相对误差": 0.020326479897981777,
+                    "Actual_均方根误差": 2.510525089443232,
+                    "Actual_误差均衡性": -0.004290155085746592,
+                    "Actual_小值域数错数量": 0,
+                    "Benchmark_最大相对误差": 12.204260742289389,
+                    "Benchmark_平均相对误差": 0.020326360138778702,
+                    "Benchmark_均方根误差": 2.510523318349842,
+                    "Benchmark_误差均衡性": -0.004290201122101727,
+                    "Benchmark_小值域数错数量": 1,
+                    "最大相对误差比例": 0.9999911316510842,
+                    "平均相对误差比例": 1.000005891817436,
+                    "均方根误差比例": 1.0000007054678108,
+                    "误差均衡性差值": 0.004290155085746592,
+                    "小值域数错误差比例": 0.0
+                  }
+                }
+              },
+              "dw1": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 176160768,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 0.25,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    4,
+                    6144,
+                    7168
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 90.5845107062967,
+                    "Actual_平均相对误差": 0.011859515634958318,
+                    "Actual_均方根误差": 0.006728679346987187,
+                    "Actual_误差均衡性": 3.4198943667202146e-07,
+                    "Actual_小值域数错数量": 334165,
+                    "Benchmark_最大相对误差": 90.5845107062967,
+                    "Benchmark_平均相对误差": 0.011859515634958318,
+                    "Benchmark_均方根误差": 0.006728679346987187,
+                    "Benchmark_误差均衡性": 3.4198943667202146e-07,
+                    "Benchmark_小值域数错数量": 334165,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 1.0,
+                    "误差均衡性差值": 3.4198943667202146e-07,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              },
+              "dw2": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 88080384,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 0.125,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    4,
+                    7168,
+                    3072
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 6.269687361615672,
+                    "Actual_平均相对误差": 0.011513699416996303,
+                    "Actual_均方根误差": 0.005498149667758342,
+                    "Actual_误差均衡性": 3.9315059299593655e-07,
+                    "Actual_小值域数错数量": 169853,
+                    "Benchmark_最大相对误差": 6.269687361615672,
+                    "Benchmark_平均相对误差": 0.011513699416996303,
+                    "Benchmark_均方根误差": 0.005498149667758342,
+                    "Benchmark_误差均衡性": 3.9315059299593655e-07,
+                    "Benchmark_小值域数错数量": 169853,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 1.0,
+                    "误差均衡性差值": 3.9315059299593655e-07,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "id": "none_tail_bf16",
+        "shape": {
+          "ep": 2,
+          "m_per_source": 129,
+          "hidden": 256,
+          "ffn": 512,
+          "topk": 4,
+          "experts_per_rank": 2
+        },
+        "topk_weight_dtype": "bf16",
+        "save": "none",
+        "swiglu_limit": 0,
+        "status": "PASS",
+        "cli_exit_code": 0,
+        "ranks": [
+          {
+            "rank": 0,
+            "passed": true,
+            "counts_passed": true,
+            "outputs": {
+              "y": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 33024,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 0.25,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    129,
+                    256
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 1.6838837233614137,
+                    "Actual_平均相对误差": 0.012876443841889587,
+                    "Actual_均方根误差": 0.004277053350766117,
+                    "Actual_误差均衡性": -7.154865953413462e-06,
+                    "Actual_小值域数错数量": 87,
+                    "Benchmark_最大相对误差": 1.6838837233614137,
+                    "Benchmark_平均相对误差": 0.012876443841889587,
+                    "Benchmark_均方根误差": 0.004277053350766117,
+                    "Benchmark_误差均衡性": -7.154865953413462e-06,
+                    "Benchmark_小值域数错数量": 87,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 1.0,
+                    "误差均衡性差值": 7.154865953413462e-06,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              },
+              "dx": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 33024,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 0.125,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    129,
+                    256
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 3.6066738444166093,
+                    "Actual_平均相对误差": 0.012668003219942733,
+                    "Actual_均方根误差": 0.005959363706527356,
+                    "Actual_误差均衡性": -4.114213096387583e-06,
+                    "Actual_小值域数错数量": 65,
+                    "Benchmark_最大相对误差": 3.6066738444166093,
+                    "Benchmark_平均相对误差": 0.012668003219942733,
+                    "Benchmark_均方根误差": 0.005959363706527356,
+                    "Benchmark_误差均衡性": -4.114213096387583e-06,
+                    "Benchmark_小值域数错数量": 65,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 1.0,
+                    "误差均衡性差值": 4.114213096387583e-06,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              },
+              "dtopk_weights": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 516,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 0.125,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    129,
+                    4
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 0.7457693792608955,
+                    "Actual_平均相对误差": 0.011529270051765215,
+                    "Actual_均方根误差": 0.006425311044536798,
+                    "Actual_误差均衡性": -0.0001754033382642014,
+                    "Actual_小值域数错数量": 2,
+                    "Benchmark_最大相对误差": 0.7457693792608955,
+                    "Benchmark_平均相对误差": 0.011529270051765215,
+                    "Benchmark_均方根误差": 0.006425311044536798,
+                    "Benchmark_误差均衡性": -0.0001754033382642014,
+                    "Benchmark_小值域数错数量": 2,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 1.0,
+                    "误差均衡性差值": 0.0001754033382642014,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              },
+              "dw1": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 524288,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 0.1,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    2,
+                    1024,
+                    256
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 0.13166987872469632,
+                    "Actual_平均相对误差": 0.00505809080229971,
+                    "Actual_均方根误差": 0.00013668380508274794,
+                    "Actual_误差均衡性": -9.413244504133625e-08,
+                    "Actual_小值域数错数量": 37121,
+                    "Benchmark_最大相对误差": 0.13166987872469632,
+                    "Benchmark_平均相对误差": 0.00505809080229971,
+                    "Benchmark_均方根误差": 0.00013668380508274794,
+                    "Benchmark_误差均衡性": -9.413244504133625e-08,
+                    "Benchmark_小值域数错数量": 37121,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 0.03499105410118347,
+                    "误差均衡性差值": 9.413244504133625e-08,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              },
+              "dw2": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 262144,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 0.1,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    2,
+                    256,
+                    512
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 0.11647090114977585,
+                    "Actual_平均相对误差": 0.005083943665534846,
+                    "Actual_均方根误差": 0.000138330564540193,
+                    "Actual_误差均衡性": -4.086623586263898e-07,
+                    "Actual_小值域数错数量": 18926,
+                    "Benchmark_最大相对误差": 0.11647090114977585,
+                    "Benchmark_平均相对误差": 0.005083943665534846,
+                    "Benchmark_均方根误差": 0.000138330564540193,
+                    "Benchmark_误差均衡性": -4.086623586263898e-07,
+                    "Benchmark_小值域数错数量": 18926,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 0.03541262452228941,
+                    "误差均衡性差值": 4.086623586263898e-07,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              }
+            }
+          },
+          {
+            "rank": 1,
+            "passed": true,
+            "counts_passed": true,
+            "outputs": {
+              "y": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 33024,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 0.25,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    129,
+                    256
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 1.7591487445426928,
+                    "Actual_平均相对误差": 0.012531348076775594,
+                    "Actual_均方根误差": 0.004277098243718786,
+                    "Actual_误差均衡性": -1.408478171600005e-05,
+                    "Actual_小值域数错数量": 67,
+                    "Benchmark_最大相对误差": 1.7591487445426928,
+                    "Benchmark_平均相对误差": 0.012531348076775594,
+                    "Benchmark_均方根误差": 0.004277098243718786,
+                    "Benchmark_误差均衡性": -1.408478171600005e-05,
+                    "Benchmark_小值域数错数量": 67,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 1.0,
+                    "误差均衡性差值": 1.408478171600005e-05,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              },
+              "dx": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 33024,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 0.125,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    129,
+                    256
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 2.129470550210494,
+                    "Actual_平均相对误差": 0.012613364638265985,
+                    "Actual_均方根误差": 0.006100950816104572,
+                    "Actual_误差均衡性": -3.399561895081175e-05,
+                    "Actual_小值域数错数量": 76,
+                    "Benchmark_最大相对误差": 2.129470550210494,
+                    "Benchmark_平均相对误差": 0.012613364638265985,
+                    "Benchmark_均方根误差": 0.006100950816104572,
+                    "Benchmark_误差均衡性": -3.399561895081175e-05,
+                    "Benchmark_小值域数错数量": 76,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 1.0,
+                    "误差均衡性差值": 3.399561895081175e-05,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              },
+              "dtopk_weights": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 516,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 0.5,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    129,
+                    4
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 2.700691627873084,
+                    "Actual_平均相对误差": 0.01838949825322381,
+                    "Actual_均方根误差": 0.006444344085205078,
+                    "Actual_误差均衡性": 0.00019527932201618455,
+                    "Actual_小值域数错数量": 0,
+                    "Benchmark_最大相对误差": 2.700691627873084,
+                    "Benchmark_平均相对误差": 0.01838949825322381,
+                    "Benchmark_均方根误差": 0.006444344085205078,
+                    "Benchmark_误差均衡性": 0.00019527932201618455,
+                    "Benchmark_小值域数错数量": 1,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 1.0,
+                    "误差均衡性差值": 0.00019527932201618455,
+                    "小值域数错误差比例": 0.0
+                  }
+                }
+              },
+              "dw1": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 524288,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 0.1,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    2,
+                    1024,
+                    256
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 0.14392788324766945,
+                    "Actual_平均相对误差": 0.005075883176734924,
+                    "Actual_均方根误差": 0.00013900641826561486,
+                    "Actual_误差均衡性": 2.0538963903965126e-07,
+                    "Actual_小值域数错数量": 37298,
+                    "Benchmark_最大相对误差": 0.14392788324766945,
+                    "Benchmark_平均相对误差": 0.005075883176734924,
+                    "Benchmark_均方根误差": 0.00013900641826561486,
+                    "Benchmark_误差均衡性": 2.0538963903965126e-07,
+                    "Benchmark_小值域数错数量": 37298,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 0.0355856430759974,
+                    "误差均衡性差值": 2.0538963903965126e-07,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              },
+              "dw2": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 262144,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 0.1,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    2,
+                    256,
+                    512
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 0.1231164221069061,
+                    "Actual_平均相对误差": 0.005150341451649096,
+                    "Actual_均方根误差": 0.00014062114138673336,
+                    "Actual_误差均衡性": 1.1510644132198557e-07,
+                    "Actual_小值域数错数量": 19005,
+                    "Benchmark_最大相对误差": 0.1231164221069061,
+                    "Benchmark_平均相对误差": 0.005150341451649096,
+                    "Benchmark_均方根误差": 0.00014062114138673336,
+                    "Benchmark_误差均衡性": 1.1510644132198557e-07,
+                    "Benchmark_小值域数错数量": 19005,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 0.03599901219500374,
+                    "误差均衡性差值": 1.1510644132198557e-07,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "id": "none_tail_fp32",
+        "shape": {
+          "ep": 2,
+          "m_per_source": 129,
+          "hidden": 256,
+          "ffn": 512,
+          "topk": 4,
+          "experts_per_rank": 2
+        },
+        "topk_weight_dtype": "fp32",
+        "save": "none",
+        "swiglu_limit": 0,
+        "status": "PASS",
+        "cli_exit_code": 0,
+        "ranks": [
+          {
+            "rank": 0,
+            "passed": true,
+            "counts_passed": true,
+            "outputs": {
+              "y": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 33024,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 0.25,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    129,
+                    256
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 1.9487573475804971,
+                    "Actual_平均相对误差": 0.01253227122575172,
+                    "Actual_均方根误差": 0.004215902465451556,
+                    "Actual_误差均衡性": 4.20946702020696e-06,
+                    "Actual_小值域数错数量": 82,
+                    "Benchmark_最大相对误差": 1.9487573475804971,
+                    "Benchmark_平均相对误差": 0.01253227122575172,
+                    "Benchmark_均方根误差": 0.004215902465451556,
+                    "Benchmark_误差均衡性": 4.20946702020696e-06,
+                    "Benchmark_小值域数错数量": 82,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 1.0,
+                    "误差均衡性差值": 4.20946702020696e-06,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              },
+              "dx": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 33024,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 0.125,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    129,
+                    256
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 3.627683417187357,
+                    "Actual_平均相对误差": 0.012726137625631039,
+                    "Actual_均方根误差": 0.005977077584746355,
+                    "Actual_误差均衡性": -4.386885578299235e-05,
+                    "Actual_小值域数错数量": 59,
+                    "Benchmark_最大相对误差": 3.627683417187357,
+                    "Benchmark_平均相对误差": 0.012726137625631039,
+                    "Benchmark_均方根误差": 0.005977077584746355,
+                    "Benchmark_误差均衡性": -4.386885578299235e-05,
+                    "Benchmark_小值域数错数量": 59,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 1.0,
+                    "误差均衡性差值": 4.386885578299235e-05,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              },
+              "dtopk_weights": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "float32",
+                  "atol": 0.0001220703125,
+                  "rtol": 0.0001220703125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 516,
+                  "max_abs": 7.152557373046875e-07,
+                  "max_abs_limit": 0.01,
+                  "max_abs_index": 104
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.float32",
+                  "shape": [
+                    129,
+                    4
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 1.7606328490004777,
+                    "Actual_平均相对误差": 0.014855258619682244,
+                    "Actual_均方根误差": 0.005615443679117824,
+                    "Actual_误差均衡性": -0.00011348542535773794,
+                    "Actual_小值域数错数量": 0,
+                    "Benchmark_最大相对误差": 1.760622773269907,
+                    "Benchmark_平均相对误差": 0.0148550548339109,
+                    "Benchmark_均方根误差": 0.005615431851996302,
+                    "Benchmark_误差均衡性": -0.00011347955697433588,
+                    "Benchmark_小值域数错数量": 1,
+                    "最大相对误差比例": 1.0000057228219035,
+                    "平均相对误差比例": 1.0000137182779614,
+                    "均方根误差比例": 1.000002106182006,
+                    "误差均衡性差值": 0.00011348542535773794,
+                    "小值域数错误差比例": 0.0
+                  }
+                }
+              },
+              "dw1": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 524288,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 0.1,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    2,
+                    1024,
+                    256
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 0.12016779668841286,
+                    "Actual_平均相对误差": 0.005040872088503411,
+                    "Actual_均方根误差": 0.00013620488400724022,
+                    "Actual_误差均衡性": -1.2478867612416864e-08,
+                    "Actual_小值域数错数量": 37295,
+                    "Benchmark_最大相对误差": 0.12016779668841286,
+                    "Benchmark_平均相对误差": 0.005040872088503411,
+                    "Benchmark_均方根误差": 0.00013620488400724022,
+                    "Benchmark_误差均衡性": -1.2478867612416864e-08,
+                    "Benchmark_小值域数错数量": 37295,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 0.0348684503058535,
+                    "误差均衡性差值": 1.2478867612416864e-08,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              },
+              "dw2": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 262144,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 0.1,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    2,
+                    256,
+                    512
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 0.11360037247011176,
+                    "Actual_平均相对误差": 0.00507309102953026,
+                    "Actual_均方根误差": 0.0001367518687179947,
+                    "Actual_误差均衡性": -5.788923463748323e-07,
+                    "Actual_小值域数错数量": 18821,
+                    "Benchmark_最大相对误差": 0.11360037247011176,
+                    "Benchmark_平均相对误差": 0.00507309102953026,
+                    "Benchmark_均方根误差": 0.0001367518687179947,
+                    "Benchmark_误差均衡性": -5.788923463748323e-07,
+                    "Benchmark_小值域数错数量": 18821,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 0.035008478391806645,
+                    "误差均衡性差值": 5.788923463748323e-07,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              }
+            }
+          },
+          {
+            "rank": 1,
+            "passed": true,
+            "counts_passed": true,
+            "outputs": {
+              "y": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 33024,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 0.25,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    129,
+                    256
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 1.8566119111353792,
+                    "Actual_平均相对误差": 0.012548702431696507,
+                    "Actual_均方根误差": 0.004269612438856951,
+                    "Actual_误差均衡性": -5.692008351005553e-06,
+                    "Actual_小值域数错数量": 76,
+                    "Benchmark_最大相对误差": 1.8566119111353792,
+                    "Benchmark_平均相对误差": 0.012548702431696507,
+                    "Benchmark_均方根误差": 0.004269612438856951,
+                    "Benchmark_误差均衡性": -5.692008351005553e-06,
+                    "Benchmark_小值域数错数量": 76,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 1.0,
+                    "误差均衡性差值": 5.692008351005553e-06,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              },
+              "dx": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 33024,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 0.125,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    129,
+                    256
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 2.195726663144514,
+                    "Actual_平均相对误差": 0.012646935049276165,
+                    "Actual_均方根误差": 0.006068412780008298,
+                    "Actual_误差均衡性": 1.9113317605440283e-06,
+                    "Actual_小值域数错数量": 79,
+                    "Benchmark_最大相对误差": 2.195726663144514,
+                    "Benchmark_平均相对误差": 0.012646935049276165,
+                    "Benchmark_均方根误差": 0.006068412780008298,
+                    "Benchmark_误差均衡性": 1.9113317605440283e-06,
+                    "Benchmark_小值域数错数量": 79,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 1.0,
+                    "误差均衡性差值": 1.9113317605440283e-06,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              },
+              "dtopk_weights": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "float32",
+                  "atol": 0.0001220703125,
+                  "rtol": 0.0001220703125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 516,
+                  "max_abs": 6.556510925292969e-07,
+                  "max_abs_limit": 0.01,
+                  "max_abs_index": 5
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.float32",
+                  "shape": [
+                    129,
+                    4
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 2.6943952588567073,
+                    "Actual_平均相对误差": 0.018166246421295933,
+                    "Actual_均方根误差": 0.005822738009519856,
+                    "Actual_误差均衡性": 0.00019653121510776995,
+                    "Actual_小值域数错数量": 0,
+                    "Benchmark_最大相对误差": 2.694451288836831,
+                    "Benchmark_平均相对误差": 0.01816625520790812,
+                    "Benchmark_均方根误差": 0.0058227307736649445,
+                    "Benchmark_误差均衡性": 0.00019654104172117892,
+                    "Benchmark_小值域数错数量": 1,
+                    "最大相对误差比例": 0.9999792054210237,
+                    "平均相对误差比例": 0.9999995163223192,
+                    "均方根误差比例": 1.0000012426909628,
+                    "误差均衡性差值": 0.00019653121510776995,
+                    "小值域数错误差比例": 0.0
+                  }
+                }
+              },
+              "dw1": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 524288,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 0.1,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    2,
+                    1024,
+                    256
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 0.12467037631057602,
+                    "Actual_平均相对误差": 0.0050529587043425745,
+                    "Actual_均方根误差": 0.00013818795301220107,
+                    "Actual_误差均衡性": 1.0191660514369522e-08,
+                    "Actual_小值域数错数量": 37262,
+                    "Benchmark_最大相对误差": 0.12467037631057602,
+                    "Benchmark_平均相对误差": 0.0050529587043425745,
+                    "Benchmark_均方根误差": 0.00013818795301220107,
+                    "Benchmark_误差均衡性": 1.0191660514369522e-08,
+                    "Benchmark_小值域数错数量": 37262,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 0.03537611597112347,
+                    "误差均衡性差值": 1.0191660514369522e-08,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              },
+              "dw2": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 262144,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 0.1,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    2,
+                    256,
+                    512
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 0.14103654075489178,
+                    "Actual_平均相对误差": 0.005148099690827184,
+                    "Actual_均方根误差": 0.000140437939236633,
+                    "Actual_误差均衡性": -1.9953796446956682e-07,
+                    "Actual_小值域数错数量": 18974,
+                    "Benchmark_最大相对误差": 0.14103654075489178,
+                    "Benchmark_平均相对误差": 0.005148099690827184,
+                    "Benchmark_均方根误差": 0.000140437939236633,
+                    "Benchmark_误差均衡性": -1.9953796446956682e-07,
+                    "Benchmark_小值域数错数量": 18974,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 0.03595211244457805,
+                    "误差均衡性差值": 1.9953796446956682e-07,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "id": "fp32_gather_third_window_tail",
+        "shape": {
+          "ep": 2,
+          "m_per_source": 8193,
+          "hidden": 256,
+          "ffn": 512,
+          "topk": 8,
+          "experts_per_rank": 4
+        },
+        "topk_weight_dtype": "fp32",
+        "save": "bf16",
+        "swiglu_limit": 0,
+        "status": "PASS",
+        "cli_exit_code": 0,
+        "ranks": [
+          {
+            "rank": 0,
+            "passed": true,
+            "counts_passed": true,
+            "outputs": {
+              "y": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 2097408,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 0.1,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    8193,
+                    256
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 2.3143645769708163,
+                    "Actual_平均相对误差": 0.011780199628581891,
+                    "Actual_均方根误差": 0.0030848404474272404,
+                    "Actual_误差均衡性": 4.1468480261537155e-06,
+                    "Actual_小值域数错数量": 8005,
+                    "Benchmark_最大相对误差": 2.3143645769708163,
+                    "Benchmark_平均相对误差": 0.011780199628581891,
+                    "Benchmark_均方根误差": 0.0030848404474272404,
+                    "Benchmark_误差均衡性": 4.1468480261537155e-06,
+                    "Benchmark_小值域数错数量": 8005,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 0.7897191545413735,
+                    "误差均衡性差值": 4.1468480261537155e-06,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              },
+              "dx": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 2097408,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 0.25,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    8193,
+                    256
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 2.987868673870345,
+                    "Actual_平均相对误差": 0.012375620542857188,
+                    "Actual_均方根误差": 0.0043681801932127975,
+                    "Actual_误差均衡性": -2.883664849386253e-07,
+                    "Actual_小值域数错数量": 5667,
+                    "Benchmark_最大相对误差": 2.987868673870345,
+                    "Benchmark_平均相对误差": 0.012375620542857188,
+                    "Benchmark_均方根误差": 0.0043681801932127975,
+                    "Benchmark_误差均衡性": -2.883664849386253e-07,
+                    "Benchmark_小值域数错数量": 5667,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 1.0,
+                    "误差均衡性差值": 2.883664849386253e-07,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              },
+              "dtopk_weights": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "float32",
+                  "atol": 0.0001220703125,
+                  "rtol": 0.0001220703125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 65544,
+                  "max_abs": 1.1920928955078125e-06,
+                  "max_abs_limit": 0.01,
+                  "max_abs_index": 35801
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.float32",
+                  "shape": [
+                    8193,
+                    8
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 94.59509764078787,
+                    "Actual_平均相对误差": 0.0190696943960957,
+                    "Actual_均方根误差": 0.0056645892003327125,
+                    "Actual_误差均衡性": -2.2100824921381155e-05,
+                    "Actual_小值域数错数量": 2,
+                    "Benchmark_最大相对误差": 94.59042731467162,
+                    "Benchmark_平均相对误差": 0.019069550367917555,
+                    "Benchmark_均方根误差": 0.00566458888166159,
+                    "Benchmark_误差均衡性": -2.21007645041265e-05,
+                    "Benchmark_小值域数错数量": 2,
+                    "最大相对误差比例": 1.000049374194079,
+                    "平均相对误差比例": 1.000007552783121,
+                    "均方根误差比例": 1.000000056256708,
+                    "误差均衡性差值": 2.2100824921381155e-05,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              },
+              "dw1": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 1048576,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 0.1,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    4,
+                    1024,
+                    256
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 0.4793487025334434,
+                    "Actual_平均相对误差": 0.007614495668704264,
+                    "Actual_均方根误差": 0.0005543567465897644,
+                    "Actual_误差均衡性": -7.473305441177157e-07,
+                    "Actual_小值域数错数量": 19617,
+                    "Benchmark_最大相对误差": 0.4793487025334434,
+                    "Benchmark_平均相对误差": 0.007614495668704264,
+                    "Benchmark_均方根误差": 0.0005543567465897644,
+                    "Benchmark_误差均衡性": -7.473305441177157e-07,
+                    "Benchmark_小值域数错数量": 19617,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 0.14191532712697968,
+                    "误差均衡性差值": 7.473305441177157e-07,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              },
+              "dw2": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 524288,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 0.1,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    4,
+                    256,
+                    512
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 0.43318530066357147,
+                    "Actual_平均相对误差": 0.007675936122952308,
+                    "Actual_均方根误差": 0.0005569574969617828,
+                    "Actual_误差均衡性": 3.7719180308175285e-07,
+                    "Actual_小值域数错数量": 9957,
+                    "Benchmark_最大相对误差": 0.43318530066357147,
+                    "Benchmark_平均相对误差": 0.007675936122952308,
+                    "Benchmark_均方根误差": 0.0005569574969617828,
+                    "Benchmark_误差均衡性": 3.7719180308175285e-07,
+                    "Benchmark_小值域数错数量": 9957,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 0.1425811192222164,
+                    "误差均衡性差值": 3.7719180308175285e-07,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              }
+            }
+          },
+          {
+            "rank": 1,
+            "passed": true,
+            "counts_passed": true,
+            "outputs": {
+              "y": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 2097408,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 0.1,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    8193,
+                    256
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 2.3051776538378905,
+                    "Actual_平均相对误差": 0.01183713305264782,
+                    "Actual_均方根误差": 0.0030901667140216956,
+                    "Actual_误差均衡性": -1.1138947463089947e-06,
+                    "Actual_小值域数错数量": 8019,
+                    "Benchmark_最大相对误差": 2.3051776538378905,
+                    "Benchmark_平均相对误差": 0.01183713305264782,
+                    "Benchmark_均方根误差": 0.0030901667140216956,
+                    "Benchmark_误差均衡性": -1.1138947463089947e-06,
+                    "Benchmark_小值域数错数量": 8019,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 0.7910826787895541,
+                    "误差均衡性差值": 1.1138947463089947e-06,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              },
+              "dx": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 2097408,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 0.125,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    8193,
+                    256
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 3.185131561847374,
+                    "Actual_平均相对误差": 0.012391436875252859,
+                    "Actual_均方根误差": 0.004366768881356989,
+                    "Actual_误差均衡性": 9.877018224937983e-07,
+                    "Actual_小值域数错数量": 5722,
+                    "Benchmark_最大相对误差": 3.185131561847374,
+                    "Benchmark_平均相对误差": 0.012391436875252859,
+                    "Benchmark_均方根误差": 0.004366768881356989,
+                    "Benchmark_误差均衡性": 9.877018224937983e-07,
+                    "Benchmark_小值域数错数量": 5722,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 1.0,
+                    "误差均衡性差值": 9.877018224937983e-07,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              },
+              "dtopk_weights": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "float32",
+                  "atol": 0.0001220703125,
+                  "rtol": 0.0001220703125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 65544,
+                  "max_abs": 9.5367431640625e-07,
+                  "max_abs_limit": 0.01,
+                  "max_abs_index": 2014
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.float32",
+                  "shape": [
+                    8193,
+                    8
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 47.900411521216725,
+                    "Actual_平均相对误差": 0.01827431107561488,
+                    "Actual_均方根误差": 0.005658153784908183,
+                    "Actual_误差均衡性": 2.4692903681082605e-05,
+                    "Actual_小值域数错数量": 0,
+                    "Benchmark_最大相对误差": 47.900684426250855,
+                    "Benchmark_平均相对误差": 0.018274288838922386,
+                    "Benchmark_均方根误差": 0.005658152439387661,
+                    "Benchmark_误差均衡性": 2.4692614033632815e-05,
+                    "Benchmark_小值域数错数量": 1,
+                    "最大相对误差比例": 0.9999943026902977,
+                    "平均相对误差比例": 1.0000012168294312,
+                    "均方根误差比例": 1.000000237802098,
+                    "误差均衡性差值": 2.4692903681082605e-05,
+                    "小值域数错误差比例": 0.0
+                  }
+                }
+              },
+              "dw1": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 1048576,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 0.1,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    4,
+                    1024,
+                    256
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 0.4237674159650959,
+                    "Actual_平均相对误差": 0.007630833794690259,
+                    "Actual_均方根误差": 0.0005590447533196105,
+                    "Actual_误差均衡性": 3.8433065237104245e-07,
+                    "Actual_小值域数错数量": 19413,
+                    "Benchmark_最大相对误差": 0.4237674159650959,
+                    "Benchmark_平均相对误差": 0.007630833794690259,
+                    "Benchmark_均方根误差": 0.0005590447533196105,
+                    "Benchmark_误差均衡性": 3.8433065237104245e-07,
+                    "Benchmark_小值域数错数量": 19413,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 0.1431154568498203,
+                    "误差均衡性差值": 3.8433065237104245e-07,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              },
+              "dw2": {
+                "mixed_tolerance": {
+                  "passed": true,
+                  "dtype": "bfloat16",
+                  "atol": 0.0078125,
+                  "rtol": 0.0078125,
+                  "matched_ratio": 1.0,
+                  "bad": 0,
+                  "numel": 524288,
+                  "max_abs": 0.0,
+                  "max_abs_limit": 0.1,
+                  "max_abs_index": 0
+                },
+                "atk": {
+                  "passed": true,
+                  "dtype": "torch.bfloat16",
+                  "shape": [
+                    4,
+                    256,
+                    512
+                  ],
+                  "metrics": {
+                    "Actual_最大相对误差": 0.4086291892207077,
+                    "Actual_平均相对误差": 0.007697848082603679,
+                    "Actual_均方根误差": 0.0005605440998125226,
+                    "Actual_误差均衡性": -6.155974510831821e-08,
+                    "Actual_小值域数错数量": 10049,
+                    "Benchmark_最大相对误差": 0.4086291892207077,
+                    "Benchmark_平均相对误差": 0.007697848082603679,
+                    "Benchmark_均方根误差": 0.0005605440998125226,
+                    "Benchmark_误差均衡性": -6.155974510831821e-08,
+                    "Benchmark_小值域数错数量": 10049,
+                    "最大相对误差比例": 1.0,
+                    "平均相对误差比例": 1.0,
+                    "均方根误差比例": 0.14349928955200578,
+                    "误差均衡性差值": 6.155974510831821e-08,
+                    "小值域数错误差比例": 1.0
+                  }
+                }
+              }
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "lifecycle": {
+    "scope": "Ascend950 EP2 lifecycle and repeated-call regression; self-equivalence, not an independent precision golden",
+    "source_commit": "3f8f3004885fa47c05a78fbce61fc183136a220d",
+    "wheel_sha256": "e44fdc98979753917e286e0fcd052ef99205d70e9ab67001b6bd731368a9c952",
+    "script_sha256": "92af739a8bb40e383a405b1adb9480f6cf528748d513ba962675bf33896f1921",
+    "exit_code": 0,
+    "passed_ranks": [
+      0,
+      1
+    ],
+    "stdout_pass_lines": [
+      "[LIFECYCLE] rank=0 PASS",
+      "[LIFECYCLE] rank=1 PASS"
+    ],
+    "checks_per_rank": {
+      "save_dtype_combinations": 8,
+      "serial_forward_backward_pairs": 8,
+      "queued_forward_reverse_backward_pairs": 8,
+      "legacy_weight_layout_pairs": 1,
+      "repeated_pairs": 32,
+      "closed_owner_recreated_pairs": 1,
+      "successful_forward_backward_pairs_total": 50,
+      "expected_error_checks": 4,
+      "expected_errors": [
+        "duplicate SHMEM owner",
+        "peer dtype mismatch with diagnostics enabled",
+        "construction stream mismatch",
+        "call after close"
+      ],
+      "dp_dtype_matches_input": true,
+      "close_idempotent": true
+    },
+    "modes": [
+      "bf16",
+      "none",
+      "mxfp8",
+      "auto"
+    ],
+    "topk_weight_dtypes": [
+      "bfloat16",
+      "float32"
+    ],
+    "shape": {
+      "ep": 2,
+      "m_per_source": 129,
+      "hidden": 256,
+      "ffn": 512,
+      "experts_per_rank": 2,
+      "topk": 4
+    },
+    "final_installation_hash_check": {
+      "native_files": 10,
+      "python_files": 43,
+      "passed": true
+    },
+    "device_isolation": {
+      "selected_devices_only": true,
+      "fresh_gate_before_each_case": true,
+      "no_performance_sampling": true,
+      "active_window_host_guard_samples": 148,
+      "all_external_gates_passed": true,
+      "selected_devices_healthy_after_exit": true,
+      "own_containers_stopped": true
+    }
+  }
+}
