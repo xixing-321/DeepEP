@@ -132,7 +132,7 @@ const backwardTiming = {
   returnDx: { label: 'Combine 回传 dX', ticks: 4, tasks: 1, kind: 'return', node: 'b_dx_send', signal: 'dX 回传 MTE3 退休', detail: 'AIV0 等整专家 DXReady 后才读取 GM 中的 dX，并发回源 rank。' },
   dw1: { label: 'AIC 计算 dW1', ticks: 24, tasks: 1, kind: 'weight1', node: 'b_dw1', signal: 'dW1 写入本地专家梯度', detail: '本核走完逐专家 dW2/dX 后，用 dZ 与 packed X 计算 dW1。dW1、dW2 留在专家 rank。' },
   unpermuteDx: { label: 'Unpermute 归并 dX', ticks: 4, kind: 'finish', node: 'b_unpermute_dx', signal: 'dX 读完 → SyncAll', detail: '从 ptrD 取回各路 BF16 dX，按 TopK 槽 FP32 累加，最后一次舍入写 grad_x。' },
-  dp: { label: '归约并回传 dp', ticks: 2, kind: 'return', node: 'b_reduce_dp', signal: 'dp 回传 MTE3 退休', detail: '用 FP32 跨 tile 累加 dp partial，最后舍入成 BF16，再复用 ptrD 按原始 route 回传。' },
+  dp: { label: '归约并回传 dp', ticks: 2, kind: 'return', node: 'b_reduce_dp', signal: 'dp 回传 MTE3 退休', detail: '用 FP32 跨 tile 累加 dp partial，按输入 p 类型写出：BF16 舍入、FP32 保留，再复用 ptrD 按原始 route 回传。' },
   outputDp: { label: '还原概率梯度', ticks: 1, kind: 'finish', node: 'b_dp_output', signal: 'UnpermuteTopkGrad', detail: 'dp 按源 rank 的 token 与 TopK 槽还原为 dtopk_weights。' },
   cleanup: { label: '清理计数', ticks: 1, kind: 'prepare', node: 'b_dp_output', index: 1, signal: '清理 → 退出同步', detail: '最后一轮读写退休后重置计数，建立当前调用与下一轮的边界。' },
   peer: { label: 'rank1 dX 回传额外耗时', ticks: 0, tasks: 1 },

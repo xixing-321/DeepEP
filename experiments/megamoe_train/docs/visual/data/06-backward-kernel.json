@@ -739,7 +739,7 @@
       "lane": "b_all",
       "step": 18,
       "title": "归约 dp partial，再批量回送",
-      "subtitle": "每条 route 一个 BF16 梯度",
+      "subtitle": "每条 route 一个与 p 同类型的梯度",
       "symbol": "ReduceAndRouteTopkGrad / ReduceDpPartialBatch",
       "description": [
         "P1 已将每行每 256 列的 FP32 乘积归约成 FP32 partial。P6按source/expert分段把这些partial批量搬入UB，用FP32完成最终F维归约，按输入p类型写出：BF16舍入、FP32保留。一次MTE3发送一批同类型route标量到源rank的ptrD。没有再次乘p；dp是对独立路由权重输入求导。"
@@ -779,14 +779,14 @@
       "subtitle": "四项梯度分别交给框架",
       "symbol": "UnpermuteTopkGrad / Process exit",
       "description": [
-        "先跨rank确认dp发送完整，再按route逆置换把BF16标量恢复为[M,TopK]。这里是重排，不对同token的不同TopK槽求和。grad_x和dtopk_weights属于原token rank，dW1/dW2留在专家rank；整网router、共享专家和DP/FSDP同步由框架图继续处理。最后清理计数表并建立退出边界。"
+        "先跨rank确认dp发送完整，再按route逆置换，把与p同类型的BF16/FP32标量按原始位恢复为[M,TopK]。这里是重排，不对同token的不同TopK槽求和。grad_x和dtopk_weights属于原token rank，dW1/dW2留在专家rank；整网router、共享专家和DP/FSDP同步由框架图继续处理。最后清理计数表并建立退出边界。"
       ],
       "reads": [
         "ptrD 紧凑 dp 表",
         "expandedRowIdxGather"
       ],
       "writes": [
-        "grad_topk_weights [M,TopK] BF16",
+        "grad_topk_weights [M,TopK]，与 p 同类型的 BF16 或 FP32",
         "下一次调用可用的通信表"
       ],
       "waits": [

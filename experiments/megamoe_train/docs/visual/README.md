@@ -1,6 +1,6 @@
 # MegaMoE BF16 训练源码图解
 
-按项目结构、调用链、三核流水和内存复用逐层阅读。默认场景为 Ascend950、save=bf16、H7168/F3072、关闭 clipping。
+按项目结构、调用链、三核流水和内存复用逐层阅读。默认场景为 Ascend950、save=bf16、H7168/F3072、BF16 路由权重 p、关闭 clipping。
 
 源码快照：[820bf0d](https://github.com/xixing-321/DeepEP/tree/820bf0d472de51c9c64d6ffd610fcfeaab7df0d4)。
 
@@ -16,7 +16,7 @@
 
 普通浏览器保留 **复制定位路径**：按 **Ctrl+P** 粘贴并回车，打开对应源码和行号。
 
-数值与验证：[BF16/FP32 舍入规则](../BF16_SWIGLU_NUMERICS.md) · [测试参考与验收](../../tests/bf16/TEST_SPEC.md)。BigOp 与契约参考共用 FP32 激活、导数及归并规则，CPU FP64 真值独立计算。
+数值与验证：[BF16/FP32 舍入规则](../mega_moe_bf16_design.md#13-数学关系与舍入边界) · [测试参考与验收](../../tests/bf16/TEST_SPEC.md)。BigOp 与契约参考共用 FP32 激活、导数及归并规则，CPU FP64 真值独立计算。
 
 ## 三个阅读场景
 

@@ -1204,11 +1204,11 @@ dp_route = cast_to_p_dtype(Σ_FP32 dp_partial)
 
 ### b_dp_output · 恢复 dtopk_weights，清理后退出
 
-先跨rank确认dp发送完整，再按route逆置换把BF16标量恢复为[M,TopK]。这里是重排，不对同token的不同TopK槽求和。grad_x和dtopk_weights属于原token rank，dW1/dW2留在专家rank；整网router、共享专家和DP/FSDP同步由框架图继续处理。最后清理计数表并建立退出边界。
+先跨rank确认dp发送完整，再按route逆置换，把与p同类型的BF16/FP32标量按原始位恢复为[M,TopK]。这里是重排，不对同token的不同TopK槽求和。grad_x和dtopk_weights属于原token rank，dW1/dW2留在专家rank；整网router、共享专家和DP/FSDP同步由框架图继续处理。最后清理计数表并建立退出边界。
 
 - **执行位置**：所有 AIV / rank 边界
 - **读取**：ptrD 紧凑 dp 表；expandedRowIdxGather
-- **写入**：grad_topk_weights [M,TopK] BF16；下一次调用可用的通信表
+- **写入**：grad_topk_weights [M,TopK]，与 p 同类型的 BF16 或 FP32；下一次调用可用的通信表
 - **等待**：dp 回传完成的跨 rank 边界；最终表读者退休
 
 源码：[mega_moe_bf16_backward.hpp:1228](https://github.com/xixing-321/DeepEP/blob/820bf0d472de51c9c64d6ffd610fcfeaab7df0d4/experiments/megamoe_train/csrc/kernels/bf16/mega_moe_bf16_backward.hpp#L1228) · [仓内文件](../../csrc/kernels/bf16/mega_moe_bf16_backward.hpp)

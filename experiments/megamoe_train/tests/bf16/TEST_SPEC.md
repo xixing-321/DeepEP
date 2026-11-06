@@ -1,7 +1,7 @@
 # MegaMoE BF16 训练测试规范
 
 当前 [cases.json](cases.json) 保留 12 条典型模型尺寸用例：Flash、Pro、GLM 各取
-每 rank M=512、2048、4096、8192；新增 24 条路由权重类型/保存模式用例及 6 条 FP32
+每 rank M=512、2048、4096、8192；另有 24 条路由权重类型/保存模式用例及 6 条 FP32
 Gather 边界用例。其他历史数据分布和矩阵用例仍在仓库外归档，不自动恢复。
 清单与设备验收分开记录；设备精度、性能结果对应具体源码提交与构建产物。
 
@@ -10,6 +10,7 @@ Gather 边界用例。其他历史数据分布和矩阵用例仍在仓库外归�
 范围为 Ascend950、CANN 9.2、BF16 训练公共接口的前向、四项反向梯度及独立计时。
 模型参数取自用户提供的 Flash、Pro、GLM 配置；使用合成输入和缩减专家数，
 不加载真实 checkpoint，不复现模型 router、共享专家或量化计算。
+典型模型清单的 12 条用例统一使用 BF16 保存；另有 dtype 专项覆盖 `bf16/none/mxfp8/auto`，用于检查类型与保存模式的组合。`mxfp8` 与 `auto` 仍按实验性质对待，清单存在和诊断对照不构成设备验收（见第 5 节）。
 
 | 用例前缀 | hidden H | SwiGLU F / GMM1 N | TopK | 每 rank 专家数 | clipping | 路由权重缩放 | 条数 |
 | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: |
@@ -73,7 +74,8 @@ BF16 辅助混合容差为 atol=rtol=2^-7、匹配比例>=99%，
 辅助参考不是独立 CPU 真值，混合容差通过不能覆盖 ATK 失败。
 FP32 dtopk_weights 沿用已有 FP32 混合门禁：atol=rtol=2^-13、匹配比例>=99%，
 最大绝对误差<=max(0.01,32*ULP)。ATK actual 和 benchmark 保持同一输出 dtype，
-golden 保持 FP64；本次不修改任何阈值。
+golden 保持 FP64。
+参考实现派生自 `fft__/ascend_deepep_hkq`（`568ac7c`），只取测试侧代码。
 
 ## 4. 执行方式
 
@@ -110,6 +112,8 @@ python -u experiments/megamoe_train/tests/bf16/test_mega_moe.py 0,1 \
 性能按源仓 `test/bigop_fused` 的口径给出三个同步 Event 区间（前向、反向、前向+反向），`--warmup`/`--loops` 各一组样本，窗口前后各同步一次，不构建也不读取设备 Timer；报告把两侧记作 `megamoe_bf16` 与 `baseline`。`--baseline on`（默认）另测移植的 dropless 小算子链（permute、dispatch、GMM1、带路由权重的 SwiGLU、GMM2、combine、unpermute），与算子共用同一份路由、权重和上游梯度，GEMM 数量对齐（`none` 重算 GMM1，其余复用保存的 Gate/Up），输出各口径 speedup；`--baseline off` 只测 MegaMoE BF16。三个口径同时给 MFU（RFK 模型的 GMM FLOPs ÷ 432 TFLOPS 峰值）与 roofline（源仓 410.4 TFLOPS 分母的 floor/measured/overhead），`floor ÷ measured` 即相对该降额上限的达成率，比同口径 MFU 高约 5%，因此不再单独存百分比字段；区间内含 alltoall/permute/激活，属算子级 GMM 利用率，不是模型级 MFU。baseline 只作信息对照，不参与 PASS/FAIL，无法建立 HCCL 子组或超过 16 GiB 打包路由预算时记 `SKIPPED` 及原因。
 性能 baseline 与 ATK 的精度 BigOp 分开：保留移植源链的激活边界，不模拟 MXFP8 保存压缩；
 p 的通信和 dP 类型随输入，FP32 p 乘权后的 Hp 转回 BF16 后再进入 GMM。
+性能 baseline 的初始测试侧来源为 `ascend_deepep_hkq@f575fc1`。日志级由 `--log` 控制，
+默认 `quiet`，排查阻塞时用 `rank0`（保留 rank 0 的阶段日志与 `[PERF] stage` 标记）。
 默认跨用例复用 worker/runtime，输入和参考每次重新计算；`--isolate-cases` 使用独立执行器。
 CPU FP64 参考和完整权重梯度可能占用较多主机内存，需要先核对实际容器资源。
 
@@ -152,11 +156,12 @@ dirty diff、环境、卡号、命令和 seed。
 
 ## 5. 未覆盖范围
 
-新增 dtype/gather 清单及 CPU 回归不等于设备验证。BF16/FP32 p 的完整保存模式、
+dtype/gather 清单及 CPU 回归不等于设备验证。BF16/FP32 p 的完整保存模式、
 窗口边界与手动大用例需在匹配 wheel 上逐项记录设备结果；历史 BF16 报告不能代替这些验收。
 
 本清单是算子级回归，不构成发布资格，也不替代其他路由与数据分布、完整专家数、多机与 EP
 子组、并发及生命周期、多 microbatch、真实模型 router/共享专家或整网 loss 收敛的专项验收。
 
-具名历史精度记录见[模块 README](../../README.md)；性能实测数据随每轮运行报告保存，
-不写入本规范。
+H7168 的 `ptrDX` 中间量存在已知精度差异：中间量与最终梯度的验收分离，最终梯度通过不代表该中间量逐元素达标；过程数据保存在协作归档，不随公开导出发布。
+
+历史精度和性能实测数据随每轮运行报告保存，不写入本规范。
