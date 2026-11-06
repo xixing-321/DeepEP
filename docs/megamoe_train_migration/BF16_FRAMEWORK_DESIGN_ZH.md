@@ -2,6 +2,8 @@
 
 > 下文保留迁移阶段的原框架说明及其当时的来源、接口比较和验证状态，供协作追溯。当前长期维护的接口与接入文档见[用户指南](../../experiments/megamoe_train/docs/BF16_USER_GUIDE_ZH.md)，代码架构、状态与同步见[前后向设计](../../experiments/megamoe_train/docs/mega_moe_bf16_design.md)。本文的“当前”“本轮”和验证结论均属于原记录时点，不作为现版本的接口或验收承诺。
 
+迁移对照工具现归档在 [tools/paired.py](tools/paired.py)；下文目录树中的旧路径保留为当时记录。
+
 ---
 
 # MegaMoE BF16 训练框架设计
