@@ -9,21 +9,16 @@ import cp from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { routeGraph, roundedPath } from './router.mjs';
 import { buildLearningScenes } from './learning-scenes.mjs';
+import { sourceConfig } from './source-config.mjs';
 
 export const visual = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const root = path.resolve(visual, '../../../..');
 const git = (...args) => cp.execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', maxBuffer: 12 * 1024 * 1024 }).trimEnd();
 const sourceCommit = git('rev-parse', process.env.SOURCE_REF || 'HEAD');
-let repoUrl = process.env.SOURCE_REPOSITORY_URL;
-if (!repoUrl && process.env.GITHUB_REPOSITORY) repoUrl = `https://github.com/${process.env.GITHUB_REPOSITORY}`;
-if (!repoUrl) {
-  const remote = git('remote', 'get-url', 'origin');
-  repoUrl = remote.replace(/^git@([^:]+):/, 'https://$1/').replace(/^ssh:\/\/git@([^/]+)\//, 'https://$1/').replace(/\.git$/, '');
-}
-repoUrl = repoUrl.replace(/\/$/, '');
-if (!/^https:\/\/[^/]+\/[^/]+\/[^/]+$/.test(repoUrl)) throw new Error('Expected an HTTPS owner/repository source URL');
-const github = repoUrl.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+)$/);
-const siteUrl = process.env.SITE_URL || (github ? `https://${github[1]}.github.io/${github[2]}/` : '');
+const { repository: repoUrl, sourceBranch, siteUrl } = sourceConfig(process.env, {
+  remote: process.env.SOURCE_REPOSITORY_URL || process.env.GITHUB_REPOSITORY ? '' : git('remote', 'get-url', 'origin'),
+  branch: git('branch', '--show-current'), commit: sourceCommit,
+});
 const esc = s => String(s).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
 const urlPath = p => p.split('/').map(encodeURIComponent).join('/');
 const colors = {
@@ -138,7 +133,7 @@ for (const graph of graphs) {
   fs.writeFileSync(path.join(visual, 'diagrams', `${graph.id}.svg`), graph.svg + '\n');
   fs.writeFileSync(path.join(visual, 'diagrams', `${graph.id}.mmd`), graph.mermaid);
 }
-const manifest = { sourceCommit, sourceRepository: repoUrl, sourceBranch: 'feat/megamoe-train-bf16',
+const manifest = { sourceCommit, sourceRepository: repoUrl, sourceBranch, siteUrl,
   scenario: { platform: 'Ascend950', save: 'bf16', hidden: 7168, ffn: 3072, clipping: false, forceExpertReady: false },
   learningScenes: learning.scenes.map(({ id, title, sourceNode }) => ({ id, title, sourceNode })),
   files: Object.fromEntries([...readSource].map(([file, data]) => [file, { sha256: data.sha256, lines: data.lines.length - 1 }])), nodes: manifestNodes };
@@ -155,6 +150,7 @@ markdown += `源码快照：[${sourceCommit.slice(0, 7)}](${repoUrl}/tree/${sour
 if (siteUrl) markdown += `[在线交互导览](${siteUrl})\n\n`;
 markdown += '**VS Code 一键定位**：按[扩展安装说明](vscode/README.md)安装一次，运行 **MegaMoE: 打开训练源码导览**。点击节点、阶段或等待查看讲解，点击 **打开源码** 或 **查看对应源码**，再在旁边的编辑器中定位到文件和行号。\n\n';
 if (siteUrl) markdown += `[下载 VS Code 导览扩展](${siteUrl}downloads/megamoe-train-source-guide.vsix)\n\n`;
+else markdown += 'VS Code 安装包可按[本地打包方法](vscode/README.md#一次性安装)生成，无需在线站点。\n\n';
 markdown += '本地用浏览器打开 index.html，即可点击节点查看读写、等待和带行号源码。仓库网页可以直接阅读下方图文，通过调用点表跳转源码。\n\n';
 markdown += '普通浏览器保留 **复制定位路径**：按 **Ctrl+P** 粘贴并回车，打开对应源码和行号。\n\n';
 markdown += '数值与验证：[BF16/FP32 舍入规则](../mega_moe_bf16_design.md#13-数学关系与舍入边界) · [测试参考与验收](../../tests/bf16/TEST_SPEC.md)。BigOp 与契约参考共用 FP32 激活、导数及归并规则，CPU FP64 真值独立计算。\n\n';

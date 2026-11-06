@@ -8,7 +8,7 @@
 2. 在 VS Code 扩展面板菜单中选择 **Install from VSIX…（从 VSIX 安装）**，选中该文件。
 3. 在 VS Code 打开 DeepEP 仓库，运行命令 **MegaMoE: 打开训练源码导览**。
 
-可从[上一级文档](../README.md)下载安装包；也可在 `visual` 目录中本地打包安装：
+在 `visual` 目录中本地打包安装，无需在线站点：
 
 ```bash
 python tools/package-editor.py

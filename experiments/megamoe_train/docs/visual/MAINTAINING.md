@@ -1,10 +1,19 @@
 # 维护源码导览
 
-本目录直接在 `feat/megamoe-train-bf16` 分支随 MegaMoE BF16 训练代码一起维护。图中的文字、节点和连线描述源码行为；生成工具负责更新源码片段、位置与网页。默认阅读场景为 `save=bf16`、clipping 关闭。
+本目录随 MegaMoE BF16 训练代码一起维护。图中的文字、节点和连线描述源码行为；生成工具负责更新源码片段、位置与离线页面。默认阅读场景为 `save=bf16`、clipping 关闭。
 
 生成产物对应的精确源码提交见 [README 的源码快照](README.md)及 `source-map.json` 的
 `sourceCommit`。构建工具从 `SOURCE_REF` 指定的真实 Git 提交读取源码，未指定时解析当前
 Git 提交；写入产物的是完整 SHA，不是字面量 `HEAD`，也不代表未提交工作区的内容。
+
+默认构建离线导览，不根据仓库 owner 推导在线站点。生成来源可用以下环境变量明确设置：
+
+| 变量 | 含义 | 默认值 |
+| --- | --- | --- |
+| `SOURCE_REF` | 读取源码的真实 Git 提交或引用 | 当前提交 |
+| `SOURCE_REPOSITORY_URL` | 源码链接使用的 HTTPS 仓库地址 | CI 的 `GITHUB_REPOSITORY`，本地为 origin |
+| `SOURCE_BRANCH` | 映射文件中记录的来源分支 | CI 分支、当前分支；分离 HEAD 时记录提交 |
+| `SITE_URL` | 显式启用在线导览及站点 VSIX 下载入口 | 空，保持离线 |
 
 ## 本地修改与检查
 
@@ -15,6 +24,7 @@ cd experiments/megamoe_train/docs/visual
 npm ci
 npm run build
 npm run check
+npm run test:editor
 npx playwright install chromium
 npm run test:browser
 ```
@@ -30,7 +40,7 @@ python tools/package-editor.py
 code --install-extension .artifacts/megamoe-train-source-guide-0.2.0.vsix
 ```
 
-普通浏览器继续直接打开离线 HTML；在线页面保留 **复制定位路径**。使用 VS Code 自带内置浏览器时，也可以复制后按 **Ctrl+P** 粘贴并回车。这里与扩展提供的源码导览是两个不同的打开方式。
+普通浏览器继续直接打开离线 HTML，并提供 **复制定位路径**。使用 VS Code 自带内置浏览器时，也可以复制后按 **Ctrl+P** 粘贴并回车。这里与扩展提供的源码导览是两个不同的打开方式。
 
 修改 `data/*.json` 中对应节点的标题、讲解、输入、输出、等待和连线。`sources` 使用文件路径与源码锚点定位函数或控制点；函数移动或改名时同步修改锚点。节点 ID 保持稳定，便于页面链接和跨图下钻。
 
@@ -40,27 +50,29 @@ H、dH 和 dp 乘积保持 FP32；Hp、dGate/dUp 写出时转回 BF16，Y、dX �
 
 [数值契约](../mega_moe_bf16_design.md#13-数学关系与舍入边界)也用于 NPU BigOp 与契约参考，CPU FP64 真值独立计算。修改测试参考时，核对导览中的公式和源码引用；原始设备报告与临时验证脚本继续存放在仓库外。
 
-浏览器检查覆盖仓内 HTTP 预览、`file://` 离线页面、VS Code 消息桥，以及 `site/` 发布产物的 HTTP 模式。打包站点后仍使用同一份页面和源码映射。
+浏览器检查覆盖仓内 HTTP 预览、`file://` 离线页面、VS Code 消息桥，以及 `site/` 便携副本的 HTTP 模式。`site/` 是本地打包目录，不表示已发布站点；它使用同一份页面和源码映射。
 
 训练代码更新后：
 
-1. 在 `feat/megamoe-train-bf16` 中同时维护训练代码与本目录文档。
+1. 同时维护训练代码与本目录文档。
 2. 核对受影响节点，更新相应的执行流程、张量和同步说明。
 3. 运行构建，重新采集源码片段、位置和版本信息。
 4. 完成源码引用与浏览器检查，提交修改后的文档、图源和生成文件。
 
-浏览器检查的截图和报告写入 `.artifacts/`；`node_modules/`、`.artifacts/` 和发布暂存目录 `site/` 是本地生成目录。网页阅读和文档构建不需要 NPU 或 CANN。
+浏览器检查的截图和报告写入 `.artifacts/`；`node_modules/`、`.artifacts/` 和便携副本目录 `site/` 是本地生成目录。离线阅读和文档构建不需要 NPU 或 CANN。
 
-修改编辑器接入时，运行 `npm run test:editor` 检查消息、源码路径和当前文档锚点定位，再执行浏览器检查。`python tools/package-editor.py --site` 同时把 VSIX 放入站点下载目录。扩展代码更新后需重新打包安装；只更新训练代码、图或讲解时无需重装扩展，重新打开导览即可。
+修改编辑器接入时，运行 `npm run test:editor` 检查消息、源码路径和当前文档锚点定位，再执行浏览器检查。`python tools/package-editor.py --site` 同时把 VSIX 放入便携副本的 `downloads/` 目录。扩展代码更新后需重新打包安装；只更新训练代码、图或讲解时无需重装扩展，重新打开导览即可。
 
-## 自动发布
+## 自动检查与离线附件
 
-工作流位于仓库根目录的 `.github/workflows/megamoe-train-visual.yml`。向 `feat/megamoe-train-bf16` 推送相关修改后，自动执行依赖安装、生成、源码检查与浏览器检查，通过后发布 `site/`。也可从 Actions 页手动选择该分支运行。
+工作流位于仓库根目录的 `.github/workflows/megamoe-train-visual.yml`。相关推送及 PR 自动执行依赖安装、离线生成、源码检查、编辑器检查、浏览器检查和扩展打包，也可从 Actions 页手动运行。公共工作流不部署 Pages，也不需要 Pages 写入权限。
 
-PR 执行文档检查，并在 Actions 附件中提供 `megamoe-train-visual-preview`，包含站点页面和 VS Code 安装包。下载解压后，可在该目录运行 `python -m http.server 8000`，从浏览器打开 `http://localhost:8000` 预览。正式站点在合入发布分支后部署。检查失败时，Actions 保存 `.artifacts/` 中已有的报告和截图，供查看问题。
+检查通过后，Actions 附件 `megamoe-train-visual-offline` 提供页面、源码映射、图和 VS Code 安装包。下载解压后可直接打开 `index.html`，也可运行 `python -m http.server 8000` 后从 `http://localhost:8000` 预览。检查失败时，Actions 保存 `.artifacts/` 中已有的报告和截图。
 
-首次启用时，仓库维护者在 **Settings → Pages → Source** 选择 **GitHub Actions**，并让 `github-pages` 环境允许 `feat/megamoe-train-bf16` 部署。工作流通过当前仓库上下文生成和发布，未绑定个人账号。
+## 可选的分支站点
 
-文档正式合入上游后，将工作流的 `push.branches` 和两处发布条件中的分支名一起改为正式发布分支，并同步 `github-pages` 环境的部署分支设置。文档内容及生成脚本继续使用同一套。
+需要在线导览的分支可以另行维护 Pages 部署工作流。该工作流显式设置 `SITE_URL`、`SOURCE_REPOSITORY_URL` 和来源分支，复用相同生成、检查和打包命令；将仓库、发布分支和 `github-pages` 环境的部署范围限定到实际维护的站点。首次启用时由仓库维护者在 **Settings → Pages → Source** 选择 **GitHub Actions**。
+
+离线交付不需要携带分支专用的 Pages 工作流，也不依赖在线站点或下载地址。
 
 源码行为变化时，需要一起审阅图的讲解和连线；重新生成会刷新引用内容，执行语义由代码与文档 review 对齐。

@@ -7,6 +7,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import cp from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import './source-config-check.mjs';
 
 const visual = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const root = path.resolve(visual, '../../../..');
@@ -17,6 +18,15 @@ assert.equal(data.graphs.length, 8);
 assert.equal(data.learning.scenes.length, 3);
 assert.equal(manifest.learningScenes.length, 3);
 assert.equal(manifest.sourceCommit, data.sourceCommit);
+assert.equal(typeof manifest.sourceBranch, 'string');
+assert(manifest.sourceBranch.length > 0, 'Source identity must name its branch or detached commit');
+const readme = fs.readFileSync(path.join(visual, 'README.md'), 'utf8');
+if (manifest.siteUrl) {
+  assert(readme.includes(`[在线交互导览](${manifest.siteUrl})`), 'Explicit site navigation');
+} else {
+  assert(!readme.includes('[在线交互导览]('), 'Offline guide must not advertise an online site');
+  assert(!readme.includes('[下载 VS Code 导览扩展]('), 'Offline guide must not depend on a site download');
+}
 assert.equal(manifest.nodes.length, data.graphs.reduce((sum, g) => sum + g.nodes.length, 0));
 assert(!/<script[^>]+src=/.test(html), 'Reader must open offline without external runtime scripts');
 assert(!html.includes('/*__'), 'Unreplaced page placeholder');

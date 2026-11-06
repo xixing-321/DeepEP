@@ -1,0 +1,96 @@
+name: MegaMoE Train branch Pages
+
+on:
+  push:
+    branches: [feat/megamoe-train-bf16]
+    paths:
+      - experiments/megamoe_train/**
+      - deep_ep/**
+      - csrc/runtime/**
+      - csrc/bindings/**
+      - CMakeLists.txt
+      - build_support.py
+      - setup.py
+      - .github/workflows/megamoe-train-pages.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: megamoe-train-pages-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: experiments/megamoe_train/docs/visual
+
+env:
+  SOURCE_REPOSITORY_URL: https://github.com/xixing-321/DeepEP
+  SOURCE_BRANCH: feat/megamoe-train-bf16
+  SITE_URL: https://xixing-321.github.io/DeepEP/
+
+jobs:
+  build:
+    name: Build branch website
+    if: github.repository == 'xixing-321/DeepEP' && github.ref == 'refs/heads/feat/megamoe-train-bf16'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out source and documentation
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: experiments/megamoe_train/docs/visual/package-lock.json
+      - name: Install documentation dependencies
+        run: npm ci
+      - name: Build source guide
+        run: npm run build
+      - name: Check source references and generated documentation
+        run: npm run check
+      - name: Check native editor integration
+        run: npm run test:editor
+      - name: Install browser for interaction checks
+        run: npx playwright install --with-deps chromium
+      - name: Check browser interactions and offline reading
+        run: npm run test:browser
+      - name: Package VS Code source guide
+        run: python tools/package-editor.py --site
+      - name: Package branch website
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: experiments/megamoe_train/docs/visual/site
+      - name: Preserve failed-check evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: megamoe-train-pages-checks
+          path: experiments/megamoe_train/docs/visual/.artifacts/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  deploy:
+    name: Publish branch source guide
+    if: github.repository == 'xixing-321/DeepEP' && github.ref == 'refs/heads/feat/megamoe-train-bf16'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+      - name: Deploy branch website
+        id: deployment
+        uses: actions/deploy-pages@v4

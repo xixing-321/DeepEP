@@ -2,7 +2,7 @@ name: MegaMoE Train visual documentation
 
 on:
   push:
-    branches: [feat/megamoe-train-bf16]
+    branches: [main, feat/megamoe-train-bf16]
     paths:
       - experiments/megamoe_train/**
       - deep_ep/**
@@ -55,6 +55,8 @@ jobs:
       - name: Install documentation dependencies
         run: npm ci
       - name: Build source guide
+        env:
+          SITE_URL: ''
         run: npm run build
       - name: Check source references and generated documentation
         run: npm run check
@@ -66,11 +68,10 @@ jobs:
         run: npm run test:browser
       - name: Package optional VS Code source guide
         run: python tools/package-editor.py --site
-      - name: Preserve pull request site preview
-        if: github.event_name == 'pull_request'
+      - name: Preserve offline source guide
         uses: actions/upload-artifact@v4
         with:
-          name: megamoe-train-visual-preview
+          name: megamoe-train-visual-offline
           path: experiments/megamoe_train/docs/visual/site/
           retention-days: 7
       - name: Preserve failed-check evidence
@@ -81,28 +82,3 @@ jobs:
           path: experiments/megamoe_train/docs/visual/.artifacts/
           if-no-files-found: ignore
           retention-days: 7
-      - name: Package the website
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/feat/megamoe-train-bf16'
-        uses: actions/upload-pages-artifact@v4
-        with:
-          path: experiments/megamoe_train/docs/visual/site
-
-  deploy:
-    name: Publish source guide
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/feat/megamoe-train-bf16'
-    needs: build
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: read
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - name: Configure GitHub Pages
-        uses: actions/configure-pages@v5
-      - name: Deploy generated website
-        id: deployment
-        uses: actions/deploy-pages@v4
