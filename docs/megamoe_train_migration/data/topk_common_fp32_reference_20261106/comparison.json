@@ -1,0 +1,2653 @@
+{
+  "schema_version": 1,
+  "report_type": "process_common_fp32_topk_reference_accuracy_comparison",
+  "date": "2026-11-06",
+  "complete": true,
+  "process_only": true,
+  "publication_scope": "Temporary collaboration evidence in docs/megamoe_train_migration; excluded from formal main/upstream delivery.",
+  "evidence_scope": "One additional BF16-p NPU measurement compared with the previously recorded FP32-full-p measurement. FP32 NPU execution was not repeated for this diagnostic.",
+  "source_evidence": {
+    "private_comparison_sha256": "9c37c9f2e874dbd44b928f1965da2d649c6f959f56e3b42b6a5cdcb75adce0ea",
+    "private_aggregation_script_sha256": "2b29cd9aee013a3670003d331785c4cc4da8d3bb4c8f1f6bae30e6e5c22f136c",
+    "production_python_source_commit": "820bf0d472de51c9c64d6ffd610fcfeaab7df0d4",
+    "native_source_commit": "702e8ebc6fbeac05146ef077c00b1ea10616a21a",
+    "frozen_test_source_commit": "702e8ebc6fbeac05146ef077c00b1ea10616a21a",
+    "complete_wheel_sha256": "8aa5c62d9ddd5158ee7711de44cb65ecc61a7c4e6ebca54f93806d06f4be59f2",
+    "production_python_sha256": "12983238f39c2e7d98202728eff943d6755b9f354b7be4bd5b4056ff04d9a14c",
+    "frozen_test_files_sha256": {
+      "test_mega_moe.py": "f2ea95c8504b2111ce5b73cae719fb6d1b69546258a10e15cd52f5dff6d82bed",
+      "cpu_reference.py": "6841664c6fdd3741ef4198e648cd2676e1ae8418d12e5e33c89af0f2dfeab36c",
+      "npu_baseline.py": "d8d32da274951599574d6b85fb691f6973441921b91e7fd30e69a4b53dc7f718",
+      "atk_compare.py": "dc96f5c5f23f82d4ac42cec2fa67d0b4c77497597d1393e0a718a75cec7d1a4d",
+      "precision_metrics.py": "b90a89e3fe4cf706b29dcaada84393a5898bcd2ebd9358df1a870d503b796bd1"
+    },
+    "capture_wrapper_sha256": "fbe815575b92281d1649fc85b9f212906e329592a867633236bece451636eeae",
+    "new_metadata_manifest_sha256": "994ea5043d00a940f33d61c01ca945822b008f5b30832acab52d91d0e47e59e9"
+  },
+  "case": {
+    "ep": 8,
+    "seq_per_rank": 4096,
+    "global_tokens": 32768,
+    "hidden": 7168,
+    "ffn": 3072,
+    "gmm_n": 6144,
+    "topk": 6,
+    "expert_per_rank": 4,
+    "save_gmm1_output": "bf16",
+    "swiglu_limit": 10.0,
+    "seed": 20260825,
+    "routing_mode": "balanced",
+    "data_profile": "random",
+    "routed_scaling_factor": 1.0,
+    "cpu_reference_chunk_rows": 256,
+    "bf16_actual_p": {
+      "dtype": "torch.bfloat16",
+      "values": "FP32 full p rounded once to BF16"
+    },
+    "fp32_actual_p": {
+      "dtype": "torch.float32",
+      "values": "unrounded full FP32 p"
+    },
+    "common_truth": {
+      "input_p_dtype": "torch.float32",
+      "input_p_values": "unrounded full FP32 p",
+      "compute_dtype": "torch.float64",
+      "golden_definition": "CPU_FP64_on_same_seed_unrounded_FP32_p"
+    }
+  },
+  "comparison_boundary": {
+    "metric_source": "Only the original ATK Actual_* metrics are compared. ATK actual/BigOp ratios are not used as cross-dtype accuracy gains.",
+    "dp_evaluation": "The new BF16 dP and its BigOp counterpart are promoted losslessly to FP32 for an additional ATK evaluation against the same FP64 truth. The old FP32 dP was already evaluated as FP32. Raw BF16 dP metrics are excluded from gain arithmetic.",
+    "other_output_evaluation_dtype": "torch.bfloat16 on both sides",
+    "dp_attribution": "The dP comparison includes the public gradient-return dtype difference; it does not isolate the extra mantissa bits of p alone.",
+    "rms_definition": "Original private ATK RMS field; its normalization has not been independently established. It is not reported as absolute RMSE or pooled/global RMSE.",
+    "aggregation": "Compute FP32/BF16 for each matching rank first, then report median and maximum ratio. Reduction percent is (1-ratio)*100. No tensor-error pooling across ranks.",
+    "old_fp32_input_and_truth_evidence": "The old actual input tensors and golden hashes were not retained. Common-reference consistency relies on the frozen generator, identical case/seed and matching CPU producer binaries; equality with the old full-size golden was not verified bitwise.",
+    "new_reference_evidence": "The wrapper verifies that BF16 actual p equals rounded full FP32 p and all non-p inputs are identical within the new generation, while leaving BF16 kernel and BigOp inputs unchanged.",
+    "source_identity_boundary": "Installed full-wheel members and startup native loading were verified. Per-rank native memory mappings were not captured.",
+    "qualification_scope": "Additional common-full-p-reference diagnostic; original per-input qualification decisions remain separate and unchanged.",
+    "claim_limit": "One shape, fixed routing and upstream gradients. Improvements do not imply every maximum-relative-error value improves or establish training loss convergence."
+  },
+  "comparator": {
+    "standard": "cv_fused_double_benchmark",
+    "provider": "private",
+    "atk_version": "26.9.8",
+    "private_version": "0.1.0",
+    "thresholds": {
+      "max_re_ratio": 5.0,
+      "avg_re_ratio": 1.5,
+      "root_mean_squared_ratio": 1.5,
+      "number_count_radio": 2
+    }
+  },
+  "environment_evidence": {
+    "same_machine_runtime_instance_and_image": true,
+    "identical_installed_wheel_member_count": 20,
+    "rank_native_mapping_evidence": false,
+    "cann": {
+      "version": "9.2.0",
+      "build": "B234"
+    },
+    "cpu_producer": {
+      "python": "3.12.13",
+      "packages": {
+        "torch": "2.10.0+cpu",
+        "torch-npu": "2.10.0.post4",
+        "numpy": "1.26.4",
+        "ATK": "26.9.8",
+        "atk-private-precision": "0.1.0"
+      },
+      "files": {
+        "torch/lib/libtorch_cpu.so": {
+          "bytes": 255800841,
+          "sha256": "d9529119ac18ba154521854dc8da477c25c9a34c3265c95e40086a593d741926"
+        },
+        "torch/lib/libtorch_python.so": {
+          "bytes": 28367960,
+          "sha256": "6b2c97897785c9d4d89af21cf587f346ba532ac03bc875ff63a72421a09f6577"
+        },
+        "numpy/random/_generator.cpython-312-aarch64-linux-gnu.so": {
+          "bytes": 853824,
+          "sha256": "d9335b9d8d9ddc626f79489c204d64ed66f9f69e6564e3222ff58a423ae869f6"
+        },
+        "numpy/random/mtrand.cpython-312-aarch64-linux-gnu.so": {
+          "bytes": 708672,
+          "sha256": "d0111cfd58a0213b20ca8a68177f5b239cd217126abc2d6378435b4080dcbe18"
+        }
+      },
+      "all_four_binary_hashes_match_old_fp32_environment": true,
+      "current_producer_receipt_sha256": "ed92ce65f5b365ee853746bfef2c7761667f361202af9c8c6e1638d71af41cfe",
+      "old_producer_receipt_sha256": "2eb9d8d42b489deba15dbf777bb9d8016c593e137c8fed6538eda20fbbb0a80b"
+    }
+  },
+  "rank_receipts": [
+    {
+      "rank": 0,
+      "fp32_report_sha256": "b5a05d47c1ef0933154d160ce9a97dcf4cce610cfaf8bbfa11c312bc58a55d49",
+      "bf16_report_sha256": "244b37e9040b57f83de859aaff8bfa700093d299b9cf90697731089f957670f6"
+    },
+    {
+      "rank": 1,
+      "fp32_report_sha256": "09e2f725e018581da0e97162014ca626685e21c272e9dd7e1d31300cfda0382c",
+      "bf16_report_sha256": "004e22886ec003afe234439e1cc04a736dcd368b9793dd5175f2561676c54862"
+    },
+    {
+      "rank": 2,
+      "fp32_report_sha256": "c4f410c51db290a9a7346bdb76711e98385749c74be2bc0aed82a0938dc50a77",
+      "bf16_report_sha256": "b6a2287e8b093dca998e5474ebf3444f14ba716cf1d03934344ad0459592ee09"
+    },
+    {
+      "rank": 3,
+      "fp32_report_sha256": "7b07d737abaf5a5ddf60ae5fe061e0fc1de8f34fa8d52b8fd14adeae11f7fddc",
+      "bf16_report_sha256": "77318d65c9d948ab81dc728418093c8f67a04ded4de973532ca9a8af8d801b7e"
+    },
+    {
+      "rank": 4,
+      "fp32_report_sha256": "9d78d0b175b3a215c46e56c2ee5443dfb35dcd3eb4fa5d228777726cccfadaf3",
+      "bf16_report_sha256": "962e9a4532736d8fa3535e2d8cad80ddde5bf0bd11c1971cba3a5cec99b339dd"
+    },
+    {
+      "rank": 5,
+      "fp32_report_sha256": "79e327128d1c1c4ec9d58f72ffaf58afff82478f53ad1b83b0a80f45b39c6871",
+      "bf16_report_sha256": "85f226cd7f5af95d9aa50a5b40f0c29039f3bcdb716699ca0e46ffe3e0fe19af"
+    },
+    {
+      "rank": 6,
+      "fp32_report_sha256": "bc77b8d9dcfcd104c37f5bae4414b6440e2bb1175fc660945308fd041646f82a",
+      "bf16_report_sha256": "cb376b7106db449629bf3243ece287db4ba108e4e2e17dd8b7ff8b0ecdd1c17c"
+    },
+    {
+      "rank": 7,
+      "fp32_report_sha256": "36e1a815f9db710503d05802494282e457ea0ce7c2ee2e9811526516d53cd7d9",
+      "bf16_report_sha256": "7bbbf62b93c8655a4b597e79bda56068e10c519b0bd806923411033c2bb3340c"
+    }
+  ],
+  "rank_evidence": [
+    {
+      "rank": 0,
+      "fp32_atk_passed": true,
+      "bf16_atk_passed": true,
+      "fp32_counts_passed": true,
+      "bf16_counts_passed": true,
+      "bf16_equals_p32_round": true,
+      "all_non_p_fields_identical": true,
+      "input_tensors": {
+        "x": {
+          "shape": [
+            32768,
+            7168
+          ],
+          "dtype": "torch.bfloat16",
+          "nbytes": 469762048,
+          "sha256": "347a7cc1355a2f2af79de0ba48b20a4e5ab9f49068a3bbaa0567c9a3bcf0dd7d"
+        },
+        "ids": {
+          "shape": [
+            32768,
+            6
+          ],
+          "dtype": "torch.int32",
+          "nbytes": 786432,
+          "sha256": "b843a30abcc9a37a0eca4c6819a4047fb786a67a0d214e6435491ab9fcd5cd12"
+        },
+        "w1": {
+          "shape": [
+            4,
+            6144,
+            7168
+          ],
+          "dtype": "torch.bfloat16",
+          "nbytes": 352321536,
+          "sha256": "946ea5e6e7989a62e05b4ad65401a1983e8a3771c3a468c03caccb028a0ebbd5"
+        },
+        "w2": {
+          "shape": [
+            4,
+            7168,
+            3072
+          ],
+          "dtype": "torch.bfloat16",
+          "nbytes": 176160768,
+          "sha256": "29c91cc586fd74dd9e6f92058a31522428d49108d304d91d64278dfbbf87de0d"
+        },
+        "dy": {
+          "shape": [
+            32768,
+            7168
+          ],
+          "dtype": "torch.bfloat16",
+          "nbytes": 469762048,
+          "sha256": "ecd5488b56a9fbc7ab9c523e110c23228bca84eedcce42b1dc05a7683eb9b0c6"
+        },
+        "all_counts": {
+          "shape": [
+            32
+          ],
+          "dtype": "torch.int64",
+          "nbytes": 256,
+          "sha256": "f2c8223bac4dd38e48a4e77202982ad817cdc1c075ecc6dbcf5db2571aa68f01"
+        },
+        "source_to_destination_rows": {
+          "shape": [
+            8,
+            8
+          ],
+          "dtype": "torch.int64",
+          "nbytes": 512,
+          "sha256": "446e62094a6eeb8b90a65ee6ff198456431a2a70944fbedb004cf87680c164c2"
+        },
+        "p32_full": {
+          "shape": [
+            32768,
+            6
+          ],
+          "dtype": "torch.float32",
+          "nbytes": 786432,
+          "sha256": "d7daabe521890879a8ea2e8ae2be42ecafabc57aa9a84f15d37b614a7f037b18"
+        },
+        "p16_actual": {
+          "shape": [
+            32768,
+            6
+          ],
+          "dtype": "torch.bfloat16",
+          "nbytes": 393216,
+          "sha256": "93452671bb172a0892374739f2e2867807b2948be2e3ced2c2d3d2a808416dfc"
+        }
+      },
+      "cpu_reference": {
+        "bf16_inputs_unchanged": true,
+        "call_count": 1,
+        "golden_definition": "CPU_FP64_on_same_seed_unrounded_FP32_p",
+        "p32_sha256": "d7daabe521890879a8ea2e8ae2be42ecafabc57aa9a84f15d37b614a7f037b18",
+        "rank": 0,
+        "shared_inputs_unchanged": true,
+        "source_sha256": "6841664c6fdd3741ef4198e648cd2676e1ae8418d12e5e33c89af0f2dfeab36c",
+        "world": 8
+      },
+      "capture_json_sha256": {
+        "inputs": "fbfe9a087a80f5086d6faa779a1113b2ae4ec1dba8fd98a9eb508d60d10efa96",
+        "cpu_reference": "df49dbc79865c87a9ddd185c93847c22f31a03162d16ff18364b64e3f6cf1a36",
+        "triples": "484ecf9f89da932a40071fac8bbb49bf8738436659db411145c2a0851e3cb925",
+        "original_atk": "5ec41ba7917eb59c396324f9334c80fe5c0d3470d4ec1e7ec3a91757e209ce22",
+        "dp_common_float_metric": "4bdc0517ceb539950fe37bfb6d599ef031cf8f977aeb53a9e7dd84a44af005c1",
+        "provenance": "519e0fb85e806b13e987ee0e7aa23304cfbd5adb895f8926af26d98c80c6a949"
+      }
+    },
+    {
+      "rank": 1,
+      "fp32_atk_passed": true,
+      "bf16_atk_passed": true,
+      "fp32_counts_passed": true,
+      "bf16_counts_passed": true,
+      "bf16_equals_p32_round": true,
+      "all_non_p_fields_identical": true,
+      "input_tensors": {
+        "x": {
+          "shape": [
+            32768,
+            7168
+          ],
+          "dtype": "torch.bfloat16",
+          "nbytes": 469762048,
+          "sha256": "347a7cc1355a2f2af79de0ba48b20a4e5ab9f49068a3bbaa0567c9a3bcf0dd7d"
+        },
+        "ids": {
+          "shape": [
+            32768,
+            6
+          ],
+          "dtype": "torch.int32",
+          "nbytes": 786432,
+          "sha256": "b843a30abcc9a37a0eca4c6819a4047fb786a67a0d214e6435491ab9fcd5cd12"
+        },
+        "w1": {
+          "shape": [
+            4,
+            6144,
+            7168
+          ],
+          "dtype": "torch.bfloat16",
+          "nbytes": 352321536,
+          "sha256": "aaeb925032764e2bd91434021d350205b25fd4eeb448c7b4e363683720a10712"
+        },
+        "w2": {
+          "shape": [
+            4,
+            7168,
+            3072
+          ],
+          "dtype": "torch.bfloat16",
+          "nbytes": 176160768,
+          "sha256": "160838f59fd58d718ff11abd2f5afe68721c4543c98f005527bd1bb151719bc2"
+        },
+        "dy": {
+          "shape": [
+            32768,
+            7168
+          ],
+          "dtype": "torch.bfloat16",
+          "nbytes": 469762048,
+          "sha256": "ecd5488b56a9fbc7ab9c523e110c23228bca84eedcce42b1dc05a7683eb9b0c6"
+        },
+        "all_counts": {
+          "shape": [
+            32
+          ],
+          "dtype": "torch.int64",
+          "nbytes": 256,
+          "sha256": "f2c8223bac4dd38e48a4e77202982ad817cdc1c075ecc6dbcf5db2571aa68f01"
+        },
+        "source_to_destination_rows": {
+          "shape": [
+            8,
+            8
+          ],
+          "dtype": "torch.int64",
+          "nbytes": 512,
+          "sha256": "446e62094a6eeb8b90a65ee6ff198456431a2a70944fbedb004cf87680c164c2"
+        },
+        "p32_full": {
+          "shape": [
+            32768,
+            6
+          ],
+          "dtype": "torch.float32",
+          "nbytes": 786432,
+          "sha256": "d7daabe521890879a8ea2e8ae2be42ecafabc57aa9a84f15d37b614a7f037b18"
+        },
+        "p16_actual": {
+          "shape": [
+            32768,
+            6
+          ],
+          "dtype": "torch.bfloat16",
+          "nbytes": 393216,
+          "sha256": "93452671bb172a0892374739f2e2867807b2948be2e3ced2c2d3d2a808416dfc"
+        }
+      },
+      "cpu_reference": {
+        "bf16_inputs_unchanged": true,
+        "call_count": 1,
+        "golden_definition": "CPU_FP64_on_same_seed_unrounded_FP32_p",
+        "p32_sha256": "d7daabe521890879a8ea2e8ae2be42ecafabc57aa9a84f15d37b614a7f037b18",
+        "rank": 1,
+        "shared_inputs_unchanged": true,
+        "source_sha256": "6841664c6fdd3741ef4198e648cd2676e1ae8418d12e5e33c89af0f2dfeab36c",
+        "world": 8
+      },
+      "capture_json_sha256": {
+        "inputs": "e7de7c6aed12446410a85d4a459fa6de39ae4e5794c2335e9a8ab043651fb6f1",
+        "cpu_reference": "4c79ac28bd1cba1b0dd4d279652e718a163e55f55699e056807ef63f954b4d8f",
+        "triples": "ae8d93ea61bd3b7c65db9d128076faebd5a9b25a7ba252cbb731ef5f3842c060",
+        "original_atk": "3554b4aae48f6a48a786dd8ca4bab31fc426e82a0bbe191a5654c434b879c237",
+        "dp_common_float_metric": "acad075d04148ef3ac2ec460c6257f51c3a71fae3c3d4625e15c07188cb550bf",
+        "provenance": "89d6075f66e962152f108b7d3691ccb7de2abd75cc613575cb8f9a8cfe5cdbb4"
+      }
+    },
+    {
+      "rank": 2,
+      "fp32_atk_passed": true,
+      "bf16_atk_passed": true,
+      "fp32_counts_passed": true,
+      "bf16_counts_passed": true,
+      "bf16_equals_p32_round": true,
+      "all_non_p_fields_identical": true,
+      "input_tensors": {
+        "x": {
+          "shape": [
+            32768,
+            7168
+          ],
+          "dtype": "torch.bfloat16",
+          "nbytes": 469762048,
+          "sha256": "347a7cc1355a2f2af79de0ba48b20a4e5ab9f49068a3bbaa0567c9a3bcf0dd7d"
+        },
+        "ids": {
+          "shape": [
+            32768,
+            6
+          ],
+          "dtype": "torch.int32",
+          "nbytes": 786432,
+          "sha256": "b843a30abcc9a37a0eca4c6819a4047fb786a67a0d214e6435491ab9fcd5cd12"
+        },
+        "w1": {
+          "shape": [
+            4,
+            6144,
+            7168
+          ],
+          "dtype": "torch.bfloat16",
+          "nbytes": 352321536,
+          "sha256": "60f51fc8cf70e4b2bf37fc083f8335294dd6a509fcfe8911ccce7a49842a0da1"
+        },
+        "w2": {
+          "shape": [
+            4,
+            7168,
+            3072
+          ],
+          "dtype": "torch.bfloat16",
+          "nbytes": 176160768,
+          "sha256": "b117ba884912c5ceea48f58cf51cebf59350dca4eaf8351ec2d1b18c3bdf0573"
+        },
+        "dy": {
+          "shape": [
+            32768,
+            7168
+          ],
+          "dtype": "torch.bfloat16",
+          "nbytes": 469762048,
+          "sha256": "ecd5488b56a9fbc7ab9c523e110c23228bca84eedcce42b1dc05a7683eb9b0c6"
+        },
+        "all_counts": {
+          "shape": [
+            32
+          ],
+          "dtype": "torch.int64",
+          "nbytes": 256,
+          "sha256": "f2c8223bac4dd38e48a4e77202982ad817cdc1c075ecc6dbcf5db2571aa68f01"
+        },
+        "source_to_destination_rows": {
+          "shape": [
+            8,
+            8
+          ],
+          "dtype": "torch.int64",
+          "nbytes": 512,
+          "sha256": "446e62094a6eeb8b90a65ee6ff198456431a2a70944fbedb004cf87680c164c2"
+        },
+        "p32_full": {
+          "shape": [
+            32768,
+            6
+          ],
+          "dtype": "torch.float32",
+          "nbytes": 786432,
+          "sha256": "d7daabe521890879a8ea2e8ae2be42ecafabc57aa9a84f15d37b614a7f037b18"
+        },
+        "p16_actual": {
+          "shape": [
+            32768,
+            6
+          ],
+          "dtype": "torch.bfloat16",
+          "nbytes": 393216,
+          "sha256": "93452671bb172a0892374739f2e2867807b2948be2e3ced2c2d3d2a808416dfc"
+        }
+      },
+      "cpu_reference": {
+        "bf16_inputs_unchanged": true,
+        "call_count": 1,
+        "golden_definition": "CPU_FP64_on_same_seed_unrounded_FP32_p",
+        "p32_sha256": "d7daabe521890879a8ea2e8ae2be42ecafabc57aa9a84f15d37b614a7f037b18",
+        "rank": 2,
+        "shared_inputs_unchanged": true,
+        "source_sha256": "6841664c6fdd3741ef4198e648cd2676e1ae8418d12e5e33c89af0f2dfeab36c",
+        "world": 8
+      },
+      "capture_json_sha256": {
+        "inputs": "af90d43f26c3a3b1404245e709afd2e92ac03f37d6c3925e87f4acbb9bcd4a7a",
+        "cpu_reference": "eb01f597c73cd004c9a32aaa39fd5ff74e73180c377c9126e7be1fe765c5bef7",
+        "triples": "10c426f0dfa021df33c85a23d01cb44d624030cb496ff0b22576fe69ea0ab17a",
+        "original_atk": "b9c262a30377b42094f6b448a6c4562fa4deb8cca6cfd8502daaa869e404652c",
+        "dp_common_float_metric": "65270353a39d27144e2020306f94d05152c831cd82525624764ed0bd3646ca75",
+        "provenance": "6373b9e5135d1f9292ebcef12793380ec229d10b4eef46ba4e4c281703bc07a0"
+      }
+    },
+    {
+      "rank": 3,
+      "fp32_atk_passed": true,
+      "bf16_atk_passed": true,
+      "fp32_counts_passed": true,
+      "bf16_counts_passed": true,
+      "bf16_equals_p32_round": true,
+      "all_non_p_fields_identical": true,
+      "input_tensors": {
+        "x": {
+          "shape": [
+            32768,
+            7168
+          ],
+          "dtype": "torch.bfloat16",
+          "nbytes": 469762048,
+          "sha256": "347a7cc1355a2f2af79de0ba48b20a4e5ab9f49068a3bbaa0567c9a3bcf0dd7d"
+        },
+        "ids": {
+          "shape": [
+            32768,
+            6
+          ],
+          "dtype": "torch.int32",
+          "nbytes": 786432,
+          "sha256": "b843a30abcc9a37a0eca4c6819a4047fb786a67a0d214e6435491ab9fcd5cd12"
+        },
+        "w1": {
+          "shape": [
+            4,
+            6144,
+            7168
+          ],
+          "dtype": "torch.bfloat16",
+          "nbytes": 352321536,
+          "sha256": "f719a581e56228c2245642814b3e80c4a0b67c2a5fe00cfe1a5a0489e49f1608"
+        },
+        "w2": {
+          "shape": [
+            4,
+            7168,
+            3072
+          ],
+          "dtype": "torch.bfloat16",
+          "nbytes": 176160768,
+          "sha256": "e585691ef1028b76dcbcaaf74a11c2d68b3b01c83cbc3bdc5e4f24ab1813db08"
+        },
+        "dy": {
+          "shape": [
+            32768,
+            7168
+          ],
+          "dtype": "torch.bfloat16",
+          "nbytes": 469762048,
+          "sha256": "ecd5488b56a9fbc7ab9c523e110c23228bca84eedcce42b1dc05a7683eb9b0c6"
+        },
+        "all_counts": {
+          "shape": [
+            32
+          ],
+          "dtype": "torch.int64",
+          "nbytes": 256,
+          "sha256": "f2c8223bac4dd38e48a4e77202982ad817cdc1c075ecc6dbcf5db2571aa68f01"
+        },
+        "source_to_destination_rows": {
+          "shape": [
+            8,
+            8
+          ],
+          "dtype": "torch.int64",
+          "nbytes": 512,
+          "sha256": "446e62094a6eeb8b90a65ee6ff198456431a2a70944fbedb004cf87680c164c2"
+        },
+        "p32_full": {
+          "shape": [
+            32768,
+            6
+          ],
+          "dtype": "torch.float32",
+          "nbytes": 786432,
+          "sha256": "d7daabe521890879a8ea2e8ae2be42ecafabc57aa9a84f15d37b614a7f037b18"
+        },
+        "p16_actual": {
+          "shape": [
+            32768,
+            6
+          ],
+          "dtype": "torch.bfloat16",
+          "nbytes": 393216,
+          "sha256": "93452671bb172a0892374739f2e2867807b2948be2e3ced2c2d3d2a808416dfc"
+        }
+      },
+      "cpu_reference": {
+        "bf16_inputs_unchanged": true,
+        "call_count": 1,
+        "golden_definition": "CPU_FP64_on_same_seed_unrounded_FP32_p",
+        "p32_sha256": "d7daabe521890879a8ea2e8ae2be42ecafabc57aa9a84f15d37b614a7f037b18",
+        "rank": 3,
+        "shared_inputs_unchanged": true,
+        "source_sha256": "6841664c6fdd3741ef4198e648cd2676e1ae8418d12e5e33c89af0f2dfeab36c",
+        "world": 8
+      },
+      "capture_json_sha256": {
+        "inputs": "d42c57fb12e36e0e42228b6aebdd65ffe2ab2d407301e83f4ee09a2a79d97ebb",
+        "cpu_reference": "64640e376caaa9d8a68b0a8e35b7737d2b8e978091a68bd84932e5a53357f8b3",
+        "triples": "59af1ed75e9e1cae42c39186c3bce8d57c69d7df533a710d740db2c30b098f03",
+        "original_atk": "b2eab4a5a957030cfb152db62dea9bf2209b638b8b5777985aa302559c47d3b5",
+        "dp_common_float_metric": "965b9772af5c99269880baf6c1a709f548aa8149e2f102ce328e3840e30fc631",
+        "provenance": "4646cb484c7e97ab9913053c884342bbb1c45b67f337c72f571f2b6b5ed79365"
+      }
+    },
+    {
+      "rank": 4,
+      "fp32_atk_passed": true,
+      "bf16_atk_passed": true,
+      "fp32_counts_passed": true,
+      "bf16_counts_passed": true,
+      "bf16_equals_p32_round": true,
+      "all_non_p_fields_identical": true,
+      "input_tensors": {
+        "x": {
+          "shape": [
+            32768,
+            7168
+          ],
+          "dtype": "torch.bfloat16",
+          "nbytes": 469762048,
+          "sha256": "347a7cc1355a2f2af79de0ba48b20a4e5ab9f49068a3bbaa0567c9a3bcf0dd7d"
+        },
+        "ids": {
+          "shape": [
+            32768,
+            6
+          ],
+          "dtype": "torch.int32",
+          "nbytes": 786432,
+          "sha256": "b843a30abcc9a37a0eca4c6819a4047fb786a67a0d214e6435491ab9fcd5cd12"
+        },
+        "w1": {
+          "shape": [
+            4,
+            6144,
+            7168
+          ],
+          "dtype": "torch.bfloat16",
+          "nbytes": 352321536,
+          "sha256": "69c619921767f30913c3afebd4948e0a1eaf811926c321b1081cb02d2529d07c"
+        },
+        "w2": {
+          "shape": [
+            4,
+            7168,
+            3072
+          ],
+          "dtype": "torch.bfloat16",
+          "nbytes": 176160768,
+          "sha256": "9700053beab71cd76cce1dfe504a9e4977a22fa1eac7bbecd0e12c708f2066e0"
+        },
+        "dy": {
+          "shape": [
+            32768,
+            7168
+          ],
+          "dtype": "torch.bfloat16",
+          "nbytes": 469762048,
+          "sha256": "ecd5488b56a9fbc7ab9c523e110c23228bca84eedcce42b1dc05a7683eb9b0c6"
+        },
+        "all_counts": {
+          "shape": [
+            32
+          ],
+          "dtype": "torch.int64",
+          "nbytes": 256,
+          "sha256": "f2c8223bac4dd38e48a4e77202982ad817cdc1c075ecc6dbcf5db2571aa68f01"
+        },
+        "source_to_destination_rows": {
+          "shape": [
+            8,
+            8
+          ],
+          "dtype": "torch.int64",
+          "nbytes": 512,
+          "sha256": "446e62094a6eeb8b90a65ee6ff198456431a2a70944fbedb004cf87680c164c2"
+        },
+        "p32_full": {
+          "shape": [
+            32768,
+            6
+          ],
+          "dtype": "torch.float32",
+          "nbytes": 786432,
+          "sha256": "d7daabe521890879a8ea2e8ae2be42ecafabc57aa9a84f15d37b614a7f037b18"
+        },
+        "p16_actual": {
+          "shape": [
+            32768,
+            6
+          ],
+          "dtype": "torch.bfloat16",
+          "nbytes": 393216,
+          "sha256": "93452671bb172a0892374739f2e2867807b2948be2e3ced2c2d3d2a808416dfc"
+        }
+      },
+      "cpu_reference": {
+        "bf16_inputs_unchanged": true,
+        "call_count": 1,
+        "golden_definition": "CPU_FP64_on_same_seed_unrounded_FP32_p",
+        "p32_sha256": "d7daabe521890879a8ea2e8ae2be42ecafabc57aa9a84f15d37b614a7f037b18",
+        "rank": 4,
+        "shared_inputs_unchanged": true,
+        "source_sha256": "6841664c6fdd3741ef4198e648cd2676e1ae8418d12e5e33c89af0f2dfeab36c",
+        "world": 8
+      },
+      "capture_json_sha256": {
+        "inputs": "b62d211a97df529416766cb6430078a504390f1d8a8174203c56933fa83393fc",
+        "cpu_reference": "cee96beee705bee7f2aa1b750693b1bc909754a7c7c5e49b42f7233d5a975e55",
+        "triples": "ef606c931d3d89343b72c55f22aa12d4f7b95ec038135c65493bda021cc804ea",
+        "original_atk": "d21baf7ad38c3b25482d62c86e9ae179a7b6cf6babca17f0a00ceb7eec2ff306",
+        "dp_common_float_metric": "6b93f1ed6fa489890636ef9a87cdd98a25558305ee515b8071439cdd791ec495",
+        "provenance": "dc33d65584835e6e4bbf7b033fe12f5d1984a83482243bd8225a4e4fd6b5213a"
+      }
+    },
+    {
+      "rank": 5,
+      "fp32_atk_passed": true,
+      "bf16_atk_passed": true,
+      "fp32_counts_passed": true,
+      "bf16_counts_passed": true,
+      "bf16_equals_p32_round": true,
+      "all_non_p_fields_identical": true,
+      "input_tensors": {
+        "x": {
+          "shape": [
+            32768,
+            7168
+          ],
+          "dtype": "torch.bfloat16",
+          "nbytes": 469762048,
+          "sha256": "347a7cc1355a2f2af79de0ba48b20a4e5ab9f49068a3bbaa0567c9a3bcf0dd7d"
+        },
+        "ids": {
+          "shape": [
+            32768,
+            6
+          ],
+          "dtype": "torch.int32",
+          "nbytes": 786432,
+          "sha256": "b843a30abcc9a37a0eca4c6819a4047fb786a67a0d214e6435491ab9fcd5cd12"
+        },
+        "w1": {
+          "shape": [
+            4,
+            6144,
+            7168
+          ],
+          "dtype": "torch.bfloat16",
+          "nbytes": 352321536,
+          "sha256": "b6425a1bca63d779a37c5d038f5e4a5b2802235e96eda3ae2dab33180f6207c6"
+        },
+        "w2": {
+          "shape": [
+            4,
+            7168,
+            3072
+          ],
+          "dtype": "torch.bfloat16",
+          "nbytes": 176160768,
+          "sha256": "47c64a55579dea92fac2b105c0b30b5f51a4b3cbc28f4ed0339a8162f0556b42"
+        },
+        "dy": {
+          "shape": [
+            32768,
+            7168
+          ],
+          "dtype": "torch.bfloat16",
+          "nbytes": 469762048,
+          "sha256": "ecd5488b56a9fbc7ab9c523e110c23228bca84eedcce42b1dc05a7683eb9b0c6"
+        },
+        "all_counts": {
+          "shape": [
+            32
+          ],
+          "dtype": "torch.int64",
+          "nbytes": 256,
+          "sha256": "f2c8223bac4dd38e48a4e77202982ad817cdc1c075ecc6dbcf5db2571aa68f01"
+        },
+        "source_to_destination_rows": {
+          "shape": [
+            8,
+            8
+          ],
+          "dtype": "torch.int64",
+          "nbytes": 512,
+          "sha256": "446e62094a6eeb8b90a65ee6ff198456431a2a70944fbedb004cf87680c164c2"
+        },
+        "p32_full": {
+          "shape": [
+            32768,
+            6
+          ],
+          "dtype": "torch.float32",
+          "nbytes": 786432,
+          "sha256": "d7daabe521890879a8ea2e8ae2be42ecafabc57aa9a84f15d37b614a7f037b18"
+        },
+        "p16_actual": {
+          "shape": [
+            32768,
+            6
+          ],
+          "dtype": "torch.bfloat16",
+          "nbytes": 393216,
+          "sha256": "93452671bb172a0892374739f2e2867807b2948be2e3ced2c2d3d2a808416dfc"
+        }
+      },
+      "cpu_reference": {
+        "bf16_inputs_unchanged": true,
+        "call_count": 1,
+        "golden_definition": "CPU_FP64_on_same_seed_unrounded_FP32_p",
+        "p32_sha256": "d7daabe521890879a8ea2e8ae2be42ecafabc57aa9a84f15d37b614a7f037b18",
+        "rank": 5,
+        "shared_inputs_unchanged": true,
+        "source_sha256": "6841664c6fdd3741ef4198e648cd2676e1ae8418d12e5e33c89af0f2dfeab36c",
+        "world": 8
+      },
+      "capture_json_sha256": {
+        "inputs": "e2a86a209859b419b5f25a95b18b01f4e1852db9306bb23c867ec5bee84856b2",
+        "cpu_reference": "067f90f4fe2580209aeffd43165342b0428b36980dc0809dfd3569dfdf18efb0",
+        "triples": "df5586c74e550dd77c0544d284ceb989a4fc1562ca997ae1f60b868439db2489",
+        "original_atk": "0455c0eb31fb465f234c3eee307178726095083a9bde259165ac60fa5527b9fc",
+        "dp_common_float_metric": "777a0396ce716dcdd5435ffe2174adf9ffce08c5a6dbc386a645cbe000e6a733",
+        "provenance": "066c5ab74b718a741c9581c227e75a28f21ad421108fcf7e69cb2a916d1700a2"
+      }
+    },
+    {
+      "rank": 6,
+      "fp32_atk_passed": true,
+      "bf16_atk_passed": true,
+      "fp32_counts_passed": true,
+      "bf16_counts_passed": true,
+      "bf16_equals_p32_round": true,
+      "all_non_p_fields_identical": true,
+      "input_tensors": {
+        "x": {
+          "shape": [
+            32768,
+            7168
+          ],
+          "dtype": "torch.bfloat16",
+          "nbytes": 469762048,
+          "sha256": "347a7cc1355a2f2af79de0ba48b20a4e5ab9f49068a3bbaa0567c9a3bcf0dd7d"
+        },
+        "ids": {
+          "shape": [
+            32768,
+            6
+          ],
+          "dtype": "torch.int32",
+          "nbytes": 786432,
+          "sha256": "b843a30abcc9a37a0eca4c6819a4047fb786a67a0d214e6435491ab9fcd5cd12"
+        },
+        "w1": {
+          "shape": [
+            4,
+            6144,
+            7168
+          ],
+          "dtype": "torch.bfloat16",
+          "nbytes": 352321536,
+          "sha256": "d2e7c671f0df521c43eff17a9dbe9256468d774e0d7c9443f2887752dfcda586"
+        },
+        "w2": {
+          "shape": [
+            4,
+            7168,
+            3072
+          ],
+          "dtype": "torch.bfloat16",
+          "nbytes": 176160768,
+          "sha256": "719b4c9f7296262e3ae4e913672c61870dd1ec39a0962060af28e7122ea348ec"
+        },
+        "dy": {
+          "shape": [
+            32768,
+            7168
+          ],
+          "dtype": "torch.bfloat16",
+          "nbytes": 469762048,
+          "sha256": "ecd5488b56a9fbc7ab9c523e110c23228bca84eedcce42b1dc05a7683eb9b0c6"
+        },
+        "all_counts": {
+          "shape": [
+            32
+          ],
+          "dtype": "torch.int64",
+          "nbytes": 256,
+          "sha256": "f2c8223bac4dd38e48a4e77202982ad817cdc1c075ecc6dbcf5db2571aa68f01"
+        },
+        "source_to_destination_rows": {
+          "shape": [
+            8,
+            8
+          ],
+          "dtype": "torch.int64",
+          "nbytes": 512,
+          "sha256": "446e62094a6eeb8b90a65ee6ff198456431a2a70944fbedb004cf87680c164c2"
+        },
+        "p32_full": {
+          "shape": [
+            32768,
+            6
+          ],
+          "dtype": "torch.float32",
+          "nbytes": 786432,
+          "sha256": "d7daabe521890879a8ea2e8ae2be42ecafabc57aa9a84f15d37b614a7f037b18"
+        },
+        "p16_actual": {
+          "shape": [
+            32768,
+            6
+          ],
+          "dtype": "torch.bfloat16",
+          "nbytes": 393216,
+          "sha256": "93452671bb172a0892374739f2e2867807b2948be2e3ced2c2d3d2a808416dfc"
+        }
+      },
+      "cpu_reference": {
+        "bf16_inputs_unchanged": true,
+        "call_count": 1,
+        "golden_definition": "CPU_FP64_on_same_seed_unrounded_FP32_p",
+        "p32_sha256": "d7daabe521890879a8ea2e8ae2be42ecafabc57aa9a84f15d37b614a7f037b18",
+        "rank": 6,
+        "shared_inputs_unchanged": true,
+        "source_sha256": "6841664c6fdd3741ef4198e648cd2676e1ae8418d12e5e33c89af0f2dfeab36c",
+        "world": 8
+      },
+      "capture_json_sha256": {
+        "inputs": "9768c323dbe773e7e3f34122c89fbffcbbe3771642d24a10a87d300182bc5e56",
+        "cpu_reference": "4159ba1d5532b02b92ae817019b20d75a075a6c7d6f0b62f56dbd3eb97338373",
+        "triples": "f155e1a02967cc534d188e69a1d940028cfc67348cf039b594e35dbb8ea1ba58",
+        "original_atk": "3a599a33f3a44ba9d8ff49b51974efad5ebdce8a1ce431d75fa5da6d43a5c876",
+        "dp_common_float_metric": "79ad595185e249270edf0e2bbd92da8cd002b13d41901bdd3ee8130bc3f9ffe4",
+        "provenance": "f2f44facbccd990dc9bbd082eefe45e386f3bb95f7747cce0fc7d2cf825bfc43"
+      }
+    },
+    {
+      "rank": 7,
+      "fp32_atk_passed": true,
+      "bf16_atk_passed": true,
+      "fp32_counts_passed": true,
+      "bf16_counts_passed": true,
+      "bf16_equals_p32_round": true,
+      "all_non_p_fields_identical": true,
+      "input_tensors": {
+        "x": {
+          "shape": [
+            32768,
+            7168
+          ],
+          "dtype": "torch.bfloat16",
+          "nbytes": 469762048,
+          "sha256": "347a7cc1355a2f2af79de0ba48b20a4e5ab9f49068a3bbaa0567c9a3bcf0dd7d"
+        },
+        "ids": {
+          "shape": [
+            32768,
+            6
+          ],
+          "dtype": "torch.int32",
+          "nbytes": 786432,
+          "sha256": "b843a30abcc9a37a0eca4c6819a4047fb786a67a0d214e6435491ab9fcd5cd12"
+        },
+        "w1": {
+          "shape": [
+            4,
+            6144,
+            7168
+          ],
+          "dtype": "torch.bfloat16",
+          "nbytes": 352321536,
+          "sha256": "690e1bc0a8d296e896a2c5c222bcc052a95ea70167ebed53ca1af38c45ecc115"
+        },
+        "w2": {
+          "shape": [
+            4,
+            7168,
+            3072
+          ],
+          "dtype": "torch.bfloat16",
+          "nbytes": 176160768,
+          "sha256": "1f9508ad01b75493a3558d021e46de06ab366b62a4cd06b05740d2ddc8603aba"
+        },
+        "dy": {
+          "shape": [
+            32768,
+            7168
+          ],
+          "dtype": "torch.bfloat16",
+          "nbytes": 469762048,
+          "sha256": "ecd5488b56a9fbc7ab9c523e110c23228bca84eedcce42b1dc05a7683eb9b0c6"
+        },
+        "all_counts": {
+          "shape": [
+            32
+          ],
+          "dtype": "torch.int64",
+          "nbytes": 256,
+          "sha256": "f2c8223bac4dd38e48a4e77202982ad817cdc1c075ecc6dbcf5db2571aa68f01"
+        },
+        "source_to_destination_rows": {
+          "shape": [
+            8,
+            8
+          ],
+          "dtype": "torch.int64",
+          "nbytes": 512,
+          "sha256": "446e62094a6eeb8b90a65ee6ff198456431a2a70944fbedb004cf87680c164c2"
+        },
+        "p32_full": {
+          "shape": [
+            32768,
+            6
+          ],
+          "dtype": "torch.float32",
+          "nbytes": 786432,
+          "sha256": "d7daabe521890879a8ea2e8ae2be42ecafabc57aa9a84f15d37b614a7f037b18"
+        },
+        "p16_actual": {
+          "shape": [
+            32768,
+            6
+          ],
+          "dtype": "torch.bfloat16",
+          "nbytes": 393216,
+          "sha256": "93452671bb172a0892374739f2e2867807b2948be2e3ced2c2d3d2a808416dfc"
+        }
+      },
+      "cpu_reference": {
+        "bf16_inputs_unchanged": true,
+        "call_count": 1,
+        "golden_definition": "CPU_FP64_on_same_seed_unrounded_FP32_p",
+        "p32_sha256": "d7daabe521890879a8ea2e8ae2be42ecafabc57aa9a84f15d37b614a7f037b18",
+        "rank": 7,
+        "shared_inputs_unchanged": true,
+        "source_sha256": "6841664c6fdd3741ef4198e648cd2676e1ae8418d12e5e33c89af0f2dfeab36c",
+        "world": 8
+      },
+      "capture_json_sha256": {
+        "inputs": "a0c701081fb9e99850b94fee72173f2ad666e99c8c643e55d407d4f922d0f222",
+        "cpu_reference": "8aa3673688e1173a6ac6949519e50484e51ea5c902c30a1894b99a33cbcd5bfe",
+        "triples": "23d57d6373d9b12158cf2bbe1c568b81ba4b580f8aa7b6620144b12cdc891f99",
+        "original_atk": "7efa831fb7f58b97a2fadbfd6ff370d2ffe17e20b7196501b73c816ff9c0dfd4",
+        "dp_common_float_metric": "9bb812f0ade9cc61e26bf7ad0166aaba062ddcd90ecc5cdf47b3c42993851320",
+        "provenance": "88afcedd4a103f923ad557495aa3c293691123426029a2d8ccb4ac9d9ec249ec"
+      }
+    }
+  ],
+  "metrics": {
+    "max_relative_error": "Actual_最大相对误差",
+    "mean_relative_error": "Actual_平均相对误差",
+    "atk_rms_field": "Actual_均方根误差"
+  },
+  "per_rank": [
+    {
+      "rank": 0,
+      "output": "y",
+      "metric": "max_relative_error",
+      "original_atk_field": "Actual_最大相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 200.60570660983575,
+      "fp32_original_full_reference": 190.77985917643844,
+      "fp32_over_bf16": 0.9510191030980594,
+      "reduction_percent": 4.8980896901940625
+    },
+    {
+      "rank": 0,
+      "output": "y",
+      "metric": "mean_relative_error",
+      "original_atk_field": "Actual_平均相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.02266556020023138,
+      "fp32_original_full_reference": 0.020836367741269887,
+      "fp32_over_bf16": 0.9192963931708681,
+      "reduction_percent": 8.070360682913192
+    },
+    {
+      "rank": 0,
+      "output": "y",
+      "metric": "atk_rms_field",
+      "original_atk_field": "Actual_均方根误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.32901791236405115,
+      "fp32_original_full_reference": 0.3003589804359761,
+      "fp32_over_bf16": 0.9128955268053474,
+      "reduction_percent": 8.710447319465263
+    },
+    {
+      "rank": 0,
+      "output": "dx",
+      "metric": "max_relative_error",
+      "original_atk_field": "Actual_最大相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 1046.842244079394,
+      "fp32_original_full_reference": 1070.1276270051833,
+      "fp32_over_bf16": 1.0222434498201463,
+      "reduction_percent": -2.2243449820146255
+    },
+    {
+      "rank": 0,
+      "output": "dx",
+      "metric": "mean_relative_error",
+      "original_atk_field": "Actual_平均相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.029363048174115933,
+      "fp32_original_full_reference": 0.027636306291702557,
+      "fp32_over_bf16": 0.9411933709274934,
+      "reduction_percent": 5.880662907250656
+    },
+    {
+      "rank": 0,
+      "output": "dx",
+      "metric": "atk_rms_field",
+      "original_atk_field": "Actual_均方根误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.6698590700447575,
+      "fp32_original_full_reference": 0.641634161761611,
+      "fp32_over_bf16": 0.9578644082832817,
+      "reduction_percent": 4.213559171671832
+    },
+    {
+      "rank": 0,
+      "output": "dtopk_weights",
+      "metric": "max_relative_error",
+      "original_atk_field": "Actual_最大相对误差",
+      "atk_evaluation_dtype": "torch.float32",
+      "bf16_common_reference": 131.17527780652247,
+      "fp32_original_full_reference": 131.04049530984724,
+      "fp32_over_bf16": 0.9989725007720279,
+      "reduction_percent": 0.1027499227972073
+    },
+    {
+      "rank": 0,
+      "output": "dtopk_weights",
+      "metric": "mean_relative_error",
+      "original_atk_field": "Actual_平均相对误差",
+      "atk_evaluation_dtype": "torch.float32",
+      "bf16_common_reference": 0.028309522024830835,
+      "fp32_original_full_reference": 0.02801707185596831,
+      "fp32_over_bf16": 0.9896695476311465,
+      "reduction_percent": 1.0330452368853549
+    },
+    {
+      "rank": 0,
+      "output": "dtopk_weights",
+      "metric": "atk_rms_field",
+      "original_atk_field": "Actual_均方根误差",
+      "atk_evaluation_dtype": "torch.float32",
+      "bf16_common_reference": 2.858862759097475,
+      "fp32_original_full_reference": 2.4986771567839465,
+      "fp32_over_bf16": 0.8740108803168863,
+      "reduction_percent": 12.598911968311366
+    },
+    {
+      "rank": 0,
+      "output": "dw1",
+      "metric": "max_relative_error",
+      "original_atk_field": "Actual_最大相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 296.7615858812835,
+      "fp32_original_full_reference": 300.62861914274157,
+      "fp32_over_bf16": 1.0130307743503064,
+      "reduction_percent": -1.3030774350306418
+    },
+    {
+      "rank": 0,
+      "output": "dw1",
+      "metric": "mean_relative_error",
+      "original_atk_field": "Actual_平均相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.017455375997062386,
+      "fp32_original_full_reference": 0.015509482726364493,
+      "fp32_over_bf16": 0.8885218358501488,
+      "reduction_percent": 11.147816414985122
+    },
+    {
+      "rank": 0,
+      "output": "dw1",
+      "metric": "atk_rms_field",
+      "original_atk_field": "Actual_均方根误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.025924760365743198,
+      "fp32_original_full_reference": 0.024721296592466864,
+      "fp32_over_bf16": 0.9535785960487958,
+      "reduction_percent": 4.642140395120419
+    },
+    {
+      "rank": 0,
+      "output": "dw2",
+      "metric": "max_relative_error",
+      "original_atk_field": "Actual_最大相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 14.19161422687484,
+      "fp32_original_full_reference": 12.857856270558347,
+      "fp32_over_bf16": 0.9060178824625363,
+      "reduction_percent": 9.398211753746367
+    },
+    {
+      "rank": 0,
+      "output": "dw2",
+      "metric": "mean_relative_error",
+      "original_atk_field": "Actual_平均相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.015589318031831908,
+      "fp32_original_full_reference": 0.013600401811126008,
+      "fp32_over_bf16": 0.8724180097779312,
+      "reduction_percent": 12.758199022206885
+    },
+    {
+      "rank": 0,
+      "output": "dw2",
+      "metric": "atk_rms_field",
+      "original_atk_field": "Actual_均方根误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.017382933452660537,
+      "fp32_original_full_reference": 0.015566225766738398,
+      "fp32_over_bf16": 0.8954890041505575,
+      "reduction_percent": 10.451099584944245
+    },
+    {
+      "rank": 1,
+      "output": "y",
+      "metric": "max_relative_error",
+      "original_atk_field": "Actual_最大相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 183.91012114844108,
+      "fp32_original_full_reference": 168.6143134295476,
+      "fp32_over_bf16": 0.9168299839977396,
+      "reduction_percent": 8.317001600226037
+    },
+    {
+      "rank": 1,
+      "output": "y",
+      "metric": "mean_relative_error",
+      "original_atk_field": "Actual_平均相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.022840761398710073,
+      "fp32_original_full_reference": 0.021036911885899092,
+      "fp32_over_bf16": 0.9210249833040657,
+      "reduction_percent": 7.8975016695934315
+    },
+    {
+      "rank": 1,
+      "output": "y",
+      "metric": "atk_rms_field",
+      "original_atk_field": "Actual_均方根误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.329032109475218,
+      "fp32_original_full_reference": 0.2999222702908118,
+      "fp32_over_bf16": 0.9115288801727156,
+      "reduction_percent": 8.847111982728439
+    },
+    {
+      "rank": 1,
+      "output": "dx",
+      "metric": "max_relative_error",
+      "original_atk_field": "Actual_最大相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 1184.3532582966134,
+      "fp32_original_full_reference": 1135.7223019432627,
+      "fp32_over_bf16": 0.9589388081531571,
+      "reduction_percent": 4.106119184684287
+    },
+    {
+      "rank": 1,
+      "output": "dx",
+      "metric": "mean_relative_error",
+      "original_atk_field": "Actual_平均相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.02933531837643117,
+      "fp32_original_full_reference": 0.027648530128499445,
+      "fp32_over_bf16": 0.9424997463369296,
+      "reduction_percent": 5.750025366307043
+    },
+    {
+      "rank": 1,
+      "output": "dx",
+      "metric": "atk_rms_field",
+      "original_atk_field": "Actual_均方根误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.6888480589993335,
+      "fp32_original_full_reference": 0.6611135675985044,
+      "fp32_over_bf16": 0.9597378681140248,
+      "reduction_percent": 4.0262131885975165
+    },
+    {
+      "rank": 1,
+      "output": "dtopk_weights",
+      "metric": "max_relative_error",
+      "original_atk_field": "Actual_最大相对误差",
+      "atk_evaluation_dtype": "torch.float32",
+      "bf16_common_reference": 70.75299234659316,
+      "fp32_original_full_reference": 70.73828602881608,
+      "fp32_over_bf16": 0.9997921456423349,
+      "reduction_percent": 0.020785435766512705
+    },
+    {
+      "rank": 1,
+      "output": "dtopk_weights",
+      "metric": "mean_relative_error",
+      "original_atk_field": "Actual_平均相对误差",
+      "atk_evaluation_dtype": "torch.float32",
+      "bf16_common_reference": 0.019817848421021727,
+      "fp32_original_full_reference": 0.01954768695357301,
+      "fp32_over_bf16": 0.9863677700167419,
+      "reduction_percent": 1.3632229983258082
+    },
+    {
+      "rank": 1,
+      "output": "dtopk_weights",
+      "metric": "atk_rms_field",
+      "original_atk_field": "Actual_均方根误差",
+      "atk_evaluation_dtype": "torch.float32",
+      "bf16_common_reference": 2.8638043887209013,
+      "fp32_original_full_reference": 2.4872879080896695,
+      "fp32_over_bf16": 0.8685257686893202,
+      "reduction_percent": 13.147423131067981
+    },
+    {
+      "rank": 1,
+      "output": "dw1",
+      "metric": "max_relative_error",
+      "original_atk_field": "Actual_最大相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 227.59132895159084,
+      "fp32_original_full_reference": 227.59132895159084,
+      "fp32_over_bf16": 1.0,
+      "reduction_percent": 0.0
+    },
+    {
+      "rank": 1,
+      "output": "dw1",
+      "metric": "mean_relative_error",
+      "original_atk_field": "Actual_平均相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.017513153701830302,
+      "fp32_original_full_reference": 0.015563620984663072,
+      "fp32_over_bf16": 0.8886818016698224,
+      "reduction_percent": 11.131819833017765
+    },
+    {
+      "rank": 1,
+      "output": "dw1",
+      "metric": "atk_rms_field",
+      "original_atk_field": "Actual_均方根误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.026219184291551203,
+      "fp32_original_full_reference": 0.02502657813388861,
+      "fp32_over_bf16": 0.9545139869951296,
+      "reduction_percent": 4.548601300487043
+    },
+    {
+      "rank": 1,
+      "output": "dw2",
+      "metric": "max_relative_error",
+      "original_atk_field": "Actual_最大相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 14.082796759759859,
+      "fp32_original_full_reference": 11.569001199991781,
+      "fp32_over_bf16": 0.8214988398504061,
+      "reduction_percent": 17.850116014959394
+    },
+    {
+      "rank": 1,
+      "output": "dw2",
+      "metric": "mean_relative_error",
+      "original_atk_field": "Actual_平均相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.015572778653126226,
+      "fp32_original_full_reference": 0.013603546711018294,
+      "fp32_over_bf16": 0.8735465271823786,
+      "reduction_percent": 12.645347281762142
+    },
+    {
+      "rank": 1,
+      "output": "dw2",
+      "metric": "atk_rms_field",
+      "original_atk_field": "Actual_均方根误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.017340182581573424,
+      "fp32_original_full_reference": 0.015544131321846113,
+      "fp32_over_bf16": 0.896422586597451,
+      "reduction_percent": 10.3577413402549
+    },
+    {
+      "rank": 2,
+      "output": "y",
+      "metric": "max_relative_error",
+      "original_atk_field": "Actual_最大相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 183.79031502328573,
+      "fp32_original_full_reference": 178.6733881640784,
+      "fp32_over_bf16": 0.9721588873790274,
+      "reduction_percent": 2.7841112620972552
+    },
+    {
+      "rank": 2,
+      "output": "y",
+      "metric": "mean_relative_error",
+      "original_atk_field": "Actual_平均相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.02260362474415968,
+      "fp32_original_full_reference": 0.02085726794521487,
+      "fp32_over_bf16": 0.9227399667659041,
+      "reduction_percent": 7.726003323409591
+    },
+    {
+      "rank": 2,
+      "output": "y",
+      "metric": "atk_rms_field",
+      "original_atk_field": "Actual_均方根误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.3291010770806311,
+      "fp32_original_full_reference": 0.30069897069373586,
+      "fp32_over_bf16": 0.9136979233284716,
+      "reduction_percent": 8.630207667152845
+    },
+    {
+      "rank": 2,
+      "output": "dx",
+      "metric": "max_relative_error",
+      "original_atk_field": "Actual_最大相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 828.0698635744026,
+      "fp32_original_full_reference": 849.0083415573187,
+      "fp32_over_bf16": 1.025285883358361,
+      "reduction_percent": -2.5285883358360906
+    },
+    {
+      "rank": 2,
+      "output": "dx",
+      "metric": "mean_relative_error",
+      "original_atk_field": "Actual_平均相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.028310113829090766,
+      "fp32_original_full_reference": 0.02670074102335525,
+      "fp32_over_bf16": 0.943152019258864,
+      "reduction_percent": 5.684798074113595
+    },
+    {
+      "rank": 2,
+      "output": "dx",
+      "metric": "atk_rms_field",
+      "original_atk_field": "Actual_均方根误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.6366735730805868,
+      "fp32_original_full_reference": 0.607043850333741,
+      "fp32_over_bf16": 0.9534616732975416,
+      "reduction_percent": 4.653832670245839
+    },
+    {
+      "rank": 2,
+      "output": "dtopk_weights",
+      "metric": "max_relative_error",
+      "original_atk_field": "Actual_最大相对误差",
+      "atk_evaluation_dtype": "torch.float32",
+      "bf16_common_reference": 56.54571602015595,
+      "fp32_original_full_reference": 56.52793114632055,
+      "fp32_over_bf16": 0.9996854779621314,
+      "reduction_percent": 0.03145220378686364
+    },
+    {
+      "rank": 2,
+      "output": "dtopk_weights",
+      "metric": "mean_relative_error",
+      "original_atk_field": "Actual_平均相对误差",
+      "atk_evaluation_dtype": "torch.float32",
+      "bf16_common_reference": 0.023111005674328545,
+      "fp32_original_full_reference": 0.022852249839508013,
+      "fp32_over_bf16": 0.9888037829912372,
+      "reduction_percent": 1.1196217008762832
+    },
+    {
+      "rank": 2,
+      "output": "dtopk_weights",
+      "metric": "atk_rms_field",
+      "original_atk_field": "Actual_均方根误差",
+      "atk_evaluation_dtype": "torch.float32",
+      "bf16_common_reference": 2.864916119273249,
+      "fp32_original_full_reference": 2.502575869079778,
+      "fp32_over_bf16": 0.8735250055818783,
+      "reduction_percent": 12.64749944181217
+    },
+    {
+      "rank": 2,
+      "output": "dw1",
+      "metric": "max_relative_error",
+      "original_atk_field": "Actual_最大相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 173.2508717230827,
+      "fp32_original_full_reference": 170.86331859175723,
+      "fp32_over_bf16": 0.9862190988848724,
+      "reduction_percent": 1.3780901115127642
+    },
+    {
+      "rank": 2,
+      "output": "dw1",
+      "metric": "mean_relative_error",
+      "original_atk_field": "Actual_平均相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.01750824251855204,
+      "fp32_original_full_reference": 0.01555090253678668,
+      "fp32_over_bf16": 0.8882046567671582,
+      "reduction_percent": 11.17953432328418
+    },
+    {
+      "rank": 2,
+      "output": "dw1",
+      "metric": "atk_rms_field",
+      "original_atk_field": "Actual_均方根误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.025772419266134102,
+      "fp32_original_full_reference": 0.024548098171101092,
+      "fp32_over_bf16": 0.9524949100668321,
+      "reduction_percent": 4.750508993316793
+    },
+    {
+      "rank": 2,
+      "output": "dw2",
+      "metric": "max_relative_error",
+      "original_atk_field": "Actual_最大相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 15.12406973212068,
+      "fp32_original_full_reference": 12.117470390561172,
+      "fp32_over_bf16": 0.8012043454696551,
+      "reduction_percent": 19.879565453034488
+    },
+    {
+      "rank": 2,
+      "output": "dw2",
+      "metric": "mean_relative_error",
+      "original_atk_field": "Actual_平均相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.015606394477547273,
+      "fp32_original_full_reference": 0.013601453639070485,
+      "fp32_over_bf16": 0.8715308112093878,
+      "reduction_percent": 12.84691887906122
+    },
+    {
+      "rank": 2,
+      "output": "dw2",
+      "metric": "atk_rms_field",
+      "original_atk_field": "Actual_均方根误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.01737236233013032,
+      "fp32_original_full_reference": 0.015546467484057637,
+      "fp32_over_bf16": 0.8948965712679223,
+      "reduction_percent": 10.510342873207767
+    },
+    {
+      "rank": 3,
+      "output": "y",
+      "metric": "max_relative_error",
+      "original_atk_field": "Actual_最大相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 194.59015091874258,
+      "fp32_original_full_reference": 175.8627888539497,
+      "fp32_over_bf16": 0.9037599694723856,
+      "reduction_percent": 9.624003052761443
+    },
+    {
+      "rank": 3,
+      "output": "y",
+      "metric": "mean_relative_error",
+      "original_atk_field": "Actual_平均相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.02272929565618502,
+      "fp32_original_full_reference": 0.021007520034743155,
+      "fp32_over_bf16": 0.924248615201882,
+      "reduction_percent": 7.575138479811805
+    },
+    {
+      "rank": 3,
+      "output": "y",
+      "metric": "atk_rms_field",
+      "original_atk_field": "Actual_均方根误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.32958371828713895,
+      "fp32_original_full_reference": 0.30102802090626124,
+      "fp32_over_bf16": 0.9133582886640065,
+      "reduction_percent": 8.664171133599352
+    },
+    {
+      "rank": 3,
+      "output": "dx",
+      "metric": "max_relative_error",
+      "original_atk_field": "Actual_最大相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 721.3967398702135,
+      "fp32_original_full_reference": 658.6644065670774,
+      "fp32_over_bf16": 0.9130404535589913,
+      "reduction_percent": 8.695954644100867
+    },
+    {
+      "rank": 3,
+      "output": "dx",
+      "metric": "mean_relative_error",
+      "original_atk_field": "Actual_平均相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.028442655165969603,
+      "fp32_original_full_reference": 0.02676472663109737,
+      "fp32_over_bf16": 0.9410066140069863,
+      "reduction_percent": 5.899338599301373
+    },
+    {
+      "rank": 3,
+      "output": "dx",
+      "metric": "atk_rms_field",
+      "original_atk_field": "Actual_均方根误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.6503390819509876,
+      "fp32_original_full_reference": 0.62123570639698,
+      "fp32_over_bf16": 0.9552489211217343,
+      "reduction_percent": 4.475107887826568
+    },
+    {
+      "rank": 3,
+      "output": "dtopk_weights",
+      "metric": "max_relative_error",
+      "original_atk_field": "Actual_最大相对误差",
+      "atk_evaluation_dtype": "torch.float32",
+      "bf16_common_reference": 98.63091631271566,
+      "fp32_original_full_reference": 98.71189230100669,
+      "fp32_over_bf16": 1.0008210000608155,
+      "reduction_percent": -0.08210000608155354
+    },
+    {
+      "rank": 3,
+      "output": "dtopk_weights",
+      "metric": "mean_relative_error",
+      "original_atk_field": "Actual_平均相对误差",
+      "atk_evaluation_dtype": "torch.float32",
+      "bf16_common_reference": 0.02428366023752454,
+      "fp32_original_full_reference": 0.024011536303469208,
+      "fp32_over_bf16": 0.9887939490425406,
+      "reduction_percent": 1.1206050957459412
+    },
+    {
+      "rank": 3,
+      "output": "dtopk_weights",
+      "metric": "atk_rms_field",
+      "original_atk_field": "Actual_均方根误差",
+      "atk_evaluation_dtype": "torch.float32",
+      "bf16_common_reference": 2.9137626787819944,
+      "fp32_original_full_reference": 2.5341042460755263,
+      "fp32_over_bf16": 0.8697016625715132,
+      "reduction_percent": 13.029833742848684
+    },
+    {
+      "rank": 3,
+      "output": "dw1",
+      "metric": "max_relative_error",
+      "original_atk_field": "Actual_最大相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 273.81797897142695,
+      "fp32_original_full_reference": 273.81797897142695,
+      "fp32_over_bf16": 1.0,
+      "reduction_percent": 0.0
+    },
+    {
+      "rank": 3,
+      "output": "dw1",
+      "metric": "mean_relative_error",
+      "original_atk_field": "Actual_平均相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.017536221114760484,
+      "fp32_original_full_reference": 0.01557232143773117,
+      "fp32_over_bf16": 0.8880089579062007,
+      "reduction_percent": 11.199104209379929
+    },
+    {
+      "rank": 3,
+      "output": "dw1",
+      "metric": "atk_rms_field",
+      "original_atk_field": "Actual_均方根误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.025668620401590868,
+      "fp32_original_full_reference": 0.024423052479876795,
+      "fp32_over_bf16": 0.9514750733686927,
+      "reduction_percent": 4.852492663130725
+    },
+    {
+      "rank": 3,
+      "output": "dw2",
+      "metric": "max_relative_error",
+      "original_atk_field": "Actual_最大相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 13.625591949846813,
+      "fp32_original_full_reference": 13.60945692676771,
+      "fp32_over_bf16": 0.9988158295699378,
+      "reduction_percent": 0.1184170430062248
+    },
+    {
+      "rank": 3,
+      "output": "dw2",
+      "metric": "mean_relative_error",
+      "original_atk_field": "Actual_平均相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.015593319720471848,
+      "fp32_original_full_reference": 0.013604309884006398,
+      "fp32_over_bf16": 0.8724447473584371,
+      "reduction_percent": 12.755525264156287
+    },
+    {
+      "rank": 3,
+      "output": "dw2",
+      "metric": "atk_rms_field",
+      "original_atk_field": "Actual_均方根误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.01746376634313836,
+      "fp32_original_full_reference": 0.015629467653731084,
+      "fp32_over_bf16": 0.8949654585748632,
+      "reduction_percent": 10.503454142513679
+    },
+    {
+      "rank": 4,
+      "output": "y",
+      "metric": "max_relative_error",
+      "original_atk_field": "Actual_最大相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 243.74415069022626,
+      "fp32_original_full_reference": 190.5309127340746,
+      "fp32_over_bf16": 0.7816840412150845,
+      "reduction_percent": 21.831595878491548
+    },
+    {
+      "rank": 4,
+      "output": "y",
+      "metric": "mean_relative_error",
+      "original_atk_field": "Actual_平均相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.022738605962407673,
+      "fp32_original_full_reference": 0.02095845407407204,
+      "fp32_over_bf16": 0.9217123560134405,
+      "reduction_percent": 7.828764398655952
+    },
+    {
+      "rank": 4,
+      "output": "y",
+      "metric": "atk_rms_field",
+      "original_atk_field": "Actual_均方根误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.32895072145379967,
+      "fp32_original_full_reference": 0.30087894448519287,
+      "fp32_over_bf16": 0.9146626678775975,
+      "reduction_percent": 8.533733212240247
+    },
+    {
+      "rank": 4,
+      "output": "dx",
+      "metric": "max_relative_error",
+      "original_atk_field": "Actual_最大相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 811.7790525529682,
+      "fp32_original_full_reference": 929.4727890253341,
+      "fp32_over_bf16": 1.144982475345022,
+      "reduction_percent": -14.498247534502195
+    },
+    {
+      "rank": 4,
+      "output": "dx",
+      "metric": "mean_relative_error",
+      "original_atk_field": "Actual_平均相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.028340626930782393,
+      "fp32_original_full_reference": 0.026603924707786015,
+      "fp32_over_bf16": 0.9387204020843292,
+      "reduction_percent": 6.127959791567084
+    },
+    {
+      "rank": 4,
+      "output": "dx",
+      "metric": "atk_rms_field",
+      "original_atk_field": "Actual_均方根误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.6307021965120532,
+      "fp32_original_full_reference": 0.600998653633623,
+      "fp32_over_bf16": 0.9529040123172261,
+      "reduction_percent": 4.70959876827739
+    },
+    {
+      "rank": 4,
+      "output": "dtopk_weights",
+      "metric": "max_relative_error",
+      "original_atk_field": "Actual_最大相对误差",
+      "atk_evaluation_dtype": "torch.float32",
+      "bf16_common_reference": 1745.7702603618907,
+      "fp32_original_full_reference": 1745.2698834857406,
+      "fp32_over_bf16": 0.9997133775918222,
+      "reduction_percent": 0.02866224081777835
+    },
+    {
+      "rank": 4,
+      "output": "dtopk_weights",
+      "metric": "mean_relative_error",
+      "original_atk_field": "Actual_平均相对误差",
+      "atk_evaluation_dtype": "torch.float32",
+      "bf16_common_reference": 0.0957853841618031,
+      "fp32_original_full_reference": 0.09548645747130848,
+      "fp32_over_bf16": 0.9968792035119923,
+      "reduction_percent": 0.3120796488007671
+    },
+    {
+      "rank": 4,
+      "output": "dtopk_weights",
+      "metric": "atk_rms_field",
+      "original_atk_field": "Actual_均方根误差",
+      "atk_evaluation_dtype": "torch.float32",
+      "bf16_common_reference": 2.8669681841713603,
+      "fp32_original_full_reference": 2.4975323631675703,
+      "fp32_over_bf16": 0.8711405926848232,
+      "reduction_percent": 12.885940731517675
+    },
+    {
+      "rank": 4,
+      "output": "dw1",
+      "metric": "max_relative_error",
+      "original_atk_field": "Actual_最大相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 295.9875132298986,
+      "fp32_original_full_reference": 295.9875132298986,
+      "fp32_over_bf16": 1.0,
+      "reduction_percent": 0.0
+    },
+    {
+      "rank": 4,
+      "output": "dw1",
+      "metric": "mean_relative_error",
+      "original_atk_field": "Actual_平均相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.017609177361199154,
+      "fp32_original_full_reference": 0.015634192684272775,
+      "fp32_over_bf16": 0.8878434445621436,
+      "reduction_percent": 11.21565554378564
+    },
+    {
+      "rank": 4,
+      "output": "dw1",
+      "metric": "atk_rms_field",
+      "original_atk_field": "Actual_均方根误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.02610311497384837,
+      "fp32_original_full_reference": 0.02488079535998769,
+      "fp32_over_bf16": 0.9531734195292296,
+      "reduction_percent": 4.682658047077037
+    },
+    {
+      "rank": 4,
+      "output": "dw2",
+      "metric": "max_relative_error",
+      "original_atk_field": "Actual_最大相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 14.435157316731033,
+      "fp32_original_full_reference": 12.821670906680223,
+      "fp32_over_bf16": 0.8882252285411049,
+      "reduction_percent": 11.177477145889513
+    },
+    {
+      "rank": 4,
+      "output": "dw2",
+      "metric": "mean_relative_error",
+      "original_atk_field": "Actual_平均相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.015639026724789465,
+      "fp32_original_full_reference": 0.013627189656218045,
+      "fp32_over_bf16": 0.8713579109509129,
+      "reduction_percent": 12.864208904908715
+    },
+    {
+      "rank": 4,
+      "output": "dw2",
+      "metric": "atk_rms_field",
+      "original_atk_field": "Actual_均方根误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.017438144751624685,
+      "fp32_original_full_reference": 0.015602893246895365,
+      "fp32_over_bf16": 0.8947564932583593,
+      "reduction_percent": 10.524350674164074
+    },
+    {
+      "rank": 5,
+      "output": "y",
+      "metric": "max_relative_error",
+      "original_atk_field": "Actual_最大相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 198.9359517346514,
+      "fp32_original_full_reference": 174.07222424486775,
+      "fp32_over_bf16": 0.87501641974223,
+      "reduction_percent": 12.498358025777002
+    },
+    {
+      "rank": 5,
+      "output": "y",
+      "metric": "mean_relative_error",
+      "original_atk_field": "Actual_平均相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.022728249621898414,
+      "fp32_original_full_reference": 0.02086848507665357,
+      "fp32_over_bf16": 0.9181738771712108,
+      "reduction_percent": 8.182612282878921
+    },
+    {
+      "rank": 5,
+      "output": "y",
+      "metric": "atk_rms_field",
+      "original_atk_field": "Actual_均方根误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.3289252425382114,
+      "fp32_original_full_reference": 0.3004717573211238,
+      "fp32_over_bf16": 0.9134955864210326,
+      "reduction_percent": 8.650441357896742
+    },
+    {
+      "rank": 5,
+      "output": "dx",
+      "metric": "max_relative_error",
+      "original_atk_field": "Actual_最大相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 973.4443004058365,
+      "fp32_original_full_reference": 966.1326890366304,
+      "fp32_over_bf16": 0.9924889268280087,
+      "reduction_percent": 0.7511073171991289
+    },
+    {
+      "rank": 5,
+      "output": "dx",
+      "metric": "mean_relative_error",
+      "original_atk_field": "Actual_平均相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.029224760383424003,
+      "fp32_original_full_reference": 0.02752366851592112,
+      "fp32_over_bf16": 0.9417927864870459,
+      "reduction_percent": 5.82072135129541
+    },
+    {
+      "rank": 5,
+      "output": "dx",
+      "metric": "atk_rms_field",
+      "original_atk_field": "Actual_均方根误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.6950993553155225,
+      "fp32_original_full_reference": 0.6682781889862535,
+      "fp32_over_bf16": 0.9614139099336465,
+      "reduction_percent": 3.8586090066353496
+    },
+    {
+      "rank": 5,
+      "output": "dtopk_weights",
+      "metric": "max_relative_error",
+      "original_atk_field": "Actual_最大相对误差",
+      "atk_evaluation_dtype": "torch.float32",
+      "bf16_common_reference": 116.14491398931901,
+      "fp32_original_full_reference": 116.16180731793231,
+      "fp32_over_bf16": 1.000145450438018,
+      "reduction_percent": -0.014545043801805768
+    },
+    {
+      "rank": 5,
+      "output": "dtopk_weights",
+      "metric": "mean_relative_error",
+      "original_atk_field": "Actual_平均相对误差",
+      "atk_evaluation_dtype": "torch.float32",
+      "bf16_common_reference": 0.02513396298813395,
+      "fp32_original_full_reference": 0.0248800325404672,
+      "fp32_over_bf16": 0.9898969196466696,
+      "reduction_percent": 1.0103080353330407
+    },
+    {
+      "rank": 5,
+      "output": "dtopk_weights",
+      "metric": "atk_rms_field",
+      "original_atk_field": "Actual_均方根误差",
+      "atk_evaluation_dtype": "torch.float32",
+      "bf16_common_reference": 2.8620201267006116,
+      "fp32_original_full_reference": 2.502667656932368,
+      "fp32_over_bf16": 0.8744409704125625,
+      "reduction_percent": 12.555902958743747
+    },
+    {
+      "rank": 5,
+      "output": "dw1",
+      "metric": "max_relative_error",
+      "original_atk_field": "Actual_最大相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 205.61703566657596,
+      "fp32_original_full_reference": 203.6495639276316,
+      "fp32_over_bf16": 0.9904313777670894,
+      "reduction_percent": 0.9568622232910551
+    },
+    {
+      "rank": 5,
+      "output": "dw1",
+      "metric": "mean_relative_error",
+      "original_atk_field": "Actual_平均相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.017548667876391394,
+      "fp32_original_full_reference": 0.015582514617227625,
+      "fp32_over_bf16": 0.8879599709212755,
+      "reduction_percent": 11.204002907872447
+    },
+    {
+      "rank": 5,
+      "output": "dw1",
+      "metric": "atk_rms_field",
+      "original_atk_field": "Actual_均方根误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.02569545657268399,
+      "fp32_original_full_reference": 0.024462933919669652,
+      "fp32_over_bf16": 0.9520334402493322,
+      "reduction_percent": 4.796655975066777
+    },
+    {
+      "rank": 5,
+      "output": "dw2",
+      "metric": "max_relative_error",
+      "original_atk_field": "Actual_最大相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 14.443615795408201,
+      "fp32_original_full_reference": 12.526227603221454,
+      "fp32_over_bf16": 0.8672501249447311,
+      "reduction_percent": 13.27498750552689
+    },
+    {
+      "rank": 5,
+      "output": "dw2",
+      "metric": "mean_relative_error",
+      "original_atk_field": "Actual_平均相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.015597659652626775,
+      "fp32_original_full_reference": 0.013603717043207203,
+      "fp32_over_bf16": 0.8721639878144298,
+      "reduction_percent": 12.783601218557017
+    },
+    {
+      "rank": 5,
+      "output": "dw2",
+      "metric": "atk_rms_field",
+      "original_atk_field": "Actual_均方根误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.017417662950123893,
+      "fp32_original_full_reference": 0.015595278960915953,
+      "fp32_over_bf16": 0.8953714976328109,
+      "reduction_percent": 10.462850236718912
+    },
+    {
+      "rank": 6,
+      "output": "y",
+      "metric": "max_relative_error",
+      "original_atk_field": "Actual_最大相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 220.0963478032141,
+      "fp32_original_full_reference": 143.03314154295816,
+      "fp32_over_bf16": 0.6498660380809347,
+      "reduction_percent": 35.01339619190653
+    },
+    {
+      "rank": 6,
+      "output": "y",
+      "metric": "mean_relative_error",
+      "original_atk_field": "Actual_平均相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.02270512541665524,
+      "fp32_original_full_reference": 0.020922898792750253,
+      "fp32_over_bf16": 0.9215055371331424,
+      "reduction_percent": 7.849446286685757
+    },
+    {
+      "rank": 6,
+      "output": "y",
+      "metric": "atk_rms_field",
+      "original_atk_field": "Actual_均方根误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.3294819428109394,
+      "fp32_original_full_reference": 0.30081865343877184,
+      "fp32_over_bf16": 0.9130049764559787,
+      "reduction_percent": 8.699502354402133
+    },
+    {
+      "rank": 6,
+      "output": "dx",
+      "metric": "max_relative_error",
+      "original_atk_field": "Actual_最大相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 912.9818215329371,
+      "fp32_original_full_reference": 995.1776102807686,
+      "fp32_over_bf16": 1.0900300387250001,
+      "reduction_percent": -9.003003872500015
+    },
+    {
+      "rank": 6,
+      "output": "dx",
+      "metric": "mean_relative_error",
+      "original_atk_field": "Actual_平均相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.02863770527630734,
+      "fp32_original_full_reference": 0.026990231603904895,
+      "fp32_over_bf16": 0.9424718685904824,
+      "reduction_percent": 5.752813140951762
+    },
+    {
+      "rank": 6,
+      "output": "dx",
+      "metric": "atk_rms_field",
+      "original_atk_field": "Actual_均方根误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.6572852510728645,
+      "fp32_original_full_reference": 0.6286030716416818,
+      "fp32_over_bf16": 0.956362660832012,
+      "reduction_percent": 4.363733916798795
+    },
+    {
+      "rank": 6,
+      "output": "dtopk_weights",
+      "metric": "max_relative_error",
+      "original_atk_field": "Actual_最大相对误差",
+      "atk_evaluation_dtype": "torch.float32",
+      "bf16_common_reference": 337.6293278392644,
+      "fp32_original_full_reference": 336.93803544431296,
+      "fp32_over_bf16": 0.9979525108219255,
+      "reduction_percent": 0.2047489178074513
+    },
+    {
+      "rank": 6,
+      "output": "dtopk_weights",
+      "metric": "mean_relative_error",
+      "original_atk_field": "Actual_平均相对误差",
+      "atk_evaluation_dtype": "torch.float32",
+      "bf16_common_reference": 0.03454547791132658,
+      "fp32_original_full_reference": 0.034255407532210826,
+      "fp32_over_bf16": 0.9916032315471123,
+      "reduction_percent": 0.8396768452887726
+    },
+    {
+      "rank": 6,
+      "output": "dtopk_weights",
+      "metric": "atk_rms_field",
+      "original_atk_field": "Actual_均方根误差",
+      "atk_evaluation_dtype": "torch.float32",
+      "bf16_common_reference": 2.892195162960184,
+      "fp32_original_full_reference": 2.5262672139013254,
+      "fp32_over_bf16": 0.8734774354977038,
+      "reduction_percent": 12.652256450229615
+    },
+    {
+      "rank": 6,
+      "output": "dw1",
+      "metric": "max_relative_error",
+      "original_atk_field": "Actual_最大相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 270.93580879077996,
+      "fp32_original_full_reference": 269.22552082286114,
+      "fp32_over_bf16": 0.9936874790543485,
+      "reduction_percent": 0.631252094565149
+    },
+    {
+      "rank": 6,
+      "output": "dw1",
+      "metric": "mean_relative_error",
+      "original_atk_field": "Actual_平均相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.017680811731724685,
+      "fp32_original_full_reference": 0.015717556286423916,
+      "fp32_over_bf16": 0.8889612380308253,
+      "reduction_percent": 11.103876196917472
+    },
+    {
+      "rank": 6,
+      "output": "dw1",
+      "metric": "atk_rms_field",
+      "original_atk_field": "Actual_均方根误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.026015090300360193,
+      "fp32_original_full_reference": 0.024794522120037684,
+      "fp32_over_bf16": 0.9530823008403854,
+      "reduction_percent": 4.691769915961464
+    },
+    {
+      "rank": 6,
+      "output": "dw2",
+      "metric": "max_relative_error",
+      "original_atk_field": "Actual_最大相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 15.76413018489634,
+      "fp32_original_full_reference": 13.035446859927125,
+      "fp32_over_bf16": 0.826905557556003,
+      "reduction_percent": 17.309444244399696
+    },
+    {
+      "rank": 6,
+      "output": "dw2",
+      "metric": "mean_relative_error",
+      "original_atk_field": "Actual_平均相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.015589831151465111,
+      "fp32_original_full_reference": 0.013591278967649587,
+      "fp32_over_bf16": 0.8718041161319632,
+      "reduction_percent": 12.819588386803682
+    },
+    {
+      "rank": 6,
+      "output": "dw2",
+      "metric": "atk_rms_field",
+      "original_atk_field": "Actual_均方根误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.017390990486144,
+      "fp32_original_full_reference": 0.01555738937898779,
+      "fp32_over_bf16": 0.8945660335668,
+      "reduction_percent": 10.543396643320001
+    },
+    {
+      "rank": 7,
+      "output": "y",
+      "metric": "max_relative_error",
+      "original_atk_field": "Actual_最大相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 251.27817912933355,
+      "fp32_original_full_reference": 195.19811368173907,
+      "fp32_over_bf16": 0.776820790241679,
+      "reduction_percent": 22.317920975832095
+    },
+    {
+      "rank": 7,
+      "output": "y",
+      "metric": "mean_relative_error",
+      "original_atk_field": "Actual_平均相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.022741184188394152,
+      "fp32_original_full_reference": 0.020927035996550818,
+      "fp32_over_bf16": 0.9202263093771003,
+      "reduction_percent": 7.9773690622899736
+    },
+    {
+      "rank": 7,
+      "output": "y",
+      "metric": "atk_rms_field",
+      "original_atk_field": "Actual_均方根误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.32995992484218545,
+      "fp32_original_full_reference": 0.30084288421287037,
+      "fp32_over_bf16": 0.9117558271864642,
+      "reduction_percent": 8.82441728135358
+    },
+    {
+      "rank": 7,
+      "output": "dx",
+      "metric": "max_relative_error",
+      "original_atk_field": "Actual_最大相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 2160.498678412606,
+      "fp32_original_full_reference": 2128.7413445329225,
+      "fp32_over_bf16": 0.9853009241815336,
+      "reduction_percent": 1.4699075818466412
+    },
+    {
+      "rank": 7,
+      "output": "dx",
+      "metric": "mean_relative_error",
+      "original_atk_field": "Actual_平均相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.02836327158817629,
+      "fp32_original_full_reference": 0.026722357668219253,
+      "fp32_over_bf16": 0.9421465216078571,
+      "reduction_percent": 5.785347839214294
+    },
+    {
+      "rank": 7,
+      "output": "dx",
+      "metric": "atk_rms_field",
+      "original_atk_field": "Actual_均方根误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.6488186804315429,
+      "fp32_original_full_reference": 0.6190988518230806,
+      "fp32_over_bf16": 0.9541939381450992,
+      "reduction_percent": 4.580606185490077
+    },
+    {
+      "rank": 7,
+      "output": "dtopk_weights",
+      "metric": "max_relative_error",
+      "original_atk_field": "Actual_最大相对误差",
+      "atk_evaluation_dtype": "torch.float32",
+      "bf16_common_reference": 15.054148701681417,
+      "fp32_original_full_reference": 15.069333537582454,
+      "fp32_over_bf16": 1.0010086811417866,
+      "reduction_percent": -0.10086811417866492
+    },
+    {
+      "rank": 7,
+      "output": "dtopk_weights",
+      "metric": "mean_relative_error",
+      "original_atk_field": "Actual_平均相对误差",
+      "atk_evaluation_dtype": "torch.float32",
+      "bf16_common_reference": 0.017177448555568024,
+      "fp32_original_full_reference": 0.01689922229008578,
+      "fp32_over_bf16": 0.9838028177128753,
+      "reduction_percent": 1.6197182287124745
+    },
+    {
+      "rank": 7,
+      "output": "dtopk_weights",
+      "metric": "atk_rms_field",
+      "original_atk_field": "Actual_均方根误差",
+      "atk_evaluation_dtype": "torch.float32",
+      "bf16_common_reference": 2.8707347784254202,
+      "fp32_original_full_reference": 2.499015296628935,
+      "fp32_over_bf16": 0.8705141678046724,
+      "reduction_percent": 12.948583219532761
+    },
+    {
+      "rank": 7,
+      "output": "dw1",
+      "metric": "max_relative_error",
+      "original_atk_field": "Actual_最大相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 148.71214319182513,
+      "fp32_original_full_reference": 147.62090669086683,
+      "fp32_over_bf16": 0.992662088800975,
+      "reduction_percent": 0.7337911199025049
+    },
+    {
+      "rank": 7,
+      "output": "dw1",
+      "metric": "mean_relative_error",
+      "original_atk_field": "Actual_平均相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.017536645416726723,
+      "fp32_original_full_reference": 0.01559155820484647,
+      "fp32_over_bf16": 0.8890844191885753,
+      "reduction_percent": 11.091558081142471
+    },
+    {
+      "rank": 7,
+      "output": "dw1",
+      "metric": "atk_rms_field",
+      "original_atk_field": "Actual_均方根误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.025035825271690567,
+      "fp32_original_full_reference": 0.023775545172929968,
+      "fp32_over_bf16": 0.9496609324803976,
+      "reduction_percent": 5.033906751960238
+    },
+    {
+      "rank": 7,
+      "output": "dw2",
+      "metric": "max_relative_error",
+      "original_atk_field": "Actual_最大相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 15.4160033939445,
+      "fp32_original_full_reference": 15.017190861089196,
+      "fp32_over_bf16": 0.9741299659409806,
+      "reduction_percent": 2.587003405901944
+    },
+    {
+      "rank": 7,
+      "output": "dw2",
+      "metric": "mean_relative_error",
+      "original_atk_field": "Actual_平均相对误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.015580128969483485,
+      "fp32_original_full_reference": 0.013594507760450698,
+      "fp32_over_bf16": 0.8725542508074235,
+      "reduction_percent": 12.744574919257644
+    },
+    {
+      "rank": 7,
+      "output": "dw2",
+      "metric": "atk_rms_field",
+      "original_atk_field": "Actual_均方根误差",
+      "atk_evaluation_dtype": "torch.bfloat16",
+      "bf16_common_reference": 0.017367431333122175,
+      "fp32_original_full_reference": 0.015555905340463994,
+      "fp32_over_bf16": 0.8956940748512797,
+      "reduction_percent": 10.430592514872028
+    }
+  ],
+  "aggregate": [
+    {
+      "output": "y",
+      "metric": "max_relative_error",
+      "bf16_rank_median": 199.77082917224357,
+      "bf16_rank_max": 251.27817912933355,
+      "fp32_rank_median": 177.26808850901404,
+      "fp32_rank_max": 195.19811368173907,
+      "paired_ratio_median": 0.8893881946073078,
+      "paired_ratio_max": 0.9721588873790274,
+      "ranks_improved": 8,
+      "rank_count": 8
+    },
+    {
+      "output": "y",
+      "metric": "mean_relative_error",
+      "bf16_rank_median": 0.022728772639041717,
+      "bf16_rank_max": 0.022840761398710073,
+      "fp32_rank_median": 0.020924967394650537,
+      "fp32_rank_max": 0.021036911885899092,
+      "paired_ratio_median": 0.921265260218604,
+      "paired_ratio_max": 0.924248615201882,
+      "ranks_improved": 8,
+      "rank_count": 8
+    },
+    {
+      "output": "y",
+      "metric": "atk_rms_field",
+      "bf16_rank_median": 0.32906659327792454,
+      "bf16_rank_max": 0.32995992484218545,
+      "fp32_rank_median": 0.3007588120662539,
+      "fp32_rank_max": 0.30102802090626124,
+      "paired_ratio_median": 0.9131816325599926,
+      "paired_ratio_max": 0.9146626678775975,
+      "ranks_improved": 8,
+      "rank_count": 8
+    },
+    {
+      "output": "dx",
+      "metric": "max_relative_error",
+      "bf16_rank_median": 943.2130609693868,
+      "bf16_rank_max": 2160.498678412606,
+      "fp32_rank_median": 980.6551496586994,
+      "fp32_rank_max": 2128.7413445329225,
+      "paired_ratio_median": 1.0073661883240774,
+      "paired_ratio_max": 1.144982475345022,
+      "ranks_improved": 4,
+      "rank_count": 8
+    },
+    {
+      "output": "dx",
+      "metric": "mean_relative_error",
+      "bf16_rank_median": 0.028540180221138474,
+      "bf16_rank_max": 0.029363048174115933,
+      "fp32_rank_median": 0.026877479117501133,
+      "fp32_rank_max": 0.027648530128499445,
+      "paired_ratio_median": 0.9419696540474515,
+      "paired_ratio_max": 0.943152019258864,
+      "ranks_improved": 8,
+      "rank_count": 8
+    },
+    {
+      "output": "dx",
+      "metric": "atk_rms_field",
+      "bf16_rank_median": 0.6538121665119261,
+      "bf16_rank_max": 0.6950993553155225,
+      "fp32_rank_median": 0.624919389019331,
+      "fp32_rank_max": 0.6682781889862535,
+      "paired_ratio_median": 0.9558057909768731,
+      "paired_ratio_max": 0.9614139099336465,
+      "ranks_improved": 8,
+      "rank_count": 8
+    },
+    {
+      "output": "dtopk_weights",
+      "metric": "max_relative_error",
+      "bf16_rank_median": 107.38791515101732,
+      "bf16_rank_max": 1745.7702603618907,
+      "fp32_rank_median": 107.43684980946949,
+      "fp32_rank_max": 1745.2698834857406,
+      "paired_ratio_median": 0.9997527616170785,
+      "paired_ratio_max": 1.0010086811417866,
+      "ranks_improved": 5,
+      "rank_count": 8
+    },
+    {
+      "output": "dtopk_weights",
+      "metric": "mean_relative_error",
+      "bf16_rank_median": 0.024708811612829243,
+      "bf16_rank_max": 0.0957853841618031,
+      "fp32_rank_median": 0.0244457844219682,
+      "fp32_rank_max": 0.09548645747130848,
+      "paired_ratio_median": 0.9892366653111918,
+      "paired_ratio_max": 0.9968792035119923,
+      "ranks_improved": 8,
+      "rank_count": 8
+    },
+    {
+      "output": "dtopk_weights",
+      "metric": "atk_rms_field",
+      "bf16_rank_median": 2.8659421517223045,
+      "bf16_rank_max": 2.9137626787819944,
+      "fp32_rank_median": 2.500795582854357,
+      "fp32_rank_max": 2.5341042460755263,
+      "paired_ratio_median": 0.8723090140912635,
+      "paired_ratio_max": 0.8744409704125625,
+      "ranks_improved": 8,
+      "rank_count": 8
+    },
+    {
+      "output": "dw1",
+      "metric": "max_relative_error",
+      "bf16_rank_median": 249.26356887118538,
+      "bf16_rank_max": 296.7615858812835,
+      "fp32_rank_median": 248.40842488722598,
+      "fp32_rank_max": 300.62861914274157,
+      "paired_ratio_median": 0.9968437395271743,
+      "paired_ratio_max": 1.0130307743503064,
+      "ranks_improved": 4,
+      "rank_count": 8
+    },
+    {
+      "output": "dw1",
+      "metric": "mean_relative_error",
+      "bf16_rank_median": 0.017536433265743605,
+      "bf16_rank_max": 0.017680811731724685,
+      "fp32_rank_median": 0.015577418027479398,
+      "fp32_rank_max": 0.015717556286423916,
+      "paired_ratio_median": 0.8883632463086535,
+      "paired_ratio_max": 0.8890844191885753,
+      "ranks_improved": 8,
+      "rank_count": 8
+    },
+    {
+      "output": "dw1",
+      "metric": "atk_rms_field",
+      "bf16_rank_median": 0.025848589815938648,
+      "bf16_rank_max": 0.026219184291551203,
+      "fp32_rank_median": 0.024634697381783976,
+      "fp32_rank_max": 0.02502657813388861,
+      "paired_ratio_median": 0.9527886054536088,
+      "paired_ratio_max": 0.9545139869951296,
+      "ranks_improved": 8,
+      "rank_count": 8
+    },
+    {
+      "output": "dw2",
+      "metric": "max_relative_error",
+      "bf16_rank_median": 14.439386556069618,
+      "bf16_rank_max": 15.76413018489634,
+      "fp32_rank_median": 12.839763588619284,
+      "fp32_rank_max": 15.017190861089196,
+      "paired_ratio_median": 0.8777376767429179,
+      "paired_ratio_max": 0.9988158295699378,
+      "ranks_improved": 8,
+      "rank_count": 8
+    },
+    {
+      "output": "dw2",
+      "metric": "mean_relative_error",
+      "bf16_rank_median": 0.01559157543596848,
+      "bf16_rank_max": 0.015639026724789465,
+      "fp32_rank_median": 0.013602500175044389,
+      "fp32_rank_max": 0.013627189656218045,
+      "paired_ratio_median": 0.8722909987961804,
+      "paired_ratio_max": 0.8735465271823786,
+      "ranks_improved": 8,
+      "rank_count": 8
+    },
+    {
+      "output": "dw2",
+      "metric": "atk_rms_field",
+      "bf16_rank_median": 0.017386961969402266,
+      "bf16_rank_max": 0.01746376634313836,
+      "fp32_rank_median": 0.015561807572863094,
+      "fp32_rank_max": 0.015629467653731084,
+      "paired_ratio_median": 0.895168478103837,
+      "paired_ratio_max": 0.896422586597451,
+      "ranks_improved": 8,
+      "rank_count": 8
+    }
+  ],
+  "cpu_metric_dtype_probe": {
+    "source_report_sha256": "cec03f8903f9ea439589050c362961ce232ba323b8bf6598bf3cde1e1ad4a67d",
+    "script_sha256": "8e86419ec42b5059e3e42ee057637884375f52f7efbce7d068269a041e36b5c2",
+    "torch": "2.10.0+cpu",
+    "npu_calls": false,
+    "scope": "CPU-only black-box control using identical BF16-representable actual values and the same FP64 truth, evaluated under BF16 and FP32 storage dtypes. This tests these samples, not a universal formula.",
+    "cases": [
+      {
+        "case": "wide",
+        "numel": 4112,
+        "actual_values_identical": true,
+        "dtype_invariant_actual_metrics": false,
+        "actual_metrics": {
+          "bf16": {
+            "Actual_最大相对误差": 0.0035655248084350516,
+            "Actual_平均相对误差": 0.0008066496529997725,
+            "Actual_均方根误差": 1.85305267460639,
+            "Actual_误差均衡性": -1.4560876814644934e-05,
+            "Actual_小值域数错数量": 0
+          },
+          "fp32": {
+            "Actual_最大相对误差": 0.0035655248084350516,
+            "Actual_平均相对误差": 0.0008096139125361285,
+            "Actual_均方根误差": 1.636402191217758,
+            "Actual_误差均衡性": -1.1378175936466744e-05,
+            "Actual_小值域数错数量": 396
+          }
+        },
+        "different_actual_fields": {
+          "Actual_平均相对误差": {
+            "bf16": 0.0008066496529997725,
+            "fp32": 0.0008096139125361285
+          },
+          "Actual_均方根误差": {
+            "bf16": 1.85305267460639,
+            "fp32": 1.636402191217758
+          },
+          "Actual_误差均衡性": {
+            "bf16": -1.4560876814644934e-05,
+            "fp32": -1.1378175936466744e-05
+          },
+          "Actual_小值域数错数量": {
+            "bf16": 0,
+            "fp32": 396
+          }
+        }
+      },
+      {
+        "case": "random",
+        "numel": 8192,
+        "actual_values_identical": true,
+        "dtype_invariant_actual_metrics": false,
+        "actual_metrics": {
+          "bf16": {
+            "Actual_最大相对误差": 0.003732273007811693,
+            "Actual_平均相对误差": 0.0008137177993967135,
+            "Actual_均方根误差": 0.0010248041079655044,
+            "Actual_误差均衡性": -1.8511878883362135e-06,
+            "Actual_小值域数错数量": 0
+          },
+          "fp32": {
+            "Actual_最大相对误差": 0.003732273007811693,
+            "Actual_平均相对误差": 0.0008134287399628126,
+            "Actual_均方根误差": 0.001022863019474193,
+            "Actual_误差均衡性": -1.8453616507555095e-06,
+            "Actual_小值域数错数量": 1
+          }
+        },
+        "different_actual_fields": {
+          "Actual_平均相对误差": {
+            "bf16": 0.0008137177993967135,
+            "fp32": 0.0008134287399628126
+          },
+          "Actual_均方根误差": {
+            "bf16": 0.0010248041079655044,
+            "fp32": 0.001022863019474193
+          },
+          "Actual_误差均衡性": {
+            "bf16": -1.8511878883362135e-06,
+            "fp32": -1.8453616507555095e-06
+          },
+          "Actual_小值域数错数量": {
+            "bf16": 0,
+            "fp32": 1
+          }
+        }
+      }
+    ]
+  }
+}
