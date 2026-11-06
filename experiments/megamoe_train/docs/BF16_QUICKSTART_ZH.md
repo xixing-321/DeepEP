@@ -12,7 +12,7 @@
    python -c "import deep_ep, deep_ep_experimental.megamoe_train; print('ok')"
    ```
 
-2. 已加载构建该 wheel 时使用的 CANN 环境，且 `SHMEM_ROOT`、`LD_LIBRARY_PATH` 指向同一份 SHMEM SDK。
+2. 已加载与 wheel 匹配的 CANN 环境。wheel 自带 SHMEM 运行库，运行时不需要 `SHMEM_ROOT` 或外部 SHMEM 动态库路径；使用新进程，避免预加载另一套 SHMEM。
    平台与版本要求见[仓库 README 的环境要求](../../../README.md#环境要求)。
    在目标运行镜像中构建；转移 wheel 时还需匹配 Python/Torch ABI 和 glibc 等系统库。
    根 Runtime、训练 Host 扩展和设备库须来自同一完整构建，各 rank 使用同一份 wheel。

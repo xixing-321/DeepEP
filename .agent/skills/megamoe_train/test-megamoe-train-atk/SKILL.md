@@ -29,12 +29,10 @@ python -m pip --version
 python -m pip show ascend-deepep ATK atk-private-precision
 ```
 
-加载用户实际使用的 CANN 与 SHMEM 环境。`SHMEM_ROOT` 应指向构建候选 wheel 时使用的匹配 SDK，可以位于当前 checkout 之外：
+加载与已安装 wheel 匹配的 CANN 环境。SHMEM 运行库随完整 wheel 内附，由根加载器校验并加载；测试时不需要选择外部 SDK：
 
 ```bash
 source /path/to/cann/set_env.sh
-export SHMEM_ROOT=/path/to/existing/shmem-sdk
-export LD_LIBRARY_PATH="$SHMEM_ROOT/lib:${LD_LIBRARY_PATH:-}"
 ```
 
 `ascend-deepep`、ATK 和内部插件必须安装在同一个 Python 中。另一个虚拟环境的 `pip list` 或独立 `atk` 命令可用，不能证明当前 Python 可导入 ATK。
@@ -142,4 +140,4 @@ ATK 对每个 rank 的 `y`、`dx`、`dtopk_weights`、`dw1`、`dw2` 分别比较
 
 交付实际源码/原生库身份、Python 和 ATK 版本、命令、设备及 EP、套件/case 范围、退出码、PASS/FAIL/ERROR/NOT_RUN 数量、各失败输出和报告路径。没有执行的用例明确标为未测；不能将一组通过扩大为其他保存模式、EP 或完整套件通过。
 
-典型模型清单仍仅使用 BF16 保存；dtype/gather 专项的具体配置见当前测试规范，不扩大为其他路由、数据分布或设备规模已通过。历史 GLM M4096 的 ATK 超差与 GLM M512 未完成状态见[训练模块说明](../../../../experiments/megamoe_train/README.md)的历史结果段；测试规范只记录用例与判据，不累积设备数据。新增清单、环境加载或静态检查不改变历史记录，也不证明新二进制已通过。
+典型模型清单仍仅使用 BF16 保存；dtype/gather 专项的具体配置和验收边界见[测试规范](../../../../experiments/megamoe_train/tests/bf16/TEST_SPEC.md)，不扩大为其他路由、数据分布或设备规模已通过。测试规范只记录用例与判据，不累积设备数据；清单存在、环境加载或静态检查不证明新二进制已通过。

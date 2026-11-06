@@ -28,10 +28,10 @@ description: 在已授权的 Ascend950 机器上，用仓库单入口跑 MegaMoE
 
 ```bash
 source /path/to/cann/set_env.sh
-export SHMEM_ROOT=/path/to/shmem-sdk          # 与构建该 wheel 时一致
-export LD_LIBRARY_PATH="$SHMEM_ROOT/lib:${LD_LIBRARY_PATH:-}"
 python -c "import torch, torch_npu, deep_ep_experimental.megamoe_train"
 ```
+
+完整 wheel 自带 SHMEM 运行库，根加载器校验哈希后加载包内文件；性能运行不需要外部 SDK 或其动态库路径。进程已加载另一套 SHMEM 时，重启自己的作业，不替换运行库或绕过校验。
 
 性能段不需要 ATK；只需要正确安装的训练 wheel。先确认指定卡空闲：
 

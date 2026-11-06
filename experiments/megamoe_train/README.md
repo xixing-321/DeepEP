@@ -29,17 +29,21 @@ python -m pip install -r requirements-build.txt
 python scripts/build_shmem.py
 export SHMEM_ROOT="$PWD/third-party/shmem/install/shmem"
 export CATLASS_ROOT="$PWD/third-party/catlass"
-export LD_LIBRARY_PATH="$SHMEM_ROOT/lib:$LD_LIBRARY_PATH"
 export DEEPEP_NPU_ARCH=Ascend950
 export DEEPEP_BUILD_MEGAMOE_TRAIN=ON
 python -m build --wheel --no-isolation
 python -m pip install --force-reinstall --no-deps dist/*.whl
 ```
 
+`SHMEM_ROOT` selects the build SDK. The complete wheel bundles that SDK's runtime
+libraries under `deep_ep/.libs` and records their hashes. Installed training loads
+those libraries through the root loader; only the matching CANN environment is
+needed at run time. Do not preload another SHMEM SDK into the same process.
+
 The option defaults to OFF:
 
 - Independent of `DEEPEP_BUILD_MEGAMOE` and `DEEPEP_BUILD_EP_GMM_FUSED`. Install a wheel, not an
-  editable install. Training adds no SHMEM, does not load the inference kernel SO, and needs no
+  editable install. Training uses the root SHMEM runtime, does not load the inference kernel SO, and needs no
   CATCCOS.
 - After changing Host or device sources, rebuild and reinstall the complete wheel: the Host
   extension, `libdeepep_megamoe_train_bf16.so` and the root runtime must come from one build, and

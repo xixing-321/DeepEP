@@ -286,6 +286,9 @@ def test_expert_ready_builds_use_distinct_cache_and_record_actual_policy(monkeyp
             (directory / "capabilities.json").write_text('{"capabilities":[]}', encoding="utf-8")
 
     monkeypatch.setattr(build, "checked_run", run)
+    monkeypatch.setattr(build, "bundle_shmem_runtime", lambda sdk, target: {"test": "hash"})
+    published = []
+    monkeypatch.setattr(build, "publish_source_native", published.append)
     ext = Extension("deep_ep._C", sources=[])
     for forced in (False, True):
         configuration["megamoe_train"]["force_expert_ready"] = forced
@@ -301,5 +304,8 @@ def test_expert_ready_builds_use_distinct_cache_and_record_actual_policy(monkeyp
         assert "-DDEEPEP_BUILD_MEGAMOE_TRAIN=ON" in args
         info = json.loads((destination / "_build_info.json").read_text(encoding="utf-8"))
         assert info["megamoe_train"]["force_expert_ready"] is forced
+        assert info["shmem_runtime"] == {"test": "hash"}
+        assert published[-1] == destination.resolve()
     object_directories = [args[args.index("-B") + 1] for args in configure_calls]
     assert len(set(object_directories)) == 2
+    assert len(published) == 2

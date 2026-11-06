@@ -16,7 +16,7 @@ Modified by guofanfeng 2026
 | --- | --- |
 | 设备 | 单节点 Ascend950；EP = 传入的设备列表长度，物理卡号 |
 | 安装 | 已安装带训练扩展的 wheel（`DEEPEP_BUILD_MEGAMOE_TRAIN=ON`），默认 `python` 能导入 `deep_ep_experimental.megamoe_train` |
-| 环境 | `source <CANN>/set_env.sh`；`SHMEM_ROOT` 指向构建该 wheel 时使用的 SHMEM SDK |
+| 环境 | `source <CANN>/set_env.sh`；SHMEM 使用 wheel 内附的运行库，不预加载其他 SDK |
 | 端口 | `--shmem-ip-port tcp://IP:port`；Gloo 另用 `port+2`，两者都不得被占用 |
 | 精度 | 需要 ATK 与内部 `atk-private-precision`；`--skip precision` 不需要 |
 | 性能 | 不需要 ATK，CPU 只做输入生成与（可选的）参考计算 |

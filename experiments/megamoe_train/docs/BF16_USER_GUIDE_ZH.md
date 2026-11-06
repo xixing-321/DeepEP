@@ -26,7 +26,7 @@ MegaMoE：dispatch → GMM1 → SwiGLU → GMM2 → combine
 | EP 身份 | 调用方创建已有 ProcessGroup 或 StoreGroup；ProcessGroup 初始化支持 Gloo / HCCL |
 | 数据传输 | 训练算子使用 SHMEM 的 MTE/default 路径；传入 HCCL group 只提供身份与初始化协调，不切换 token 数据面 |
 
-训练组件还要求：根 `deep_ep` Runtime、训练扩展和设备库来自**同一次构建**，各 rank 安装同一份 wheel，运行时加载构建所用的 CANN/SHMEM 环境。在目标运行镜像中构建；转移 wheel 时需匹配 Python/Torch ABI 及 glibc 等系统库。源码构建与安装步骤见[模块 README](../README.md#build-and-installation)，固定依赖见[根锁文件](../../../dependencies.lock.json)。
+训练组件还要求：根 `deep_ep` Runtime、训练扩展和设备库来自**同一次构建**，各 rank 安装同一份 wheel。wheel 自带构建所用的 SHMEM 运行库，根加载器校验哈希并按包内绝对路径加载；运行时只需加载匹配的 CANN 环境，不需设置 `SHMEM_ROOT` 或添加外部 SHMEM 的动态库路径，也不能在同一进程预加载另一套 SHMEM。在目标运行镜像中构建；转移 wheel 时需匹配 Python/Torch ABI 及 glibc 等系统库。源码构建与安装步骤见[模块 README](../README.md#build-and-installation)，固定依赖见[根锁文件](../../../dependencies.lock.json)。
 
 BF16/FP32 p 共用 `MegaMoeBF16Train`、训练 `_C` 扩展和 `libdeepep_megamoe_train_bf16.so` 名称；旧 BF16 调用无需改名或增加必填参数。但 typed tiling 与 p/dp 字节布局需要配套 Host/Device，不能只替换旧安装中的一个 SO。
 
@@ -61,7 +61,7 @@ export DEEPEP_SHMEM_ENDPOINT=tcp://10.0.0.10:29862
 
 endpoint 不是窗口内存地址，也不决定 NPU 数据通过哪种引擎传输。当前训练 Session 固定使用 MTE/default；把 endpoint 改成远端 IP 不会自动启用 UDMA/RDMA。当前算子设备验收仍限于单节点 Ascend950，多机还需验证对应硬件拓扑下的 peer 映射、MTE 数据可达性和同步行为，不能将 TCP 初始化成功视为多机训练已经通过验证。
 
-该配置路径见 [DeepEP Runtime](../../../deep_ep/_runtime.py) 和 [Session](../../../csrc/runtime/session.cpp)；默认 bootstrap 的服务端选择见[固定版本 SHMEM 实现](https://gitcode.com/cann/shmem/blob/4dd80e2129da42bd773982c2bb3758af1ed0bba8/src/host/bootstrap/shmemi_bootstrap_config_store.cpp)。
+该配置路径见 [DeepEP Runtime](../../../deep_ep/_runtime.py) 和 [Session](../../../csrc/runtime/session.cpp)；默认 bootstrap 的服务端选择见[固定版本 SHMEM 实现](https://gitcode.com/cann/shmem/blob/836d3fd6f9c2f3b10a6acac36ccfd531b104d4a7/src/host/bootstrap/shmemi_bootstrap_config_store.cpp)。
 
 ## 3. 公开接口
 
@@ -298,7 +298,7 @@ compact 计数交换、行进度调度的阈值影响所选执行路径：
 
 | 现象 | 优先检查 |
 | --- | --- |
-| Runtime 或训练扩展不可用 | 是否安装启用训练的完整 wheel、加载了匹配 SDK；当前目录和 PYTHONPATH 是否遮蔽安装包 |
+| Runtime 或训练扩展不可用 | 是否安装启用训练的完整 wheel、加载了匹配 CANN 环境；包内 SHMEM 是否缺失、哈希不符或与已加载的外部 SDK 冲突；当前目录和 PYTHONPATH 是否遮蔽安装包 |
 | 已存在 SHMEM runtime | 是否给多层各创建了 op，或其他 DeepEP/SHMEM Session 尚未关闭 |
 | BF16 / contiguous 检查报错 | router IDs/p 的类型、权重重排后的连续性，以及全部 Tensor 所在设备 |
 | local_mem_size too small | 按当前调用或全模型最大 shape 重新规划窗口；增大后需重新创建 op |

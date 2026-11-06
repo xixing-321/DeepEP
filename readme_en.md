@@ -11,6 +11,20 @@ Modified by Joyce_An 2026
 
 **DeepEP on Ascend** (`Ascend/DeepEP`) is an expert-parallel (EP) communication library for mixture-of-experts (MoE) inference and training on Ascend NPUs. It provides high-throughput **prefill** and low-latency **decode** communication, together with experimental **MegaMoE** fused inference and fused training.
 
+## Machine-specific backends
+
+Mesh+PCIe, Mesh+Clos, and Global Clos share the same pinned CANN SHMEM
+dependency and build workflow. Buffer constructors accept `machine_type="auto"`,
+`"mesh_clos"`, `"global_clos"`, or `"mesh_pcie"`; explicit selection is available when
+reliable rootinfo is absent. The machine selects the communication engines:
+Global Clos uses UDMA for payload and MTE for metadata/local copies; Mesh+PCIe uses MTE,
+and Mesh+Clos uses its backend configuration. Legacy `transport` arguments are accepted
+but do not override topology selection. `ASCEND_DEEPEP_TRANSPORT` does not override
+this policy. The `direct` implementation is shared by Mesh+PCIe and Global Clos;
+it denotes EP-peer communication, not physical direct links or a fourth machine type.
+See [backend selection and compatibility](docs/machine_backends.md).
+The HT/LL/MegaMoE descriptions below apply to the Mesh+Clos backend.
+
 ## News
 
 ---
@@ -79,14 +93,16 @@ See the [architecture guide](docs/architecture.md) for module responsibilities; 
 
 ### Install SHMEM dependency
 
-Prepare the SHMEM SDK using the [build guide](docs/build.md), then load the CANN and SHMEM environment:
+For source builds, prepare the SHMEM SDK using the [build guide](docs/build.md), then load CANN:
 
 ```bash
 source /path/to/ascend-toolkit/set_env.sh
 export SHMEM_ROOT=/path/to/shmem-sdk
-source "$SHMEM_ROOT/set_env.sh"
-export LD_LIBRARY_PATH="$SHMEM_ROOT/lib:${LD_LIBRARY_PATH:-}"
 ```
+
+The wheel bundles the build SDK's SHMEM runtime libraries. After installation,
+load the matching CANN environment; `SHMEM_ROOT` and an external SHMEM library
+path are not required at run time. `SHMEM_ROOT` selects the SDK only when building.
 
 ### Development
 

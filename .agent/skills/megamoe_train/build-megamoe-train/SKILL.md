@@ -75,10 +75,11 @@ export CMAKE_BUILD_PARALLEL_LEVEL=2
 python scripts/build_shmem.py
 export SHMEM_ROOT="$PWD/third-party/shmem/install/shmem"
 export CATLASS_ROOT="$PWD/third-party/catlass"
-export LD_LIBRARY_PATH="$SHMEM_ROOT/lib:${LD_LIBRARY_PATH:-}"
 ```
 
 已有与当前锁文件匹配的 SDK 时，设置其实际 `SHMEM_ROOT` 并复用，跳过 SHMEM 构建；CATLASS 也可通过 `CATLASS_ROOT` 指向固定版本源码。准备脚本拒绝覆盖已有构建时，不把 `--rebuild` 当作默认重试步骤。
+
+`SHMEM_ROOT` 只选择构建 SDK。完整 wheel 将其运行库放入 `deep_ep/.libs`，并记录哈希；安装后根加载器校验并使用包内运行库，不从外部 SDK 回退加载。
 
 离线环境需要完整的仓库、子模块及构建依赖；普通源码 ZIP 不能替代 SHMEM 构建所需的 Git 子模块身份。使用用户提供的离线 wheel 目录安装 Python 构建工具：
 
@@ -127,7 +128,7 @@ ATK 和内部精度插件不参与算子编译，不作为构建依赖安装。�
 | CATLASS 锁定版本 | 获取对应提交的头文件源码，再构建安装 wheel；不单独编译 CATLASS |
 | Python 或框架环境 | 给该环境准备构建依赖，重新构建安装 wheel，核对 SDK 配套关系 |
 
-同一终端继续构建时，确认 Python、CANN、`SHMEM_ROOT`、`CATLASS_ROOT`、动态库路径和第 3 节的训练开关仍有效，随后直接执行：
+同一终端继续构建时，确认 Python、CANN、`SHMEM_ROOT`、`CATLASS_ROOT` 和第 3 节的训练开关仍有效，随后直接执行：
 
 ```bash
 python -m build --wheel --no-isolation &&
@@ -142,7 +143,6 @@ python -m pip install --force-reinstall --no-deps dist/*.whl
 source /path/to/cann/set_env.sh
 export SHMEM_ROOT=/path/to/existing/shmem-sdk
 export CATLASS_ROOT=/path/to/existing/catlass
-export LD_LIBRARY_PATH="$SHMEM_ROOT/lib:${LD_LIBRARY_PATH:-}"
 ```
 
 仅修改 MegaMoE 算子代码时，不重新初始化子模块、不重编 SHMEM、不新建 Python 环境。只有依赖缺失或版本发生变化时才处理对应依赖。安装完成后使用新 Python 进程检查扩展；已经运行的 Python 进程仍可能持有旧的原生库。
@@ -155,7 +155,7 @@ export LD_LIBRARY_PATH="$SHMEM_ROOT/lib:${LD_LIBRARY_PATH:-}"
 python -m pip show ascend-deepep
 ```
 
-保持同一 Python 和 CANN/SHMEM 动态库环境，从源码目录外检查安装产物，避免源码遮蔽已安装的扩展：
+保持同一 Python 和匹配 CANN 环境，从源码目录外启动新进程检查安装产物，避免源码遮蔽已安装的扩展。运行时不需要 `SHMEM_ROOT` 或外部 SHMEM 的 `LD_LIBRARY_PATH`；若进程已经加载另一套 SHMEM，完整重启自己的进程，不替换包内运行库或修改哈希来绕过检查：
 
 ```bash
 (
