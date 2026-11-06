@@ -1,16 +1,16 @@
 # MegaMoE BF16 训练源码图解
 
-按项目结构、调用链、三核流水和内存复用逐层阅读。默认场景为 Ascend950、save=bf16、H7168/F3072、关闭 clipping。
+按项目结构、调用链、三核流水和内存复用逐层阅读。默认场景为 Ascend950、save=bf16、H7168/F3072、BF16 路由权重 p、关闭 clipping。
 
-源码快照：[09c1326](https://github.com/lueelu/DeepEP/tree/09c1326fa71dd777a0a44b3a2e47040a0282637a)。
+源码快照：[820bf0d](https://github.com/xixing-321/DeepEP/tree/820bf0d472de51c9c64d6ffd610fcfeaab7df0d4)。
 
 [离线交互页面](index.html) · [完整调用点与源码](CALLPOINTS.md) · [维护方法](MAINTAINING.md)
 
-[在线交互导览](https://lueelu.github.io/DeepEP/)
+[在线交互导览](https://xixing-321.github.io/DeepEP/)
 
 **VS Code 一键定位**：按[扩展安装说明](vscode/README.md)安装一次，运行 **MegaMoE: 打开训练源码导览**。点击节点、阶段或等待查看讲解，点击 **打开源码** 或 **查看对应源码**，再在旁边的编辑器中定位到文件和行号。
 
-[下载 VS Code 导览扩展](https://lueelu.github.io/DeepEP/downloads/megamoe-train-source-guide.vsix)
+[下载 VS Code 导览扩展](https://xixing-321.github.io/DeepEP/downloads/megamoe-train-source-guide.vsix)
 
 本地用浏览器打开 index.html，即可点击节点查看读写、等待和带行号源码。仓库网页可以直接阅读下方图文，通过调用点表跳转源码。
 

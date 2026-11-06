@@ -1,0 +1,957 @@
+{
+  "scope": "Fresh CPU-only A/B/C input audit in the performance runtime; no NPU calculation",
+  "runtime": {
+    "cann": "9.2.0 B237",
+    "torch": "2.10.0+cpu",
+    "torch_npu": "2.10.0.post7",
+    "numpy": "1.26.4"
+  },
+  "producer_binary_sha256": {
+    "torch/lib/libtorch_cpu.so": "f790176ad878f5bdb600f452c6e158c359e1283665490592b4429389e4d53d48",
+    "torch/lib/libtorch_python.so": "99db475942c4617454fa8d35feecc502e65abe987ca0d3346727a47f8fcd3b9a",
+    "numpy/random/_generator.cpython-312-aarch64-linux-gnu.so": "d9335b9d8d9ddc626f79489c204d64ed66f9f69e6564e3222ff58a423ae869f6",
+    "numpy/random/mtrand.cpython-312-aarch64-linux-gnu.so": "d0111cfd58a0213b20ca8a68177f5b239cd217126abc2d6378435b4080dcbe18"
+  },
+  "cases": {
+    "ep4_h3584": {
+      "raw_receipt_sha256": "10761bfcecc2033df42545671471acb5822fca630022f01cc95b62318e33d9bc",
+      "audit": {
+        "cpu_threads": 2,
+        "passed": true,
+        "proof": "All ranks: x/dy/W1/W2/ids bit-identical; p.float() values identical; C keeps FP32 storage",
+        "runner_sha256": "f2ea95c8504b2111ce5b73cae719fb6d1b69546258a10e15cd52f5dff6d82bed",
+        "scope": "Same unified runner.make_inputs and seeded CPU RNG used by all three performance variants; no NPU work",
+        "shape": {
+          "data_profile": "random",
+          "devices": [0, 1, 2, 3],
+          "ep": 4,
+          "expert_per_rank": 4,
+          "ffn_hidden": 2048,
+          "gmm_n": 4096,
+          "hidden": 3584,
+          "id": "ep4_h3584",
+          "label": "flash",
+          "routed_scaling_factor": 1.0,
+          "routing_mode": "balanced",
+          "save_gmm1_output": "bf16",
+          "seed": 20260825,
+          "seq": 4096,
+          "swiglu_limit": 0.0,
+          "topk": 6
+        },
+        "torch": "2.10.0+cpu",
+        "variants": {
+          "A": [
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 128, "sha256": "8875f5640b8fcf39d91a22a438c3f27f70358aecd18c4da60dd968f7d472723c", "shape": [16]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "f7ecf8b878c41cb89fa1e4546fa38a6cf3484baf9b4547b20a13e241c9cd7edb", "shape": [4096, 3584]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "84de96158ab5f92bedb48672a16d246fd4f2800601b041f91e18a13e12207606", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "5fc2bcf9c136a2e44d84c8c7be8399ba3662bdfebc18f90e74fa40369a431351", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.bfloat16", "nbytes": 49152, "sha256": "b804e4fcb59139548cd48eefce1304e617f994efabcf85f133558ce62b3218e8", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 128, "sha256": "8875f5640b8fcf39d91a22a438c3f27f70358aecd18c4da60dd968f7d472723c", "shape": [4, 4]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 117440512, "sha256": "742f0a80952fb56453f7fab23c7ceb7253af5b576bc0973f50dc72b3130f4cb4", "shape": [4, 4096, 3584]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "a7f2c20cff79a90340e8278d6572c8eda1986ab8b3cc0fa97a6f2e56023b3701", "shape": [4, 3584, 2048]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "8ccd38605894dddbf384e5aa66d1acacea70d449392b736aa95987ac1529d576", "shape": [4096, 3584]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 128, "sha256": "8875f5640b8fcf39d91a22a438c3f27f70358aecd18c4da60dd968f7d472723c", "shape": [16]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "3da4745d6ebf9516ae7c48a289575112f9060f88c6793a257d7f859cb5a42ca9", "shape": [4096, 3584]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "84de96158ab5f92bedb48672a16d246fd4f2800601b041f91e18a13e12207606", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "8cbfef87b66dfc84cf16d397e0d06f54aea1cb6f32a23bc13b551c57168a8ea9", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.bfloat16", "nbytes": 49152, "sha256": "848115d49c58eceb67b95c0de9fa03ef22b24ebc248640965ff689533c7fef08", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 128, "sha256": "8875f5640b8fcf39d91a22a438c3f27f70358aecd18c4da60dd968f7d472723c", "shape": [4, 4]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 117440512, "sha256": "f96b2cfcf00828503892cf15d127a5f47f870c46b52d579eaf2c866122883074", "shape": [4, 4096, 3584]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "d7fc4041f5202d04827ce2d0620fde6ba1a8e2bbed2ba7e9545ff6c5d21234b1", "shape": [4, 3584, 2048]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "985cc947038e49c193b1894331084a709a81d020ee304f39f1cb5a7ca2369556", "shape": [4096, 3584]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 128, "sha256": "8875f5640b8fcf39d91a22a438c3f27f70358aecd18c4da60dd968f7d472723c", "shape": [16]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "a64c7c9f34f11777aee19f78c01897364cd1232928be926cd4e0cef3f12d2b95", "shape": [4096, 3584]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "84de96158ab5f92bedb48672a16d246fd4f2800601b041f91e18a13e12207606", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "8d6aca1839eb4a6e5ec16af30e57ab608e9d6cbddce04129506021fb5525eef7", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.bfloat16", "nbytes": 49152, "sha256": "28ae152c1a140367bce8a4dcfcc1af1a4d38f38b06af0d5cbbfae40079b8ace1", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 128, "sha256": "8875f5640b8fcf39d91a22a438c3f27f70358aecd18c4da60dd968f7d472723c", "shape": [4, 4]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 117440512, "sha256": "f397a9501e9f1050b9f93a2877fdc15169af8a9d0e112aabeba2d85ea95559f9", "shape": [4, 4096, 3584]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "3d02df402ba5429900b0f1b521c8c90a49e9be232dfc0a1e3bc17d74cc230189", "shape": [4, 3584, 2048]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "0afcae7ef5ea1ac5a8cdc893122647a63c39b94864fa8502b4f0ece19ebb6cc8", "shape": [4096, 3584]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 128, "sha256": "8875f5640b8fcf39d91a22a438c3f27f70358aecd18c4da60dd968f7d472723c", "shape": [16]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "8f55ce2c2f43c1bbca2e72d9a5b74d730e8e4098986d7b3f1a53d08a4dec43cb", "shape": [4096, 3584]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "84de96158ab5f92bedb48672a16d246fd4f2800601b041f91e18a13e12207606", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "4dbf0f7936e266b5c32ffe316c40dc7a729b06d4d7b6fed8c3178d0f9d656849", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.bfloat16", "nbytes": 49152, "sha256": "68b972453662f1255ffcba15f617bc769adb3af5c622ecf0657a95f19f8e88ee", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 128, "sha256": "8875f5640b8fcf39d91a22a438c3f27f70358aecd18c4da60dd968f7d472723c", "shape": [4, 4]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 117440512, "sha256": "fb760d51a9b49d9ea7c4aa81d94c6ad38c2e2578bdef84861db34de5dbc568f4", "shape": [4, 4096, 3584]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "4682131e10c8ee1f529cdf8d809d8dd14f91d7e6c19e79687d751cce2c62853d", "shape": [4, 3584, 2048]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "87d8b5facfcc8acb0540a1490289ddac83944a8c9e0d2bf94512b0e706b06b8b", "shape": [4096, 3584]}
+            }
+          ],
+          "B": [
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 128, "sha256": "8875f5640b8fcf39d91a22a438c3f27f70358aecd18c4da60dd968f7d472723c", "shape": [16]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "f7ecf8b878c41cb89fa1e4546fa38a6cf3484baf9b4547b20a13e241c9cd7edb", "shape": [4096, 3584]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "84de96158ab5f92bedb48672a16d246fd4f2800601b041f91e18a13e12207606", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "5fc2bcf9c136a2e44d84c8c7be8399ba3662bdfebc18f90e74fa40369a431351", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.bfloat16", "nbytes": 49152, "sha256": "b804e4fcb59139548cd48eefce1304e617f994efabcf85f133558ce62b3218e8", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 128, "sha256": "8875f5640b8fcf39d91a22a438c3f27f70358aecd18c4da60dd968f7d472723c", "shape": [4, 4]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 117440512, "sha256": "742f0a80952fb56453f7fab23c7ceb7253af5b576bc0973f50dc72b3130f4cb4", "shape": [4, 4096, 3584]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "a7f2c20cff79a90340e8278d6572c8eda1986ab8b3cc0fa97a6f2e56023b3701", "shape": [4, 3584, 2048]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "8ccd38605894dddbf384e5aa66d1acacea70d449392b736aa95987ac1529d576", "shape": [4096, 3584]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 128, "sha256": "8875f5640b8fcf39d91a22a438c3f27f70358aecd18c4da60dd968f7d472723c", "shape": [16]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "3da4745d6ebf9516ae7c48a289575112f9060f88c6793a257d7f859cb5a42ca9", "shape": [4096, 3584]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "84de96158ab5f92bedb48672a16d246fd4f2800601b041f91e18a13e12207606", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "8cbfef87b66dfc84cf16d397e0d06f54aea1cb6f32a23bc13b551c57168a8ea9", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.bfloat16", "nbytes": 49152, "sha256": "848115d49c58eceb67b95c0de9fa03ef22b24ebc248640965ff689533c7fef08", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 128, "sha256": "8875f5640b8fcf39d91a22a438c3f27f70358aecd18c4da60dd968f7d472723c", "shape": [4, 4]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 117440512, "sha256": "f96b2cfcf00828503892cf15d127a5f47f870c46b52d579eaf2c866122883074", "shape": [4, 4096, 3584]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "d7fc4041f5202d04827ce2d0620fde6ba1a8e2bbed2ba7e9545ff6c5d21234b1", "shape": [4, 3584, 2048]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "985cc947038e49c193b1894331084a709a81d020ee304f39f1cb5a7ca2369556", "shape": [4096, 3584]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 128, "sha256": "8875f5640b8fcf39d91a22a438c3f27f70358aecd18c4da60dd968f7d472723c", "shape": [16]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "a64c7c9f34f11777aee19f78c01897364cd1232928be926cd4e0cef3f12d2b95", "shape": [4096, 3584]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "84de96158ab5f92bedb48672a16d246fd4f2800601b041f91e18a13e12207606", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "8d6aca1839eb4a6e5ec16af30e57ab608e9d6cbddce04129506021fb5525eef7", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.bfloat16", "nbytes": 49152, "sha256": "28ae152c1a140367bce8a4dcfcc1af1a4d38f38b06af0d5cbbfae40079b8ace1", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 128, "sha256": "8875f5640b8fcf39d91a22a438c3f27f70358aecd18c4da60dd968f7d472723c", "shape": [4, 4]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 117440512, "sha256": "f397a9501e9f1050b9f93a2877fdc15169af8a9d0e112aabeba2d85ea95559f9", "shape": [4, 4096, 3584]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "3d02df402ba5429900b0f1b521c8c90a49e9be232dfc0a1e3bc17d74cc230189", "shape": [4, 3584, 2048]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "0afcae7ef5ea1ac5a8cdc893122647a63c39b94864fa8502b4f0ece19ebb6cc8", "shape": [4096, 3584]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 128, "sha256": "8875f5640b8fcf39d91a22a438c3f27f70358aecd18c4da60dd968f7d472723c", "shape": [16]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "8f55ce2c2f43c1bbca2e72d9a5b74d730e8e4098986d7b3f1a53d08a4dec43cb", "shape": [4096, 3584]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "84de96158ab5f92bedb48672a16d246fd4f2800601b041f91e18a13e12207606", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "4dbf0f7936e266b5c32ffe316c40dc7a729b06d4d7b6fed8c3178d0f9d656849", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.bfloat16", "nbytes": 49152, "sha256": "68b972453662f1255ffcba15f617bc769adb3af5c622ecf0657a95f19f8e88ee", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 128, "sha256": "8875f5640b8fcf39d91a22a438c3f27f70358aecd18c4da60dd968f7d472723c", "shape": [4, 4]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 117440512, "sha256": "fb760d51a9b49d9ea7c4aa81d94c6ad38c2e2578bdef84861db34de5dbc568f4", "shape": [4, 4096, 3584]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "4682131e10c8ee1f529cdf8d809d8dd14f91d7e6c19e79687d751cce2c62853d", "shape": [4, 3584, 2048]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "87d8b5facfcc8acb0540a1490289ddac83944a8c9e0d2bf94512b0e706b06b8b", "shape": [4096, 3584]}
+            }
+          ],
+          "C": [
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 128, "sha256": "8875f5640b8fcf39d91a22a438c3f27f70358aecd18c4da60dd968f7d472723c", "shape": [16]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "f7ecf8b878c41cb89fa1e4546fa38a6cf3484baf9b4547b20a13e241c9cd7edb", "shape": [4096, 3584]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "84de96158ab5f92bedb48672a16d246fd4f2800601b041f91e18a13e12207606", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "5fc2bcf9c136a2e44d84c8c7be8399ba3662bdfebc18f90e74fa40369a431351", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "5fc2bcf9c136a2e44d84c8c7be8399ba3662bdfebc18f90e74fa40369a431351", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 128, "sha256": "8875f5640b8fcf39d91a22a438c3f27f70358aecd18c4da60dd968f7d472723c", "shape": [4, 4]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 117440512, "sha256": "742f0a80952fb56453f7fab23c7ceb7253af5b576bc0973f50dc72b3130f4cb4", "shape": [4, 4096, 3584]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "a7f2c20cff79a90340e8278d6572c8eda1986ab8b3cc0fa97a6f2e56023b3701", "shape": [4, 3584, 2048]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "8ccd38605894dddbf384e5aa66d1acacea70d449392b736aa95987ac1529d576", "shape": [4096, 3584]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 128, "sha256": "8875f5640b8fcf39d91a22a438c3f27f70358aecd18c4da60dd968f7d472723c", "shape": [16]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "3da4745d6ebf9516ae7c48a289575112f9060f88c6793a257d7f859cb5a42ca9", "shape": [4096, 3584]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "84de96158ab5f92bedb48672a16d246fd4f2800601b041f91e18a13e12207606", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "8cbfef87b66dfc84cf16d397e0d06f54aea1cb6f32a23bc13b551c57168a8ea9", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "8cbfef87b66dfc84cf16d397e0d06f54aea1cb6f32a23bc13b551c57168a8ea9", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 128, "sha256": "8875f5640b8fcf39d91a22a438c3f27f70358aecd18c4da60dd968f7d472723c", "shape": [4, 4]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 117440512, "sha256": "f96b2cfcf00828503892cf15d127a5f47f870c46b52d579eaf2c866122883074", "shape": [4, 4096, 3584]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "d7fc4041f5202d04827ce2d0620fde6ba1a8e2bbed2ba7e9545ff6c5d21234b1", "shape": [4, 3584, 2048]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "985cc947038e49c193b1894331084a709a81d020ee304f39f1cb5a7ca2369556", "shape": [4096, 3584]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 128, "sha256": "8875f5640b8fcf39d91a22a438c3f27f70358aecd18c4da60dd968f7d472723c", "shape": [16]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "a64c7c9f34f11777aee19f78c01897364cd1232928be926cd4e0cef3f12d2b95", "shape": [4096, 3584]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "84de96158ab5f92bedb48672a16d246fd4f2800601b041f91e18a13e12207606", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "8d6aca1839eb4a6e5ec16af30e57ab608e9d6cbddce04129506021fb5525eef7", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "8d6aca1839eb4a6e5ec16af30e57ab608e9d6cbddce04129506021fb5525eef7", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 128, "sha256": "8875f5640b8fcf39d91a22a438c3f27f70358aecd18c4da60dd968f7d472723c", "shape": [4, 4]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 117440512, "sha256": "f397a9501e9f1050b9f93a2877fdc15169af8a9d0e112aabeba2d85ea95559f9", "shape": [4, 4096, 3584]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "3d02df402ba5429900b0f1b521c8c90a49e9be232dfc0a1e3bc17d74cc230189", "shape": [4, 3584, 2048]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "0afcae7ef5ea1ac5a8cdc893122647a63c39b94864fa8502b4f0ece19ebb6cc8", "shape": [4096, 3584]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 128, "sha256": "8875f5640b8fcf39d91a22a438c3f27f70358aecd18c4da60dd968f7d472723c", "shape": [16]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "8f55ce2c2f43c1bbca2e72d9a5b74d730e8e4098986d7b3f1a53d08a4dec43cb", "shape": [4096, 3584]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "84de96158ab5f92bedb48672a16d246fd4f2800601b041f91e18a13e12207606", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "4dbf0f7936e266b5c32ffe316c40dc7a729b06d4d7b6fed8c3178d0f9d656849", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "4dbf0f7936e266b5c32ffe316c40dc7a729b06d4d7b6fed8c3178d0f9d656849", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 128, "sha256": "8875f5640b8fcf39d91a22a438c3f27f70358aecd18c4da60dd968f7d472723c", "shape": [4, 4]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 117440512, "sha256": "fb760d51a9b49d9ea7c4aa81d94c6ad38c2e2578bdef84861db34de5dbc568f4", "shape": [4, 4096, 3584]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "4682131e10c8ee1f529cdf8d809d8dd14f91d7e6c19e79687d751cce2c62853d", "shape": [4, 3584, 2048]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "87d8b5facfcc8acb0540a1490289ddac83944a8c9e0d2bf94512b0e706b06b8b", "shape": [4096, 3584]}
+            }
+          ]
+        }
+      }
+    },
+    "ep4_h7168": {
+      "raw_receipt_sha256": "1bd7573afad278a07af3871e625bfc54c77311b40c95e4870c3af84a73d29cbe",
+      "audit": {
+        "cpu_threads": 2,
+        "passed": true,
+        "proof": "All ranks: x/dy/W1/W2/ids bit-identical; p.float() values identical; C keeps FP32 storage",
+        "runner_sha256": "f2ea95c8504b2111ce5b73cae719fb6d1b69546258a10e15cd52f5dff6d82bed",
+        "scope": "Same unified runner.make_inputs and seeded CPU RNG used by all three performance variants; no NPU work",
+        "shape": {
+          "data_profile": "random",
+          "devices": [0, 1, 2, 3],
+          "ep": 4,
+          "expert_per_rank": 4,
+          "ffn_hidden": 3072,
+          "gmm_n": 6144,
+          "hidden": 7168,
+          "id": "ep4_h7168",
+          "label": "pro",
+          "routed_scaling_factor": 1.0,
+          "routing_mode": "balanced",
+          "save_gmm1_output": "bf16",
+          "seed": 20260825,
+          "seq": 4096,
+          "swiglu_limit": 10.0,
+          "topk": 6
+        },
+        "torch": "2.10.0+cpu",
+        "variants": {
+          "A": [
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 128, "sha256": "8875f5640b8fcf39d91a22a438c3f27f70358aecd18c4da60dd968f7d472723c", "shape": [16]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "5e082a1e27e14b7ed4e95ad6785428ac1e1f1df9a9b9f40b14bcf4a48aaa1518", "shape": [4096, 7168]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "84de96158ab5f92bedb48672a16d246fd4f2800601b041f91e18a13e12207606", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "5fc2bcf9c136a2e44d84c8c7be8399ba3662bdfebc18f90e74fa40369a431351", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.bfloat16", "nbytes": 49152, "sha256": "b804e4fcb59139548cd48eefce1304e617f994efabcf85f133558ce62b3218e8", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 128, "sha256": "8875f5640b8fcf39d91a22a438c3f27f70358aecd18c4da60dd968f7d472723c", "shape": [4, 4]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 352321536, "sha256": "946ea5e6e7989a62e05b4ad65401a1983e8a3771c3a468c03caccb028a0ebbd5", "shape": [4, 6144, 7168]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 176160768, "sha256": "29c91cc586fd74dd9e6f92058a31522428d49108d304d91d64278dfbbf87de0d", "shape": [4, 7168, 3072]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "1af4edd98186ee78164e80a0240d68435d402e50232da28aace6ace80832ec09", "shape": [4096, 7168]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 128, "sha256": "8875f5640b8fcf39d91a22a438c3f27f70358aecd18c4da60dd968f7d472723c", "shape": [16]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "83b17857c851e49ee10381116648970ff515ce110bbad3471b7334b0583fb130", "shape": [4096, 7168]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "84de96158ab5f92bedb48672a16d246fd4f2800601b041f91e18a13e12207606", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "8cbfef87b66dfc84cf16d397e0d06f54aea1cb6f32a23bc13b551c57168a8ea9", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.bfloat16", "nbytes": 49152, "sha256": "848115d49c58eceb67b95c0de9fa03ef22b24ebc248640965ff689533c7fef08", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 128, "sha256": "8875f5640b8fcf39d91a22a438c3f27f70358aecd18c4da60dd968f7d472723c", "shape": [4, 4]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 352321536, "sha256": "aaeb925032764e2bd91434021d350205b25fd4eeb448c7b4e363683720a10712", "shape": [4, 6144, 7168]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 176160768, "sha256": "160838f59fd58d718ff11abd2f5afe68721c4543c98f005527bd1bb151719bc2", "shape": [4, 7168, 3072]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "6314ed4334026ceb8777fbc362281777e41df218f9d3acb6b8426ddcd49b80c9", "shape": [4096, 7168]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 128, "sha256": "8875f5640b8fcf39d91a22a438c3f27f70358aecd18c4da60dd968f7d472723c", "shape": [16]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "6ff587c13e205dd4edabc05544390770e75b08f277939681dd1e6d9972794117", "shape": [4096, 7168]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "84de96158ab5f92bedb48672a16d246fd4f2800601b041f91e18a13e12207606", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "8d6aca1839eb4a6e5ec16af30e57ab608e9d6cbddce04129506021fb5525eef7", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.bfloat16", "nbytes": 49152, "sha256": "28ae152c1a140367bce8a4dcfcc1af1a4d38f38b06af0d5cbbfae40079b8ace1", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 128, "sha256": "8875f5640b8fcf39d91a22a438c3f27f70358aecd18c4da60dd968f7d472723c", "shape": [4, 4]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 352321536, "sha256": "60f51fc8cf70e4b2bf37fc083f8335294dd6a509fcfe8911ccce7a49842a0da1", "shape": [4, 6144, 7168]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 176160768, "sha256": "b117ba884912c5ceea48f58cf51cebf59350dca4eaf8351ec2d1b18c3bdf0573", "shape": [4, 7168, 3072]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "21b447e0938d8ceacae0048c9da45fc5fa944e41776697d0a4bedef6a4b417fc", "shape": [4096, 7168]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 128, "sha256": "8875f5640b8fcf39d91a22a438c3f27f70358aecd18c4da60dd968f7d472723c", "shape": [16]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "4fe3bf8a04ffd8374d290f84ab6e114f009d6c781f31edbb82150b6c881b1049", "shape": [4096, 7168]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "84de96158ab5f92bedb48672a16d246fd4f2800601b041f91e18a13e12207606", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "4dbf0f7936e266b5c32ffe316c40dc7a729b06d4d7b6fed8c3178d0f9d656849", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.bfloat16", "nbytes": 49152, "sha256": "68b972453662f1255ffcba15f617bc769adb3af5c622ecf0657a95f19f8e88ee", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 128, "sha256": "8875f5640b8fcf39d91a22a438c3f27f70358aecd18c4da60dd968f7d472723c", "shape": [4, 4]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 352321536, "sha256": "f719a581e56228c2245642814b3e80c4a0b67c2a5fe00cfe1a5a0489e49f1608", "shape": [4, 6144, 7168]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 176160768, "sha256": "e585691ef1028b76dcbcaaf74a11c2d68b3b01c83cbc3bdc5e4f24ab1813db08", "shape": [4, 7168, 3072]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "a26d18a744daa80c7aa01e4877433b9e913e94fa062d45d8219e8f2a58b15828", "shape": [4096, 7168]}
+            }
+          ],
+          "B": [
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 128, "sha256": "8875f5640b8fcf39d91a22a438c3f27f70358aecd18c4da60dd968f7d472723c", "shape": [16]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "5e082a1e27e14b7ed4e95ad6785428ac1e1f1df9a9b9f40b14bcf4a48aaa1518", "shape": [4096, 7168]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "84de96158ab5f92bedb48672a16d246fd4f2800601b041f91e18a13e12207606", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "5fc2bcf9c136a2e44d84c8c7be8399ba3662bdfebc18f90e74fa40369a431351", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.bfloat16", "nbytes": 49152, "sha256": "b804e4fcb59139548cd48eefce1304e617f994efabcf85f133558ce62b3218e8", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 128, "sha256": "8875f5640b8fcf39d91a22a438c3f27f70358aecd18c4da60dd968f7d472723c", "shape": [4, 4]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 352321536, "sha256": "946ea5e6e7989a62e05b4ad65401a1983e8a3771c3a468c03caccb028a0ebbd5", "shape": [4, 6144, 7168]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 176160768, "sha256": "29c91cc586fd74dd9e6f92058a31522428d49108d304d91d64278dfbbf87de0d", "shape": [4, 7168, 3072]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "1af4edd98186ee78164e80a0240d68435d402e50232da28aace6ace80832ec09", "shape": [4096, 7168]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 128, "sha256": "8875f5640b8fcf39d91a22a438c3f27f70358aecd18c4da60dd968f7d472723c", "shape": [16]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "83b17857c851e49ee10381116648970ff515ce110bbad3471b7334b0583fb130", "shape": [4096, 7168]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "84de96158ab5f92bedb48672a16d246fd4f2800601b041f91e18a13e12207606", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "8cbfef87b66dfc84cf16d397e0d06f54aea1cb6f32a23bc13b551c57168a8ea9", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.bfloat16", "nbytes": 49152, "sha256": "848115d49c58eceb67b95c0de9fa03ef22b24ebc248640965ff689533c7fef08", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 128, "sha256": "8875f5640b8fcf39d91a22a438c3f27f70358aecd18c4da60dd968f7d472723c", "shape": [4, 4]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 352321536, "sha256": "aaeb925032764e2bd91434021d350205b25fd4eeb448c7b4e363683720a10712", "shape": [4, 6144, 7168]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 176160768, "sha256": "160838f59fd58d718ff11abd2f5afe68721c4543c98f005527bd1bb151719bc2", "shape": [4, 7168, 3072]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "6314ed4334026ceb8777fbc362281777e41df218f9d3acb6b8426ddcd49b80c9", "shape": [4096, 7168]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 128, "sha256": "8875f5640b8fcf39d91a22a438c3f27f70358aecd18c4da60dd968f7d472723c", "shape": [16]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "6ff587c13e205dd4edabc05544390770e75b08f277939681dd1e6d9972794117", "shape": [4096, 7168]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "84de96158ab5f92bedb48672a16d246fd4f2800601b041f91e18a13e12207606", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "8d6aca1839eb4a6e5ec16af30e57ab608e9d6cbddce04129506021fb5525eef7", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.bfloat16", "nbytes": 49152, "sha256": "28ae152c1a140367bce8a4dcfcc1af1a4d38f38b06af0d5cbbfae40079b8ace1", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 128, "sha256": "8875f5640b8fcf39d91a22a438c3f27f70358aecd18c4da60dd968f7d472723c", "shape": [4, 4]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 352321536, "sha256": "60f51fc8cf70e4b2bf37fc083f8335294dd6a509fcfe8911ccce7a49842a0da1", "shape": [4, 6144, 7168]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 176160768, "sha256": "b117ba884912c5ceea48f58cf51cebf59350dca4eaf8351ec2d1b18c3bdf0573", "shape": [4, 7168, 3072]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "21b447e0938d8ceacae0048c9da45fc5fa944e41776697d0a4bedef6a4b417fc", "shape": [4096, 7168]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 128, "sha256": "8875f5640b8fcf39d91a22a438c3f27f70358aecd18c4da60dd968f7d472723c", "shape": [16]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "4fe3bf8a04ffd8374d290f84ab6e114f009d6c781f31edbb82150b6c881b1049", "shape": [4096, 7168]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "84de96158ab5f92bedb48672a16d246fd4f2800601b041f91e18a13e12207606", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "4dbf0f7936e266b5c32ffe316c40dc7a729b06d4d7b6fed8c3178d0f9d656849", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.bfloat16", "nbytes": 49152, "sha256": "68b972453662f1255ffcba15f617bc769adb3af5c622ecf0657a95f19f8e88ee", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 128, "sha256": "8875f5640b8fcf39d91a22a438c3f27f70358aecd18c4da60dd968f7d472723c", "shape": [4, 4]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 352321536, "sha256": "f719a581e56228c2245642814b3e80c4a0b67c2a5fe00cfe1a5a0489e49f1608", "shape": [4, 6144, 7168]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 176160768, "sha256": "e585691ef1028b76dcbcaaf74a11c2d68b3b01c83cbc3bdc5e4f24ab1813db08", "shape": [4, 7168, 3072]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "a26d18a744daa80c7aa01e4877433b9e913e94fa062d45d8219e8f2a58b15828", "shape": [4096, 7168]}
+            }
+          ],
+          "C": [
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 128, "sha256": "8875f5640b8fcf39d91a22a438c3f27f70358aecd18c4da60dd968f7d472723c", "shape": [16]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "5e082a1e27e14b7ed4e95ad6785428ac1e1f1df9a9b9f40b14bcf4a48aaa1518", "shape": [4096, 7168]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "84de96158ab5f92bedb48672a16d246fd4f2800601b041f91e18a13e12207606", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "5fc2bcf9c136a2e44d84c8c7be8399ba3662bdfebc18f90e74fa40369a431351", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "5fc2bcf9c136a2e44d84c8c7be8399ba3662bdfebc18f90e74fa40369a431351", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 128, "sha256": "8875f5640b8fcf39d91a22a438c3f27f70358aecd18c4da60dd968f7d472723c", "shape": [4, 4]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 352321536, "sha256": "946ea5e6e7989a62e05b4ad65401a1983e8a3771c3a468c03caccb028a0ebbd5", "shape": [4, 6144, 7168]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 176160768, "sha256": "29c91cc586fd74dd9e6f92058a31522428d49108d304d91d64278dfbbf87de0d", "shape": [4, 7168, 3072]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "1af4edd98186ee78164e80a0240d68435d402e50232da28aace6ace80832ec09", "shape": [4096, 7168]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 128, "sha256": "8875f5640b8fcf39d91a22a438c3f27f70358aecd18c4da60dd968f7d472723c", "shape": [16]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "83b17857c851e49ee10381116648970ff515ce110bbad3471b7334b0583fb130", "shape": [4096, 7168]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "84de96158ab5f92bedb48672a16d246fd4f2800601b041f91e18a13e12207606", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "8cbfef87b66dfc84cf16d397e0d06f54aea1cb6f32a23bc13b551c57168a8ea9", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "8cbfef87b66dfc84cf16d397e0d06f54aea1cb6f32a23bc13b551c57168a8ea9", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 128, "sha256": "8875f5640b8fcf39d91a22a438c3f27f70358aecd18c4da60dd968f7d472723c", "shape": [4, 4]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 352321536, "sha256": "aaeb925032764e2bd91434021d350205b25fd4eeb448c7b4e363683720a10712", "shape": [4, 6144, 7168]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 176160768, "sha256": "160838f59fd58d718ff11abd2f5afe68721c4543c98f005527bd1bb151719bc2", "shape": [4, 7168, 3072]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "6314ed4334026ceb8777fbc362281777e41df218f9d3acb6b8426ddcd49b80c9", "shape": [4096, 7168]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 128, "sha256": "8875f5640b8fcf39d91a22a438c3f27f70358aecd18c4da60dd968f7d472723c", "shape": [16]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "6ff587c13e205dd4edabc05544390770e75b08f277939681dd1e6d9972794117", "shape": [4096, 7168]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "84de96158ab5f92bedb48672a16d246fd4f2800601b041f91e18a13e12207606", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "8d6aca1839eb4a6e5ec16af30e57ab608e9d6cbddce04129506021fb5525eef7", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "8d6aca1839eb4a6e5ec16af30e57ab608e9d6cbddce04129506021fb5525eef7", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 128, "sha256": "8875f5640b8fcf39d91a22a438c3f27f70358aecd18c4da60dd968f7d472723c", "shape": [4, 4]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 352321536, "sha256": "60f51fc8cf70e4b2bf37fc083f8335294dd6a509fcfe8911ccce7a49842a0da1", "shape": [4, 6144, 7168]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 176160768, "sha256": "b117ba884912c5ceea48f58cf51cebf59350dca4eaf8351ec2d1b18c3bdf0573", "shape": [4, 7168, 3072]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "21b447e0938d8ceacae0048c9da45fc5fa944e41776697d0a4bedef6a4b417fc", "shape": [4096, 7168]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 128, "sha256": "8875f5640b8fcf39d91a22a438c3f27f70358aecd18c4da60dd968f7d472723c", "shape": [16]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "4fe3bf8a04ffd8374d290f84ab6e114f009d6c781f31edbb82150b6c881b1049", "shape": [4096, 7168]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "84de96158ab5f92bedb48672a16d246fd4f2800601b041f91e18a13e12207606", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "4dbf0f7936e266b5c32ffe316c40dc7a729b06d4d7b6fed8c3178d0f9d656849", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "4dbf0f7936e266b5c32ffe316c40dc7a729b06d4d7b6fed8c3178d0f9d656849", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 128, "sha256": "8875f5640b8fcf39d91a22a438c3f27f70358aecd18c4da60dd968f7d472723c", "shape": [4, 4]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 352321536, "sha256": "f719a581e56228c2245642814b3e80c4a0b67c2a5fe00cfe1a5a0489e49f1608", "shape": [4, 6144, 7168]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 176160768, "sha256": "e585691ef1028b76dcbcaaf74a11c2d68b3b01c83cbc3bdc5e4f24ab1813db08", "shape": [4, 7168, 3072]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "a26d18a744daa80c7aa01e4877433b9e913e94fa062d45d8219e8f2a58b15828", "shape": [4096, 7168]}
+            }
+          ]
+        }
+      }
+    },
+    "ep8_h3584": {
+      "raw_receipt_sha256": "e1f876e16c914adeef2b074b2580507898815d4a1cc4c34761620d9adfea1e41",
+      "audit": {
+        "cpu_threads": 2,
+        "passed": true,
+        "proof": "All ranks: x/dy/W1/W2/ids bit-identical; p.float() values identical; C keeps FP32 storage",
+        "runner_sha256": "f2ea95c8504b2111ce5b73cae719fb6d1b69546258a10e15cd52f5dff6d82bed",
+        "scope": "Same unified runner.make_inputs and seeded CPU RNG used by all three performance variants; no NPU work",
+        "shape": {
+          "data_profile": "random",
+          "devices": [0, 1, 2, 3, 4, 5, 6, 7],
+          "ep": 8,
+          "expert_per_rank": 4,
+          "ffn_hidden": 2048,
+          "gmm_n": 4096,
+          "hidden": 3584,
+          "id": "ep8_h3584",
+          "label": "flash",
+          "routed_scaling_factor": 1.0,
+          "routing_mode": "balanced",
+          "save_gmm1_output": "bf16",
+          "seed": 20260825,
+          "seq": 4096,
+          "swiglu_limit": 0.0,
+          "topk": 6
+        },
+        "torch": "2.10.0+cpu",
+        "variants": {
+          "A": [
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 256, "sha256": "f2c8223bac4dd38e48a4e77202982ad817cdc1c075ecc6dbcf5db2571aa68f01", "shape": [32]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "f7ecf8b878c41cb89fa1e4546fa38a6cf3484baf9b4547b20a13e241c9cd7edb", "shape": [4096, 3584]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "56bb72785db6360bd928a3c2c79b1690d8ee26b2e051186f4263bab28ff44892", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "5fc2bcf9c136a2e44d84c8c7be8399ba3662bdfebc18f90e74fa40369a431351", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.bfloat16", "nbytes": 49152, "sha256": "b804e4fcb59139548cd48eefce1304e617f994efabcf85f133558ce62b3218e8", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 512, "sha256": "446e62094a6eeb8b90a65ee6ff198456431a2a70944fbedb004cf87680c164c2", "shape": [8, 8]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 117440512, "sha256": "742f0a80952fb56453f7fab23c7ceb7253af5b576bc0973f50dc72b3130f4cb4", "shape": [4, 4096, 3584]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "a7f2c20cff79a90340e8278d6572c8eda1986ab8b3cc0fa97a6f2e56023b3701", "shape": [4, 3584, 2048]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "8ccd38605894dddbf384e5aa66d1acacea70d449392b736aa95987ac1529d576", "shape": [4096, 3584]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 256, "sha256": "f2c8223bac4dd38e48a4e77202982ad817cdc1c075ecc6dbcf5db2571aa68f01", "shape": [32]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "3da4745d6ebf9516ae7c48a289575112f9060f88c6793a257d7f859cb5a42ca9", "shape": [4096, 3584]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "56bb72785db6360bd928a3c2c79b1690d8ee26b2e051186f4263bab28ff44892", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "8cbfef87b66dfc84cf16d397e0d06f54aea1cb6f32a23bc13b551c57168a8ea9", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.bfloat16", "nbytes": 49152, "sha256": "848115d49c58eceb67b95c0de9fa03ef22b24ebc248640965ff689533c7fef08", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 512, "sha256": "446e62094a6eeb8b90a65ee6ff198456431a2a70944fbedb004cf87680c164c2", "shape": [8, 8]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 117440512, "sha256": "f96b2cfcf00828503892cf15d127a5f47f870c46b52d579eaf2c866122883074", "shape": [4, 4096, 3584]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "d7fc4041f5202d04827ce2d0620fde6ba1a8e2bbed2ba7e9545ff6c5d21234b1", "shape": [4, 3584, 2048]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "985cc947038e49c193b1894331084a709a81d020ee304f39f1cb5a7ca2369556", "shape": [4096, 3584]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 256, "sha256": "f2c8223bac4dd38e48a4e77202982ad817cdc1c075ecc6dbcf5db2571aa68f01", "shape": [32]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "a64c7c9f34f11777aee19f78c01897364cd1232928be926cd4e0cef3f12d2b95", "shape": [4096, 3584]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "56bb72785db6360bd928a3c2c79b1690d8ee26b2e051186f4263bab28ff44892", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "8d6aca1839eb4a6e5ec16af30e57ab608e9d6cbddce04129506021fb5525eef7", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.bfloat16", "nbytes": 49152, "sha256": "28ae152c1a140367bce8a4dcfcc1af1a4d38f38b06af0d5cbbfae40079b8ace1", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 512, "sha256": "446e62094a6eeb8b90a65ee6ff198456431a2a70944fbedb004cf87680c164c2", "shape": [8, 8]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 117440512, "sha256": "f397a9501e9f1050b9f93a2877fdc15169af8a9d0e112aabeba2d85ea95559f9", "shape": [4, 4096, 3584]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "3d02df402ba5429900b0f1b521c8c90a49e9be232dfc0a1e3bc17d74cc230189", "shape": [4, 3584, 2048]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "0afcae7ef5ea1ac5a8cdc893122647a63c39b94864fa8502b4f0ece19ebb6cc8", "shape": [4096, 3584]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 256, "sha256": "f2c8223bac4dd38e48a4e77202982ad817cdc1c075ecc6dbcf5db2571aa68f01", "shape": [32]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "8f55ce2c2f43c1bbca2e72d9a5b74d730e8e4098986d7b3f1a53d08a4dec43cb", "shape": [4096, 3584]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "56bb72785db6360bd928a3c2c79b1690d8ee26b2e051186f4263bab28ff44892", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "4dbf0f7936e266b5c32ffe316c40dc7a729b06d4d7b6fed8c3178d0f9d656849", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.bfloat16", "nbytes": 49152, "sha256": "68b972453662f1255ffcba15f617bc769adb3af5c622ecf0657a95f19f8e88ee", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 512, "sha256": "446e62094a6eeb8b90a65ee6ff198456431a2a70944fbedb004cf87680c164c2", "shape": [8, 8]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 117440512, "sha256": "fb760d51a9b49d9ea7c4aa81d94c6ad38c2e2578bdef84861db34de5dbc568f4", "shape": [4, 4096, 3584]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "4682131e10c8ee1f529cdf8d809d8dd14f91d7e6c19e79687d751cce2c62853d", "shape": [4, 3584, 2048]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "87d8b5facfcc8acb0540a1490289ddac83944a8c9e0d2bf94512b0e706b06b8b", "shape": [4096, 3584]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 256, "sha256": "f2c8223bac4dd38e48a4e77202982ad817cdc1c075ecc6dbcf5db2571aa68f01", "shape": [32]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "fdaada29edf19c19a3bc21623238ad06e066019a9d3c463ecc0120778ab40d5e", "shape": [4096, 3584]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "56bb72785db6360bd928a3c2c79b1690d8ee26b2e051186f4263bab28ff44892", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "93bd82d58e4b88c4b5674469a6b2078ac5824ea0522a9baaaee0e10ad446a5ee", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.bfloat16", "nbytes": 49152, "sha256": "b8875e7caf46fa81aaa9425cf676fc1f2c0be1655173c5f0361eec71107c2bca", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 512, "sha256": "446e62094a6eeb8b90a65ee6ff198456431a2a70944fbedb004cf87680c164c2", "shape": [8, 8]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 117440512, "sha256": "8edefeb04c0b6ce20739c99e1bb39013d472fc62c490c80005f46a8422a51d41", "shape": [4, 4096, 3584]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "bfe9a1fad58896d3a535855d55a1b9abfb5c78f6a360bab40b1ef7ab04b6b61c", "shape": [4, 3584, 2048]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "71e075748f9f1bba10cba29fbbbfcf46627d8bf4f3fea6c32379a947bb5fc642", "shape": [4096, 3584]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 256, "sha256": "f2c8223bac4dd38e48a4e77202982ad817cdc1c075ecc6dbcf5db2571aa68f01", "shape": [32]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "5b24db3cc8bb804833d77a9238812a54ab7bee207c99ab84ddb1111042b9f1e1", "shape": [4096, 3584]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "56bb72785db6360bd928a3c2c79b1690d8ee26b2e051186f4263bab28ff44892", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "2a390e8f0ef31c11f378234dc3a1b46c395a9793ed5a4ca91512031bb38a46e1", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.bfloat16", "nbytes": 49152, "sha256": "2d51858f9f22cd8205f4aace7dc8a3c98a2b47f41f0977d005f1876513fd3690", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 512, "sha256": "446e62094a6eeb8b90a65ee6ff198456431a2a70944fbedb004cf87680c164c2", "shape": [8, 8]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 117440512, "sha256": "a9de6eee5479436de90d8df3a5678868c9603582cc4aa65da7c69e9fd103b113", "shape": [4, 4096, 3584]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "accf27265912b63611b900e648ef14e5b7450bc98cd7ebf300def6f2b3e55e3f", "shape": [4, 3584, 2048]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "1101a1ffb7658d3a55ecfb9f4b2bcb4f1e3d4a504e9efbef41b0032c75732e7a", "shape": [4096, 3584]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 256, "sha256": "f2c8223bac4dd38e48a4e77202982ad817cdc1c075ecc6dbcf5db2571aa68f01", "shape": [32]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "7f02d67dd7b39a32f50f4898356caccf0ffc436cb87a7bfa22dbb4abf4d7b2ab", "shape": [4096, 3584]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "56bb72785db6360bd928a3c2c79b1690d8ee26b2e051186f4263bab28ff44892", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "91cd10ed60501f1069bd77aa2bd906699da4412b5a8122a7dbfa7ab31437da9e", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.bfloat16", "nbytes": 49152, "sha256": "6647faa55fb2d3878ea98b008b4cdefca3022688c03af53ec9042ddd05f5657c", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 512, "sha256": "446e62094a6eeb8b90a65ee6ff198456431a2a70944fbedb004cf87680c164c2", "shape": [8, 8]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 117440512, "sha256": "09d67ba19f62c17b62ae37b129945f83d184f3954dce32e5c9c843ae09a8fb14", "shape": [4, 4096, 3584]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "21987add5dc9c8191713c665f8ab5885e3f60c52a25260353df9156e8621e3a5", "shape": [4, 3584, 2048]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "c0256ef9378151f0e7bae433caf4690ce0be3f6f440cbb6f2d443914e41b3201", "shape": [4096, 3584]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 256, "sha256": "f2c8223bac4dd38e48a4e77202982ad817cdc1c075ecc6dbcf5db2571aa68f01", "shape": [32]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "18ca7e130783f794526392581eef6ff7b701d8974e255417119a4e8eda913e34", "shape": [4096, 3584]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "56bb72785db6360bd928a3c2c79b1690d8ee26b2e051186f4263bab28ff44892", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "5a83bc5c3946b076643e787aa748fc77203be0ba9e793f90e165147207155970", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.bfloat16", "nbytes": 49152, "sha256": "0baf223b4b6d371f42996bcf2aa399a7b5261011f98120bae9e3bb8218aad367", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 512, "sha256": "446e62094a6eeb8b90a65ee6ff198456431a2a70944fbedb004cf87680c164c2", "shape": [8, 8]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 117440512, "sha256": "ac629dc175316dfbb3e2fbb5ef21f54d3360183706c2dbff738116f964d85df5", "shape": [4, 4096, 3584]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "88266db33eafdeae5fae3fde082fe482f75b4ecba3e696a8e5388102940aa712", "shape": [4, 3584, 2048]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "5eb758b78b5620d115f88b643a6d642fc10a933556e8d8c85641abac6a728983", "shape": [4096, 3584]}
+            }
+          ],
+          "B": [
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 256, "sha256": "f2c8223bac4dd38e48a4e77202982ad817cdc1c075ecc6dbcf5db2571aa68f01", "shape": [32]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "f7ecf8b878c41cb89fa1e4546fa38a6cf3484baf9b4547b20a13e241c9cd7edb", "shape": [4096, 3584]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "56bb72785db6360bd928a3c2c79b1690d8ee26b2e051186f4263bab28ff44892", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "5fc2bcf9c136a2e44d84c8c7be8399ba3662bdfebc18f90e74fa40369a431351", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.bfloat16", "nbytes": 49152, "sha256": "b804e4fcb59139548cd48eefce1304e617f994efabcf85f133558ce62b3218e8", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 512, "sha256": "446e62094a6eeb8b90a65ee6ff198456431a2a70944fbedb004cf87680c164c2", "shape": [8, 8]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 117440512, "sha256": "742f0a80952fb56453f7fab23c7ceb7253af5b576bc0973f50dc72b3130f4cb4", "shape": [4, 4096, 3584]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "a7f2c20cff79a90340e8278d6572c8eda1986ab8b3cc0fa97a6f2e56023b3701", "shape": [4, 3584, 2048]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "8ccd38605894dddbf384e5aa66d1acacea70d449392b736aa95987ac1529d576", "shape": [4096, 3584]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 256, "sha256": "f2c8223bac4dd38e48a4e77202982ad817cdc1c075ecc6dbcf5db2571aa68f01", "shape": [32]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "3da4745d6ebf9516ae7c48a289575112f9060f88c6793a257d7f859cb5a42ca9", "shape": [4096, 3584]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "56bb72785db6360bd928a3c2c79b1690d8ee26b2e051186f4263bab28ff44892", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "8cbfef87b66dfc84cf16d397e0d06f54aea1cb6f32a23bc13b551c57168a8ea9", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.bfloat16", "nbytes": 49152, "sha256": "848115d49c58eceb67b95c0de9fa03ef22b24ebc248640965ff689533c7fef08", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 512, "sha256": "446e62094a6eeb8b90a65ee6ff198456431a2a70944fbedb004cf87680c164c2", "shape": [8, 8]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 117440512, "sha256": "f96b2cfcf00828503892cf15d127a5f47f870c46b52d579eaf2c866122883074", "shape": [4, 4096, 3584]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "d7fc4041f5202d04827ce2d0620fde6ba1a8e2bbed2ba7e9545ff6c5d21234b1", "shape": [4, 3584, 2048]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "985cc947038e49c193b1894331084a709a81d020ee304f39f1cb5a7ca2369556", "shape": [4096, 3584]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 256, "sha256": "f2c8223bac4dd38e48a4e77202982ad817cdc1c075ecc6dbcf5db2571aa68f01", "shape": [32]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "a64c7c9f34f11777aee19f78c01897364cd1232928be926cd4e0cef3f12d2b95", "shape": [4096, 3584]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "56bb72785db6360bd928a3c2c79b1690d8ee26b2e051186f4263bab28ff44892", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "8d6aca1839eb4a6e5ec16af30e57ab608e9d6cbddce04129506021fb5525eef7", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.bfloat16", "nbytes": 49152, "sha256": "28ae152c1a140367bce8a4dcfcc1af1a4d38f38b06af0d5cbbfae40079b8ace1", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 512, "sha256": "446e62094a6eeb8b90a65ee6ff198456431a2a70944fbedb004cf87680c164c2", "shape": [8, 8]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 117440512, "sha256": "f397a9501e9f1050b9f93a2877fdc15169af8a9d0e112aabeba2d85ea95559f9", "shape": [4, 4096, 3584]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "3d02df402ba5429900b0f1b521c8c90a49e9be232dfc0a1e3bc17d74cc230189", "shape": [4, 3584, 2048]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "0afcae7ef5ea1ac5a8cdc893122647a63c39b94864fa8502b4f0ece19ebb6cc8", "shape": [4096, 3584]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 256, "sha256": "f2c8223bac4dd38e48a4e77202982ad817cdc1c075ecc6dbcf5db2571aa68f01", "shape": [32]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "8f55ce2c2f43c1bbca2e72d9a5b74d730e8e4098986d7b3f1a53d08a4dec43cb", "shape": [4096, 3584]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "56bb72785db6360bd928a3c2c79b1690d8ee26b2e051186f4263bab28ff44892", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "4dbf0f7936e266b5c32ffe316c40dc7a729b06d4d7b6fed8c3178d0f9d656849", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.bfloat16", "nbytes": 49152, "sha256": "68b972453662f1255ffcba15f617bc769adb3af5c622ecf0657a95f19f8e88ee", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 512, "sha256": "446e62094a6eeb8b90a65ee6ff198456431a2a70944fbedb004cf87680c164c2", "shape": [8, 8]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 117440512, "sha256": "fb760d51a9b49d9ea7c4aa81d94c6ad38c2e2578bdef84861db34de5dbc568f4", "shape": [4, 4096, 3584]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "4682131e10c8ee1f529cdf8d809d8dd14f91d7e6c19e79687d751cce2c62853d", "shape": [4, 3584, 2048]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "87d8b5facfcc8acb0540a1490289ddac83944a8c9e0d2bf94512b0e706b06b8b", "shape": [4096, 3584]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 256, "sha256": "f2c8223bac4dd38e48a4e77202982ad817cdc1c075ecc6dbcf5db2571aa68f01", "shape": [32]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "fdaada29edf19c19a3bc21623238ad06e066019a9d3c463ecc0120778ab40d5e", "shape": [4096, 3584]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "56bb72785db6360bd928a3c2c79b1690d8ee26b2e051186f4263bab28ff44892", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "93bd82d58e4b88c4b5674469a6b2078ac5824ea0522a9baaaee0e10ad446a5ee", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.bfloat16", "nbytes": 49152, "sha256": "b8875e7caf46fa81aaa9425cf676fc1f2c0be1655173c5f0361eec71107c2bca", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 512, "sha256": "446e62094a6eeb8b90a65ee6ff198456431a2a70944fbedb004cf87680c164c2", "shape": [8, 8]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 117440512, "sha256": "8edefeb04c0b6ce20739c99e1bb39013d472fc62c490c80005f46a8422a51d41", "shape": [4, 4096, 3584]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "bfe9a1fad58896d3a535855d55a1b9abfb5c78f6a360bab40b1ef7ab04b6b61c", "shape": [4, 3584, 2048]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "71e075748f9f1bba10cba29fbbbfcf46627d8bf4f3fea6c32379a947bb5fc642", "shape": [4096, 3584]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 256, "sha256": "f2c8223bac4dd38e48a4e77202982ad817cdc1c075ecc6dbcf5db2571aa68f01", "shape": [32]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "5b24db3cc8bb804833d77a9238812a54ab7bee207c99ab84ddb1111042b9f1e1", "shape": [4096, 3584]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "56bb72785db6360bd928a3c2c79b1690d8ee26b2e051186f4263bab28ff44892", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "2a390e8f0ef31c11f378234dc3a1b46c395a9793ed5a4ca91512031bb38a46e1", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.bfloat16", "nbytes": 49152, "sha256": "2d51858f9f22cd8205f4aace7dc8a3c98a2b47f41f0977d005f1876513fd3690", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 512, "sha256": "446e62094a6eeb8b90a65ee6ff198456431a2a70944fbedb004cf87680c164c2", "shape": [8, 8]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 117440512, "sha256": "a9de6eee5479436de90d8df3a5678868c9603582cc4aa65da7c69e9fd103b113", "shape": [4, 4096, 3584]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "accf27265912b63611b900e648ef14e5b7450bc98cd7ebf300def6f2b3e55e3f", "shape": [4, 3584, 2048]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "1101a1ffb7658d3a55ecfb9f4b2bcb4f1e3d4a504e9efbef41b0032c75732e7a", "shape": [4096, 3584]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 256, "sha256": "f2c8223bac4dd38e48a4e77202982ad817cdc1c075ecc6dbcf5db2571aa68f01", "shape": [32]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "7f02d67dd7b39a32f50f4898356caccf0ffc436cb87a7bfa22dbb4abf4d7b2ab", "shape": [4096, 3584]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "56bb72785db6360bd928a3c2c79b1690d8ee26b2e051186f4263bab28ff44892", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "91cd10ed60501f1069bd77aa2bd906699da4412b5a8122a7dbfa7ab31437da9e", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.bfloat16", "nbytes": 49152, "sha256": "6647faa55fb2d3878ea98b008b4cdefca3022688c03af53ec9042ddd05f5657c", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 512, "sha256": "446e62094a6eeb8b90a65ee6ff198456431a2a70944fbedb004cf87680c164c2", "shape": [8, 8]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 117440512, "sha256": "09d67ba19f62c17b62ae37b129945f83d184f3954dce32e5c9c843ae09a8fb14", "shape": [4, 4096, 3584]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "21987add5dc9c8191713c665f8ab5885e3f60c52a25260353df9156e8621e3a5", "shape": [4, 3584, 2048]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "c0256ef9378151f0e7bae433caf4690ce0be3f6f440cbb6f2d443914e41b3201", "shape": [4096, 3584]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 256, "sha256": "f2c8223bac4dd38e48a4e77202982ad817cdc1c075ecc6dbcf5db2571aa68f01", "shape": [32]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "18ca7e130783f794526392581eef6ff7b701d8974e255417119a4e8eda913e34", "shape": [4096, 3584]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "56bb72785db6360bd928a3c2c79b1690d8ee26b2e051186f4263bab28ff44892", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "5a83bc5c3946b076643e787aa748fc77203be0ba9e793f90e165147207155970", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.bfloat16", "nbytes": 49152, "sha256": "0baf223b4b6d371f42996bcf2aa399a7b5261011f98120bae9e3bb8218aad367", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 512, "sha256": "446e62094a6eeb8b90a65ee6ff198456431a2a70944fbedb004cf87680c164c2", "shape": [8, 8]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 117440512, "sha256": "ac629dc175316dfbb3e2fbb5ef21f54d3360183706c2dbff738116f964d85df5", "shape": [4, 4096, 3584]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "88266db33eafdeae5fae3fde082fe482f75b4ecba3e696a8e5388102940aa712", "shape": [4, 3584, 2048]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "5eb758b78b5620d115f88b643a6d642fc10a933556e8d8c85641abac6a728983", "shape": [4096, 3584]}
+            }
+          ],
+          "C": [
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 256, "sha256": "f2c8223bac4dd38e48a4e77202982ad817cdc1c075ecc6dbcf5db2571aa68f01", "shape": [32]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "f7ecf8b878c41cb89fa1e4546fa38a6cf3484baf9b4547b20a13e241c9cd7edb", "shape": [4096, 3584]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "56bb72785db6360bd928a3c2c79b1690d8ee26b2e051186f4263bab28ff44892", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "5fc2bcf9c136a2e44d84c8c7be8399ba3662bdfebc18f90e74fa40369a431351", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "5fc2bcf9c136a2e44d84c8c7be8399ba3662bdfebc18f90e74fa40369a431351", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 512, "sha256": "446e62094a6eeb8b90a65ee6ff198456431a2a70944fbedb004cf87680c164c2", "shape": [8, 8]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 117440512, "sha256": "742f0a80952fb56453f7fab23c7ceb7253af5b576bc0973f50dc72b3130f4cb4", "shape": [4, 4096, 3584]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "a7f2c20cff79a90340e8278d6572c8eda1986ab8b3cc0fa97a6f2e56023b3701", "shape": [4, 3584, 2048]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "8ccd38605894dddbf384e5aa66d1acacea70d449392b736aa95987ac1529d576", "shape": [4096, 3584]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 256, "sha256": "f2c8223bac4dd38e48a4e77202982ad817cdc1c075ecc6dbcf5db2571aa68f01", "shape": [32]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "3da4745d6ebf9516ae7c48a289575112f9060f88c6793a257d7f859cb5a42ca9", "shape": [4096, 3584]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "56bb72785db6360bd928a3c2c79b1690d8ee26b2e051186f4263bab28ff44892", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "8cbfef87b66dfc84cf16d397e0d06f54aea1cb6f32a23bc13b551c57168a8ea9", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "8cbfef87b66dfc84cf16d397e0d06f54aea1cb6f32a23bc13b551c57168a8ea9", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 512, "sha256": "446e62094a6eeb8b90a65ee6ff198456431a2a70944fbedb004cf87680c164c2", "shape": [8, 8]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 117440512, "sha256": "f96b2cfcf00828503892cf15d127a5f47f870c46b52d579eaf2c866122883074", "shape": [4, 4096, 3584]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "d7fc4041f5202d04827ce2d0620fde6ba1a8e2bbed2ba7e9545ff6c5d21234b1", "shape": [4, 3584, 2048]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "985cc947038e49c193b1894331084a709a81d020ee304f39f1cb5a7ca2369556", "shape": [4096, 3584]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 256, "sha256": "f2c8223bac4dd38e48a4e77202982ad817cdc1c075ecc6dbcf5db2571aa68f01", "shape": [32]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "a64c7c9f34f11777aee19f78c01897364cd1232928be926cd4e0cef3f12d2b95", "shape": [4096, 3584]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "56bb72785db6360bd928a3c2c79b1690d8ee26b2e051186f4263bab28ff44892", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "8d6aca1839eb4a6e5ec16af30e57ab608e9d6cbddce04129506021fb5525eef7", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "8d6aca1839eb4a6e5ec16af30e57ab608e9d6cbddce04129506021fb5525eef7", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 512, "sha256": "446e62094a6eeb8b90a65ee6ff198456431a2a70944fbedb004cf87680c164c2", "shape": [8, 8]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 117440512, "sha256": "f397a9501e9f1050b9f93a2877fdc15169af8a9d0e112aabeba2d85ea95559f9", "shape": [4, 4096, 3584]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "3d02df402ba5429900b0f1b521c8c90a49e9be232dfc0a1e3bc17d74cc230189", "shape": [4, 3584, 2048]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "0afcae7ef5ea1ac5a8cdc893122647a63c39b94864fa8502b4f0ece19ebb6cc8", "shape": [4096, 3584]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 256, "sha256": "f2c8223bac4dd38e48a4e77202982ad817cdc1c075ecc6dbcf5db2571aa68f01", "shape": [32]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "8f55ce2c2f43c1bbca2e72d9a5b74d730e8e4098986d7b3f1a53d08a4dec43cb", "shape": [4096, 3584]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "56bb72785db6360bd928a3c2c79b1690d8ee26b2e051186f4263bab28ff44892", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "4dbf0f7936e266b5c32ffe316c40dc7a729b06d4d7b6fed8c3178d0f9d656849", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "4dbf0f7936e266b5c32ffe316c40dc7a729b06d4d7b6fed8c3178d0f9d656849", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 512, "sha256": "446e62094a6eeb8b90a65ee6ff198456431a2a70944fbedb004cf87680c164c2", "shape": [8, 8]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 117440512, "sha256": "fb760d51a9b49d9ea7c4aa81d94c6ad38c2e2578bdef84861db34de5dbc568f4", "shape": [4, 4096, 3584]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "4682131e10c8ee1f529cdf8d809d8dd14f91d7e6c19e79687d751cce2c62853d", "shape": [4, 3584, 2048]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "87d8b5facfcc8acb0540a1490289ddac83944a8c9e0d2bf94512b0e706b06b8b", "shape": [4096, 3584]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 256, "sha256": "f2c8223bac4dd38e48a4e77202982ad817cdc1c075ecc6dbcf5db2571aa68f01", "shape": [32]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "fdaada29edf19c19a3bc21623238ad06e066019a9d3c463ecc0120778ab40d5e", "shape": [4096, 3584]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "56bb72785db6360bd928a3c2c79b1690d8ee26b2e051186f4263bab28ff44892", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "93bd82d58e4b88c4b5674469a6b2078ac5824ea0522a9baaaee0e10ad446a5ee", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "93bd82d58e4b88c4b5674469a6b2078ac5824ea0522a9baaaee0e10ad446a5ee", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 512, "sha256": "446e62094a6eeb8b90a65ee6ff198456431a2a70944fbedb004cf87680c164c2", "shape": [8, 8]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 117440512, "sha256": "8edefeb04c0b6ce20739c99e1bb39013d472fc62c490c80005f46a8422a51d41", "shape": [4, 4096, 3584]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "bfe9a1fad58896d3a535855d55a1b9abfb5c78f6a360bab40b1ef7ab04b6b61c", "shape": [4, 3584, 2048]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "71e075748f9f1bba10cba29fbbbfcf46627d8bf4f3fea6c32379a947bb5fc642", "shape": [4096, 3584]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 256, "sha256": "f2c8223bac4dd38e48a4e77202982ad817cdc1c075ecc6dbcf5db2571aa68f01", "shape": [32]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "5b24db3cc8bb804833d77a9238812a54ab7bee207c99ab84ddb1111042b9f1e1", "shape": [4096, 3584]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "56bb72785db6360bd928a3c2c79b1690d8ee26b2e051186f4263bab28ff44892", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "2a390e8f0ef31c11f378234dc3a1b46c395a9793ed5a4ca91512031bb38a46e1", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "2a390e8f0ef31c11f378234dc3a1b46c395a9793ed5a4ca91512031bb38a46e1", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 512, "sha256": "446e62094a6eeb8b90a65ee6ff198456431a2a70944fbedb004cf87680c164c2", "shape": [8, 8]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 117440512, "sha256": "a9de6eee5479436de90d8df3a5678868c9603582cc4aa65da7c69e9fd103b113", "shape": [4, 4096, 3584]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "accf27265912b63611b900e648ef14e5b7450bc98cd7ebf300def6f2b3e55e3f", "shape": [4, 3584, 2048]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "1101a1ffb7658d3a55ecfb9f4b2bcb4f1e3d4a504e9efbef41b0032c75732e7a", "shape": [4096, 3584]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 256, "sha256": "f2c8223bac4dd38e48a4e77202982ad817cdc1c075ecc6dbcf5db2571aa68f01", "shape": [32]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "7f02d67dd7b39a32f50f4898356caccf0ffc436cb87a7bfa22dbb4abf4d7b2ab", "shape": [4096, 3584]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "56bb72785db6360bd928a3c2c79b1690d8ee26b2e051186f4263bab28ff44892", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "91cd10ed60501f1069bd77aa2bd906699da4412b5a8122a7dbfa7ab31437da9e", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "91cd10ed60501f1069bd77aa2bd906699da4412b5a8122a7dbfa7ab31437da9e", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 512, "sha256": "446e62094a6eeb8b90a65ee6ff198456431a2a70944fbedb004cf87680c164c2", "shape": [8, 8]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 117440512, "sha256": "09d67ba19f62c17b62ae37b129945f83d184f3954dce32e5c9c843ae09a8fb14", "shape": [4, 4096, 3584]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "21987add5dc9c8191713c665f8ab5885e3f60c52a25260353df9156e8621e3a5", "shape": [4, 3584, 2048]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "c0256ef9378151f0e7bae433caf4690ce0be3f6f440cbb6f2d443914e41b3201", "shape": [4096, 3584]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 256, "sha256": "f2c8223bac4dd38e48a4e77202982ad817cdc1c075ecc6dbcf5db2571aa68f01", "shape": [32]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "18ca7e130783f794526392581eef6ff7b701d8974e255417119a4e8eda913e34", "shape": [4096, 3584]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "56bb72785db6360bd928a3c2c79b1690d8ee26b2e051186f4263bab28ff44892", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "5a83bc5c3946b076643e787aa748fc77203be0ba9e793f90e165147207155970", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "5a83bc5c3946b076643e787aa748fc77203be0ba9e793f90e165147207155970", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 512, "sha256": "446e62094a6eeb8b90a65ee6ff198456431a2a70944fbedb004cf87680c164c2", "shape": [8, 8]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 117440512, "sha256": "ac629dc175316dfbb3e2fbb5ef21f54d3360183706c2dbff738116f964d85df5", "shape": [4, 4096, 3584]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "88266db33eafdeae5fae3fde082fe482f75b4ecba3e696a8e5388102940aa712", "shape": [4, 3584, 2048]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 29360128, "sha256": "5eb758b78b5620d115f88b643a6d642fc10a933556e8d8c85641abac6a728983", "shape": [4096, 3584]}
+            }
+          ]
+        }
+      }
+    },
+    "ep8_h7168": {
+      "raw_receipt_sha256": "e2ba2a6f139235655a2d2ca6be877668ee3d33c75d1346633d953f3373e2ff79",
+      "audit": {
+        "cpu_threads": 2,
+        "passed": true,
+        "proof": "All ranks: x/dy/W1/W2/ids bit-identical; p.float() values identical; C keeps FP32 storage",
+        "runner_sha256": "f2ea95c8504b2111ce5b73cae719fb6d1b69546258a10e15cd52f5dff6d82bed",
+        "scope": "Same unified runner.make_inputs and seeded CPU RNG used by all three performance variants; no NPU work",
+        "shape": {
+          "data_profile": "random",
+          "devices": [0, 1, 2, 3, 4, 5, 6, 7],
+          "ep": 8,
+          "expert_per_rank": 4,
+          "ffn_hidden": 3072,
+          "gmm_n": 6144,
+          "hidden": 7168,
+          "id": "ep8_h7168",
+          "label": "pro",
+          "routed_scaling_factor": 1.0,
+          "routing_mode": "balanced",
+          "save_gmm1_output": "bf16",
+          "seed": 20260825,
+          "seq": 4096,
+          "swiglu_limit": 10.0,
+          "topk": 6
+        },
+        "torch": "2.10.0+cpu",
+        "variants": {
+          "A": [
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 256, "sha256": "f2c8223bac4dd38e48a4e77202982ad817cdc1c075ecc6dbcf5db2571aa68f01", "shape": [32]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "5e082a1e27e14b7ed4e95ad6785428ac1e1f1df9a9b9f40b14bcf4a48aaa1518", "shape": [4096, 7168]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "56bb72785db6360bd928a3c2c79b1690d8ee26b2e051186f4263bab28ff44892", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "5fc2bcf9c136a2e44d84c8c7be8399ba3662bdfebc18f90e74fa40369a431351", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.bfloat16", "nbytes": 49152, "sha256": "b804e4fcb59139548cd48eefce1304e617f994efabcf85f133558ce62b3218e8", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 512, "sha256": "446e62094a6eeb8b90a65ee6ff198456431a2a70944fbedb004cf87680c164c2", "shape": [8, 8]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 352321536, "sha256": "946ea5e6e7989a62e05b4ad65401a1983e8a3771c3a468c03caccb028a0ebbd5", "shape": [4, 6144, 7168]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 176160768, "sha256": "29c91cc586fd74dd9e6f92058a31522428d49108d304d91d64278dfbbf87de0d", "shape": [4, 7168, 3072]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "1af4edd98186ee78164e80a0240d68435d402e50232da28aace6ace80832ec09", "shape": [4096, 7168]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 256, "sha256": "f2c8223bac4dd38e48a4e77202982ad817cdc1c075ecc6dbcf5db2571aa68f01", "shape": [32]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "83b17857c851e49ee10381116648970ff515ce110bbad3471b7334b0583fb130", "shape": [4096, 7168]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "56bb72785db6360bd928a3c2c79b1690d8ee26b2e051186f4263bab28ff44892", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "8cbfef87b66dfc84cf16d397e0d06f54aea1cb6f32a23bc13b551c57168a8ea9", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.bfloat16", "nbytes": 49152, "sha256": "848115d49c58eceb67b95c0de9fa03ef22b24ebc248640965ff689533c7fef08", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 512, "sha256": "446e62094a6eeb8b90a65ee6ff198456431a2a70944fbedb004cf87680c164c2", "shape": [8, 8]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 352321536, "sha256": "aaeb925032764e2bd91434021d350205b25fd4eeb448c7b4e363683720a10712", "shape": [4, 6144, 7168]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 176160768, "sha256": "160838f59fd58d718ff11abd2f5afe68721c4543c98f005527bd1bb151719bc2", "shape": [4, 7168, 3072]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "6314ed4334026ceb8777fbc362281777e41df218f9d3acb6b8426ddcd49b80c9", "shape": [4096, 7168]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 256, "sha256": "f2c8223bac4dd38e48a4e77202982ad817cdc1c075ecc6dbcf5db2571aa68f01", "shape": [32]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "6ff587c13e205dd4edabc05544390770e75b08f277939681dd1e6d9972794117", "shape": [4096, 7168]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "56bb72785db6360bd928a3c2c79b1690d8ee26b2e051186f4263bab28ff44892", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "8d6aca1839eb4a6e5ec16af30e57ab608e9d6cbddce04129506021fb5525eef7", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.bfloat16", "nbytes": 49152, "sha256": "28ae152c1a140367bce8a4dcfcc1af1a4d38f38b06af0d5cbbfae40079b8ace1", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 512, "sha256": "446e62094a6eeb8b90a65ee6ff198456431a2a70944fbedb004cf87680c164c2", "shape": [8, 8]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 352321536, "sha256": "60f51fc8cf70e4b2bf37fc083f8335294dd6a509fcfe8911ccce7a49842a0da1", "shape": [4, 6144, 7168]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 176160768, "sha256": "b117ba884912c5ceea48f58cf51cebf59350dca4eaf8351ec2d1b18c3bdf0573", "shape": [4, 7168, 3072]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "21b447e0938d8ceacae0048c9da45fc5fa944e41776697d0a4bedef6a4b417fc", "shape": [4096, 7168]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 256, "sha256": "f2c8223bac4dd38e48a4e77202982ad817cdc1c075ecc6dbcf5db2571aa68f01", "shape": [32]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "4fe3bf8a04ffd8374d290f84ab6e114f009d6c781f31edbb82150b6c881b1049", "shape": [4096, 7168]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "56bb72785db6360bd928a3c2c79b1690d8ee26b2e051186f4263bab28ff44892", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "4dbf0f7936e266b5c32ffe316c40dc7a729b06d4d7b6fed8c3178d0f9d656849", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.bfloat16", "nbytes": 49152, "sha256": "68b972453662f1255ffcba15f617bc769adb3af5c622ecf0657a95f19f8e88ee", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 512, "sha256": "446e62094a6eeb8b90a65ee6ff198456431a2a70944fbedb004cf87680c164c2", "shape": [8, 8]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 352321536, "sha256": "f719a581e56228c2245642814b3e80c4a0b67c2a5fe00cfe1a5a0489e49f1608", "shape": [4, 6144, 7168]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 176160768, "sha256": "e585691ef1028b76dcbcaaf74a11c2d68b3b01c83cbc3bdc5e4f24ab1813db08", "shape": [4, 7168, 3072]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "a26d18a744daa80c7aa01e4877433b9e913e94fa062d45d8219e8f2a58b15828", "shape": [4096, 7168]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 256, "sha256": "f2c8223bac4dd38e48a4e77202982ad817cdc1c075ecc6dbcf5db2571aa68f01", "shape": [32]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "082d9a88015f921720f5cd86b41b7949228019eef170489403b10a656ab2b8d5", "shape": [4096, 7168]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "56bb72785db6360bd928a3c2c79b1690d8ee26b2e051186f4263bab28ff44892", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "93bd82d58e4b88c4b5674469a6b2078ac5824ea0522a9baaaee0e10ad446a5ee", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.bfloat16", "nbytes": 49152, "sha256": "b8875e7caf46fa81aaa9425cf676fc1f2c0be1655173c5f0361eec71107c2bca", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 512, "sha256": "446e62094a6eeb8b90a65ee6ff198456431a2a70944fbedb004cf87680c164c2", "shape": [8, 8]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 352321536, "sha256": "69c619921767f30913c3afebd4948e0a1eaf811926c321b1081cb02d2529d07c", "shape": [4, 6144, 7168]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 176160768, "sha256": "9700053beab71cd76cce1dfe504a9e4977a22fa1eac7bbecd0e12c708f2066e0", "shape": [4, 7168, 3072]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "a6e1a461d647aec353b6fbcc3941339c4c610d3d48ffb4fce0ef2bacf02e64d6", "shape": [4096, 7168]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 256, "sha256": "f2c8223bac4dd38e48a4e77202982ad817cdc1c075ecc6dbcf5db2571aa68f01", "shape": [32]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "656ead7a2104ba268f7625695bc0ff225e2d894cb9a600c1498edca24218b0cf", "shape": [4096, 7168]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "56bb72785db6360bd928a3c2c79b1690d8ee26b2e051186f4263bab28ff44892", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "2a390e8f0ef31c11f378234dc3a1b46c395a9793ed5a4ca91512031bb38a46e1", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.bfloat16", "nbytes": 49152, "sha256": "2d51858f9f22cd8205f4aace7dc8a3c98a2b47f41f0977d005f1876513fd3690", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 512, "sha256": "446e62094a6eeb8b90a65ee6ff198456431a2a70944fbedb004cf87680c164c2", "shape": [8, 8]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 352321536, "sha256": "b6425a1bca63d779a37c5d038f5e4a5b2802235e96eda3ae2dab33180f6207c6", "shape": [4, 6144, 7168]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 176160768, "sha256": "47c64a55579dea92fac2b105c0b30b5f51a4b3cbc28f4ed0339a8162f0556b42", "shape": [4, 7168, 3072]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "644258360ca5ffc48d52443b4597bcf903377901fff7f7d2a438f425d8c1d2db", "shape": [4096, 7168]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 256, "sha256": "f2c8223bac4dd38e48a4e77202982ad817cdc1c075ecc6dbcf5db2571aa68f01", "shape": [32]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "ee54e52427d9183c96a68be7def70dbd593b9e50b653235ad90dd8c4eb95be94", "shape": [4096, 7168]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "56bb72785db6360bd928a3c2c79b1690d8ee26b2e051186f4263bab28ff44892", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "91cd10ed60501f1069bd77aa2bd906699da4412b5a8122a7dbfa7ab31437da9e", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.bfloat16", "nbytes": 49152, "sha256": "6647faa55fb2d3878ea98b008b4cdefca3022688c03af53ec9042ddd05f5657c", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 512, "sha256": "446e62094a6eeb8b90a65ee6ff198456431a2a70944fbedb004cf87680c164c2", "shape": [8, 8]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 352321536, "sha256": "d2e7c671f0df521c43eff17a9dbe9256468d774e0d7c9443f2887752dfcda586", "shape": [4, 6144, 7168]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 176160768, "sha256": "719b4c9f7296262e3ae4e913672c61870dd1ec39a0962060af28e7122ea348ec", "shape": [4, 7168, 3072]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "9a67580fd4942fbfc0699c56bbf6b25d14559bf56d09537b87c38f55e5ccf365", "shape": [4096, 7168]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 256, "sha256": "f2c8223bac4dd38e48a4e77202982ad817cdc1c075ecc6dbcf5db2571aa68f01", "shape": [32]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "5261cfb65201e52688783a865eb05258dc1f3b0cb5632aa0cf3f8994580ba858", "shape": [4096, 7168]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "56bb72785db6360bd928a3c2c79b1690d8ee26b2e051186f4263bab28ff44892", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "5a83bc5c3946b076643e787aa748fc77203be0ba9e793f90e165147207155970", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.bfloat16", "nbytes": 49152, "sha256": "0baf223b4b6d371f42996bcf2aa399a7b5261011f98120bae9e3bb8218aad367", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 512, "sha256": "446e62094a6eeb8b90a65ee6ff198456431a2a70944fbedb004cf87680c164c2", "shape": [8, 8]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 352321536, "sha256": "690e1bc0a8d296e896a2c5c222bcc052a95ea70167ebed53ca1af38c45ecc115", "shape": [4, 6144, 7168]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 176160768, "sha256": "1f9508ad01b75493a3558d021e46de06ab366b62a4cd06b05740d2ddc8603aba", "shape": [4, 7168, 3072]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "4eb96b8880fe8cb3cfa22fc9511361b8c8b837e37633b6b92fc6c4472c1dc387", "shape": [4096, 7168]}
+            }
+          ],
+          "B": [
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 256, "sha256": "f2c8223bac4dd38e48a4e77202982ad817cdc1c075ecc6dbcf5db2571aa68f01", "shape": [32]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "5e082a1e27e14b7ed4e95ad6785428ac1e1f1df9a9b9f40b14bcf4a48aaa1518", "shape": [4096, 7168]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "56bb72785db6360bd928a3c2c79b1690d8ee26b2e051186f4263bab28ff44892", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "5fc2bcf9c136a2e44d84c8c7be8399ba3662bdfebc18f90e74fa40369a431351", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.bfloat16", "nbytes": 49152, "sha256": "b804e4fcb59139548cd48eefce1304e617f994efabcf85f133558ce62b3218e8", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 512, "sha256": "446e62094a6eeb8b90a65ee6ff198456431a2a70944fbedb004cf87680c164c2", "shape": [8, 8]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 352321536, "sha256": "946ea5e6e7989a62e05b4ad65401a1983e8a3771c3a468c03caccb028a0ebbd5", "shape": [4, 6144, 7168]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 176160768, "sha256": "29c91cc586fd74dd9e6f92058a31522428d49108d304d91d64278dfbbf87de0d", "shape": [4, 7168, 3072]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "1af4edd98186ee78164e80a0240d68435d402e50232da28aace6ace80832ec09", "shape": [4096, 7168]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 256, "sha256": "f2c8223bac4dd38e48a4e77202982ad817cdc1c075ecc6dbcf5db2571aa68f01", "shape": [32]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "83b17857c851e49ee10381116648970ff515ce110bbad3471b7334b0583fb130", "shape": [4096, 7168]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "56bb72785db6360bd928a3c2c79b1690d8ee26b2e051186f4263bab28ff44892", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "8cbfef87b66dfc84cf16d397e0d06f54aea1cb6f32a23bc13b551c57168a8ea9", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.bfloat16", "nbytes": 49152, "sha256": "848115d49c58eceb67b95c0de9fa03ef22b24ebc248640965ff689533c7fef08", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 512, "sha256": "446e62094a6eeb8b90a65ee6ff198456431a2a70944fbedb004cf87680c164c2", "shape": [8, 8]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 352321536, "sha256": "aaeb925032764e2bd91434021d350205b25fd4eeb448c7b4e363683720a10712", "shape": [4, 6144, 7168]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 176160768, "sha256": "160838f59fd58d718ff11abd2f5afe68721c4543c98f005527bd1bb151719bc2", "shape": [4, 7168, 3072]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "6314ed4334026ceb8777fbc362281777e41df218f9d3acb6b8426ddcd49b80c9", "shape": [4096, 7168]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 256, "sha256": "f2c8223bac4dd38e48a4e77202982ad817cdc1c075ecc6dbcf5db2571aa68f01", "shape": [32]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "6ff587c13e205dd4edabc05544390770e75b08f277939681dd1e6d9972794117", "shape": [4096, 7168]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "56bb72785db6360bd928a3c2c79b1690d8ee26b2e051186f4263bab28ff44892", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "8d6aca1839eb4a6e5ec16af30e57ab608e9d6cbddce04129506021fb5525eef7", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.bfloat16", "nbytes": 49152, "sha256": "28ae152c1a140367bce8a4dcfcc1af1a4d38f38b06af0d5cbbfae40079b8ace1", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 512, "sha256": "446e62094a6eeb8b90a65ee6ff198456431a2a70944fbedb004cf87680c164c2", "shape": [8, 8]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 352321536, "sha256": "60f51fc8cf70e4b2bf37fc083f8335294dd6a509fcfe8911ccce7a49842a0da1", "shape": [4, 6144, 7168]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 176160768, "sha256": "b117ba884912c5ceea48f58cf51cebf59350dca4eaf8351ec2d1b18c3bdf0573", "shape": [4, 7168, 3072]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "21b447e0938d8ceacae0048c9da45fc5fa944e41776697d0a4bedef6a4b417fc", "shape": [4096, 7168]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 256, "sha256": "f2c8223bac4dd38e48a4e77202982ad817cdc1c075ecc6dbcf5db2571aa68f01", "shape": [32]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "4fe3bf8a04ffd8374d290f84ab6e114f009d6c781f31edbb82150b6c881b1049", "shape": [4096, 7168]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "56bb72785db6360bd928a3c2c79b1690d8ee26b2e051186f4263bab28ff44892", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "4dbf0f7936e266b5c32ffe316c40dc7a729b06d4d7b6fed8c3178d0f9d656849", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.bfloat16", "nbytes": 49152, "sha256": "68b972453662f1255ffcba15f617bc769adb3af5c622ecf0657a95f19f8e88ee", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 512, "sha256": "446e62094a6eeb8b90a65ee6ff198456431a2a70944fbedb004cf87680c164c2", "shape": [8, 8]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 352321536, "sha256": "f719a581e56228c2245642814b3e80c4a0b67c2a5fe00cfe1a5a0489e49f1608", "shape": [4, 6144, 7168]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 176160768, "sha256": "e585691ef1028b76dcbcaaf74a11c2d68b3b01c83cbc3bdc5e4f24ab1813db08", "shape": [4, 7168, 3072]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "a26d18a744daa80c7aa01e4877433b9e913e94fa062d45d8219e8f2a58b15828", "shape": [4096, 7168]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 256, "sha256": "f2c8223bac4dd38e48a4e77202982ad817cdc1c075ecc6dbcf5db2571aa68f01", "shape": [32]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "082d9a88015f921720f5cd86b41b7949228019eef170489403b10a656ab2b8d5", "shape": [4096, 7168]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "56bb72785db6360bd928a3c2c79b1690d8ee26b2e051186f4263bab28ff44892", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "93bd82d58e4b88c4b5674469a6b2078ac5824ea0522a9baaaee0e10ad446a5ee", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.bfloat16", "nbytes": 49152, "sha256": "b8875e7caf46fa81aaa9425cf676fc1f2c0be1655173c5f0361eec71107c2bca", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 512, "sha256": "446e62094a6eeb8b90a65ee6ff198456431a2a70944fbedb004cf87680c164c2", "shape": [8, 8]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 352321536, "sha256": "69c619921767f30913c3afebd4948e0a1eaf811926c321b1081cb02d2529d07c", "shape": [4, 6144, 7168]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 176160768, "sha256": "9700053beab71cd76cce1dfe504a9e4977a22fa1eac7bbecd0e12c708f2066e0", "shape": [4, 7168, 3072]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "a6e1a461d647aec353b6fbcc3941339c4c610d3d48ffb4fce0ef2bacf02e64d6", "shape": [4096, 7168]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 256, "sha256": "f2c8223bac4dd38e48a4e77202982ad817cdc1c075ecc6dbcf5db2571aa68f01", "shape": [32]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "656ead7a2104ba268f7625695bc0ff225e2d894cb9a600c1498edca24218b0cf", "shape": [4096, 7168]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "56bb72785db6360bd928a3c2c79b1690d8ee26b2e051186f4263bab28ff44892", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "2a390e8f0ef31c11f378234dc3a1b46c395a9793ed5a4ca91512031bb38a46e1", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.bfloat16", "nbytes": 49152, "sha256": "2d51858f9f22cd8205f4aace7dc8a3c98a2b47f41f0977d005f1876513fd3690", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 512, "sha256": "446e62094a6eeb8b90a65ee6ff198456431a2a70944fbedb004cf87680c164c2", "shape": [8, 8]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 352321536, "sha256": "b6425a1bca63d779a37c5d038f5e4a5b2802235e96eda3ae2dab33180f6207c6", "shape": [4, 6144, 7168]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 176160768, "sha256": "47c64a55579dea92fac2b105c0b30b5f51a4b3cbc28f4ed0339a8162f0556b42", "shape": [4, 7168, 3072]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "644258360ca5ffc48d52443b4597bcf903377901fff7f7d2a438f425d8c1d2db", "shape": [4096, 7168]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 256, "sha256": "f2c8223bac4dd38e48a4e77202982ad817cdc1c075ecc6dbcf5db2571aa68f01", "shape": [32]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "ee54e52427d9183c96a68be7def70dbd593b9e50b653235ad90dd8c4eb95be94", "shape": [4096, 7168]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "56bb72785db6360bd928a3c2c79b1690d8ee26b2e051186f4263bab28ff44892", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "91cd10ed60501f1069bd77aa2bd906699da4412b5a8122a7dbfa7ab31437da9e", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.bfloat16", "nbytes": 49152, "sha256": "6647faa55fb2d3878ea98b008b4cdefca3022688c03af53ec9042ddd05f5657c", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 512, "sha256": "446e62094a6eeb8b90a65ee6ff198456431a2a70944fbedb004cf87680c164c2", "shape": [8, 8]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 352321536, "sha256": "d2e7c671f0df521c43eff17a9dbe9256468d774e0d7c9443f2887752dfcda586", "shape": [4, 6144, 7168]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 176160768, "sha256": "719b4c9f7296262e3ae4e913672c61870dd1ec39a0962060af28e7122ea348ec", "shape": [4, 7168, 3072]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "9a67580fd4942fbfc0699c56bbf6b25d14559bf56d09537b87c38f55e5ccf365", "shape": [4096, 7168]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 256, "sha256": "f2c8223bac4dd38e48a4e77202982ad817cdc1c075ecc6dbcf5db2571aa68f01", "shape": [32]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "5261cfb65201e52688783a865eb05258dc1f3b0cb5632aa0cf3f8994580ba858", "shape": [4096, 7168]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "56bb72785db6360bd928a3c2c79b1690d8ee26b2e051186f4263bab28ff44892", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "5a83bc5c3946b076643e787aa748fc77203be0ba9e793f90e165147207155970", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.bfloat16", "nbytes": 49152, "sha256": "0baf223b4b6d371f42996bcf2aa399a7b5261011f98120bae9e3bb8218aad367", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 512, "sha256": "446e62094a6eeb8b90a65ee6ff198456431a2a70944fbedb004cf87680c164c2", "shape": [8, 8]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 352321536, "sha256": "690e1bc0a8d296e896a2c5c222bcc052a95ea70167ebed53ca1af38c45ecc115", "shape": [4, 6144, 7168]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 176160768, "sha256": "1f9508ad01b75493a3558d021e46de06ab366b62a4cd06b05740d2ddc8603aba", "shape": [4, 7168, 3072]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "4eb96b8880fe8cb3cfa22fc9511361b8c8b837e37633b6b92fc6c4472c1dc387", "shape": [4096, 7168]}
+            }
+          ],
+          "C": [
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 256, "sha256": "f2c8223bac4dd38e48a4e77202982ad817cdc1c075ecc6dbcf5db2571aa68f01", "shape": [32]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "5e082a1e27e14b7ed4e95ad6785428ac1e1f1df9a9b9f40b14bcf4a48aaa1518", "shape": [4096, 7168]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "56bb72785db6360bd928a3c2c79b1690d8ee26b2e051186f4263bab28ff44892", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "5fc2bcf9c136a2e44d84c8c7be8399ba3662bdfebc18f90e74fa40369a431351", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "5fc2bcf9c136a2e44d84c8c7be8399ba3662bdfebc18f90e74fa40369a431351", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 512, "sha256": "446e62094a6eeb8b90a65ee6ff198456431a2a70944fbedb004cf87680c164c2", "shape": [8, 8]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 352321536, "sha256": "946ea5e6e7989a62e05b4ad65401a1983e8a3771c3a468c03caccb028a0ebbd5", "shape": [4, 6144, 7168]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 176160768, "sha256": "29c91cc586fd74dd9e6f92058a31522428d49108d304d91d64278dfbbf87de0d", "shape": [4, 7168, 3072]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "1af4edd98186ee78164e80a0240d68435d402e50232da28aace6ace80832ec09", "shape": [4096, 7168]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 256, "sha256": "f2c8223bac4dd38e48a4e77202982ad817cdc1c075ecc6dbcf5db2571aa68f01", "shape": [32]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "83b17857c851e49ee10381116648970ff515ce110bbad3471b7334b0583fb130", "shape": [4096, 7168]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "56bb72785db6360bd928a3c2c79b1690d8ee26b2e051186f4263bab28ff44892", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "8cbfef87b66dfc84cf16d397e0d06f54aea1cb6f32a23bc13b551c57168a8ea9", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "8cbfef87b66dfc84cf16d397e0d06f54aea1cb6f32a23bc13b551c57168a8ea9", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 512, "sha256": "446e62094a6eeb8b90a65ee6ff198456431a2a70944fbedb004cf87680c164c2", "shape": [8, 8]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 352321536, "sha256": "aaeb925032764e2bd91434021d350205b25fd4eeb448c7b4e363683720a10712", "shape": [4, 6144, 7168]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 176160768, "sha256": "160838f59fd58d718ff11abd2f5afe68721c4543c98f005527bd1bb151719bc2", "shape": [4, 7168, 3072]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "6314ed4334026ceb8777fbc362281777e41df218f9d3acb6b8426ddcd49b80c9", "shape": [4096, 7168]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 256, "sha256": "f2c8223bac4dd38e48a4e77202982ad817cdc1c075ecc6dbcf5db2571aa68f01", "shape": [32]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "6ff587c13e205dd4edabc05544390770e75b08f277939681dd1e6d9972794117", "shape": [4096, 7168]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "56bb72785db6360bd928a3c2c79b1690d8ee26b2e051186f4263bab28ff44892", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "8d6aca1839eb4a6e5ec16af30e57ab608e9d6cbddce04129506021fb5525eef7", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "8d6aca1839eb4a6e5ec16af30e57ab608e9d6cbddce04129506021fb5525eef7", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 512, "sha256": "446e62094a6eeb8b90a65ee6ff198456431a2a70944fbedb004cf87680c164c2", "shape": [8, 8]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 352321536, "sha256": "60f51fc8cf70e4b2bf37fc083f8335294dd6a509fcfe8911ccce7a49842a0da1", "shape": [4, 6144, 7168]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 176160768, "sha256": "b117ba884912c5ceea48f58cf51cebf59350dca4eaf8351ec2d1b18c3bdf0573", "shape": [4, 7168, 3072]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "21b447e0938d8ceacae0048c9da45fc5fa944e41776697d0a4bedef6a4b417fc", "shape": [4096, 7168]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 256, "sha256": "f2c8223bac4dd38e48a4e77202982ad817cdc1c075ecc6dbcf5db2571aa68f01", "shape": [32]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "4fe3bf8a04ffd8374d290f84ab6e114f009d6c781f31edbb82150b6c881b1049", "shape": [4096, 7168]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "56bb72785db6360bd928a3c2c79b1690d8ee26b2e051186f4263bab28ff44892", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "4dbf0f7936e266b5c32ffe316c40dc7a729b06d4d7b6fed8c3178d0f9d656849", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "4dbf0f7936e266b5c32ffe316c40dc7a729b06d4d7b6fed8c3178d0f9d656849", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 512, "sha256": "446e62094a6eeb8b90a65ee6ff198456431a2a70944fbedb004cf87680c164c2", "shape": [8, 8]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 352321536, "sha256": "f719a581e56228c2245642814b3e80c4a0b67c2a5fe00cfe1a5a0489e49f1608", "shape": [4, 6144, 7168]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 176160768, "sha256": "e585691ef1028b76dcbcaaf74a11c2d68b3b01c83cbc3bdc5e4f24ab1813db08", "shape": [4, 7168, 3072]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "a26d18a744daa80c7aa01e4877433b9e913e94fa062d45d8219e8f2a58b15828", "shape": [4096, 7168]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 256, "sha256": "f2c8223bac4dd38e48a4e77202982ad817cdc1c075ecc6dbcf5db2571aa68f01", "shape": [32]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "082d9a88015f921720f5cd86b41b7949228019eef170489403b10a656ab2b8d5", "shape": [4096, 7168]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "56bb72785db6360bd928a3c2c79b1690d8ee26b2e051186f4263bab28ff44892", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "93bd82d58e4b88c4b5674469a6b2078ac5824ea0522a9baaaee0e10ad446a5ee", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "93bd82d58e4b88c4b5674469a6b2078ac5824ea0522a9baaaee0e10ad446a5ee", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 512, "sha256": "446e62094a6eeb8b90a65ee6ff198456431a2a70944fbedb004cf87680c164c2", "shape": [8, 8]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 352321536, "sha256": "69c619921767f30913c3afebd4948e0a1eaf811926c321b1081cb02d2529d07c", "shape": [4, 6144, 7168]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 176160768, "sha256": "9700053beab71cd76cce1dfe504a9e4977a22fa1eac7bbecd0e12c708f2066e0", "shape": [4, 7168, 3072]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "a6e1a461d647aec353b6fbcc3941339c4c610d3d48ffb4fce0ef2bacf02e64d6", "shape": [4096, 7168]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 256, "sha256": "f2c8223bac4dd38e48a4e77202982ad817cdc1c075ecc6dbcf5db2571aa68f01", "shape": [32]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "656ead7a2104ba268f7625695bc0ff225e2d894cb9a600c1498edca24218b0cf", "shape": [4096, 7168]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "56bb72785db6360bd928a3c2c79b1690d8ee26b2e051186f4263bab28ff44892", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "2a390e8f0ef31c11f378234dc3a1b46c395a9793ed5a4ca91512031bb38a46e1", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "2a390e8f0ef31c11f378234dc3a1b46c395a9793ed5a4ca91512031bb38a46e1", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 512, "sha256": "446e62094a6eeb8b90a65ee6ff198456431a2a70944fbedb004cf87680c164c2", "shape": [8, 8]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 352321536, "sha256": "b6425a1bca63d779a37c5d038f5e4a5b2802235e96eda3ae2dab33180f6207c6", "shape": [4, 6144, 7168]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 176160768, "sha256": "47c64a55579dea92fac2b105c0b30b5f51a4b3cbc28f4ed0339a8162f0556b42", "shape": [4, 7168, 3072]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "644258360ca5ffc48d52443b4597bcf903377901fff7f7d2a438f425d8c1d2db", "shape": [4096, 7168]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 256, "sha256": "f2c8223bac4dd38e48a4e77202982ad817cdc1c075ecc6dbcf5db2571aa68f01", "shape": [32]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "ee54e52427d9183c96a68be7def70dbd593b9e50b653235ad90dd8c4eb95be94", "shape": [4096, 7168]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "56bb72785db6360bd928a3c2c79b1690d8ee26b2e051186f4263bab28ff44892", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "91cd10ed60501f1069bd77aa2bd906699da4412b5a8122a7dbfa7ab31437da9e", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "91cd10ed60501f1069bd77aa2bd906699da4412b5a8122a7dbfa7ab31437da9e", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 512, "sha256": "446e62094a6eeb8b90a65ee6ff198456431a2a70944fbedb004cf87680c164c2", "shape": [8, 8]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 352321536, "sha256": "d2e7c671f0df521c43eff17a9dbe9256468d774e0d7c9443f2887752dfcda586", "shape": [4, 6144, 7168]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 176160768, "sha256": "719b4c9f7296262e3ae4e913672c61870dd1ec39a0962060af28e7122ea348ec", "shape": [4, 7168, 3072]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "9a67580fd4942fbfc0699c56bbf6b25d14559bf56d09537b87c38f55e5ccf365", "shape": [4096, 7168]}
+            },
+            {
+              "all_counts": {"dtype": "torch.int64", "nbytes": 256, "sha256": "f2c8223bac4dd38e48a4e77202982ad817cdc1c075ecc6dbcf5db2571aa68f01", "shape": [32]},
+              "dy": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "5261cfb65201e52688783a865eb05258dc1f3b0cb5632aa0cf3f8994580ba858", "shape": [4096, 7168]},
+              "ids": {"dtype": "torch.int32", "nbytes": 98304, "sha256": "56bb72785db6360bd928a3c2c79b1690d8ee26b2e051186f4263bab28ff44892", "shape": [4096, 6]},
+              "p_float_values": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "5a83bc5c3946b076643e787aa748fc77203be0ba9e793f90e165147207155970", "shape": [4096, 6]},
+              "p_storage": {"dtype": "torch.float32", "nbytes": 98304, "sha256": "5a83bc5c3946b076643e787aa748fc77203be0ba9e793f90e165147207155970", "shape": [4096, 6]},
+              "source_to_destination_rows": {"dtype": "torch.int64", "nbytes": 512, "sha256": "446e62094a6eeb8b90a65ee6ff198456431a2a70944fbedb004cf87680c164c2", "shape": [8, 8]},
+              "w1": {"dtype": "torch.bfloat16", "nbytes": 352321536, "sha256": "690e1bc0a8d296e896a2c5c222bcc052a95ea70167ebed53ca1af38c45ecc115", "shape": [4, 6144, 7168]},
+              "w2": {"dtype": "torch.bfloat16", "nbytes": 176160768, "sha256": "1f9508ad01b75493a3558d021e46de06ab366b62a4cd06b05740d2ddc8603aba", "shape": [4, 7168, 3072]},
+              "x": {"dtype": "torch.bfloat16", "nbytes": 58720256, "sha256": "4eb96b8880fe8cb3cfa22fc9511361b8c8b837e37633b6b92fc6c4472c1dc387", "shape": [4096, 7168]}
+            }
+          ]
+        }
+      }
+    }
+  }
+}

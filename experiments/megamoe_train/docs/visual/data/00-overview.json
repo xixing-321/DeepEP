@@ -29,12 +29,12 @@
       "subtitle": "X、expert IDs、p、W1、W2",
       "symbol": "MegaMoeBF16Train.forward",
       "description": [
-        "调用方已完成路由，提供每个 token 的专家 ID 和路由权重 p。算子边界不重新执行 router。默认示例使用 Ascend950、H7168、F3072、BF16 保存和 canonical 专家权重。"
+        "调用方已完成路由，提供每个 token 的专家 ID 和路由权重 p。p 支持 BF16 或 FP32，算子边界不重新执行 router。默认数值示例使用 Ascend950、H7168、F3072、BF16 p、BF16 保存和 canonical 专家权重。"
       ],
       "reads": [
         "X [M,H] BF16",
         "IDs [M,T] int32",
-        "p [M,T] BF16",
+        "p [M,T] BF16 或 FP32",
         "W1 [E,2F,H]、W2 [E,H,F]"
       ],
       "writes": [],
@@ -101,7 +101,7 @@
       "sources": [
         {
           "path": "experiments/megamoe_train/python/deep_ep_experimental/megamoe_train/bf16.py",
-          "anchor": "        self._runtime = _TrainRuntime(ep_group, local_mem_size, timeout)",
+          "anchor": "        self._runtime = _TrainRuntime(ep_group, local_mem_size, timeout, debug_collectives=debug_collectives)",
           "before": 3,
           "after": 9
         }
@@ -138,7 +138,7 @@
       "sources": [
         {
           "path": "experiments/megamoe_train/csrc/kernels/bf16/mega_moe_bf16_forward.hpp",
-          "anchor": "__aicore__ inline void MegaMoeBF16Forward::Process()",
+          "anchor": "__aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::Process()",
           "after": 19
         }
       ],
@@ -199,7 +199,7 @@
       "sources": [
         {
           "path": "experiments/megamoe_train/csrc/kernels/bf16/mega_moe_bf16_backward.hpp",
-          "anchor": "__aicore__ inline void MegaMoeBF16Backward::Process()",
+          "anchor": "__aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::Process()",
           "after": 15
         }
       ],

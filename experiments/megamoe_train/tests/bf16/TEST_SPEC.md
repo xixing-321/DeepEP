@@ -1,17 +1,16 @@
-# MegaMoE BF16 典型尺寸测试规范
+# MegaMoE BF16 训练测试规范
 
-更新日期：2026-11-05。当前 [cases.json](cases.json) 仅发布 12 条典型模型尺寸用例：
-Flash、Pro、GLM 各取每 rank M=512、2048、4096、8192。
-其他通用边界、数据分布、保存模式和历史矩阵用例已在仓库外本地归档，不属于当前发布清单。
-清单与设备验收分开记录；设备精度、性能结果对应具体源码提交与构建产物。清单存在不代表
-设备验收通过。
+当前 [cases.json](cases.json) 保留 12 条典型模型尺寸用例：Flash、Pro、GLM 各取
+每 rank M=512、2048、4096、8192；另有 24 条路由权重类型/保存模式用例及 6 条 FP32
+Gather 边界用例。其他历史数据分布和矩阵用例仍在仓库外归档，不自动恢复。
+清单与设备验收分开记录；设备精度、性能结果对应具体源码提交与构建产物。
 
 ## 1. 范围与模型参数
 
 范围为 Ascend950、CANN 9.2、BF16 训练公共接口的前向、四项反向梯度及独立计时。
 模型参数取自用户提供的 Flash、Pro、GLM 配置；使用合成输入和缩减专家数，
 不加载真实 checkpoint，不复现模型 router、共享专家或量化计算。
-发布清单的 12 条用例统一使用 BF16 保存；`mxfp8` 与 `auto` 保存形式未纳入本规范验收，按实验性质对待。已有的 MXFP8 运行仅为诊断对照（见第 5 节），不构成验收。
+典型模型清单的 12 条用例统一使用 BF16 保存；另有 dtype 专项覆盖 `bf16/none/mxfp8/auto`，用于检查类型与保存模式的组合。`mxfp8` 与 `auto` 仍按实验性质对待，清单存在和诊断对照不构成设备验收（见第 5 节）。
 
 | 用例前缀 | hidden H | SwiGLU F / GMM1 N | TopK | 每 rank 专家数 | clipping | 路由权重缩放 | 条数 |
 | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: |
@@ -27,7 +26,7 @@ Flash、Pro、GLM 各取每 rank M=512、2048、4096、8192。
 | `m8192` | 8192 | 8K token，覆盖持续多块执行与较大参考数据 | 12288 | 8192 |
 
 前缀与后缀组合即 12 个唯一 ID，例如 `flash_m512`、`pro_m4096`、`glm_m8192`。
-全部使用 balanced 路由、random 数据、`save_gmm1_output=bf16` 和 seed=20260825。
+这 12 条使用 balanced 路由、random 数据、BF16 路由权重、`save_gmm1_output=bf16` 和 seed=20260825。
 均衡路由下每专家行数为 M*TopK/E_local，每 rank 接收 M*TopK 条路由。
 
 M 是进入算子的每 rank token 总数，不能直接等同于模型序列长度 S。
@@ -38,9 +37,19 @@ EP 来自设备列表，本组按 EP2/4/8 检查配置合法性，设备资格�
 ## 2. 输入生成与反向含义
 
 单入口是 [test_mega_moe.py](test_mega_moe.py)。每个 source rank 和输入流使用
-独立、固定种子的 Torch CPU Generator；所有参考与融合实现共用同一份 BF16 输入快照。
+独立、固定种子的 Torch CPU Generator；所有参考与融合实现共用同一份 CPU 输入快照。
 x/dy 从 [-0.1,0.1] 均匀采样，w1/w2 从 [-1,1] 均匀采样；路由权重由
-FP32 softmax(logits) 乘模型缩放系数后转换为 BF16。路由 ID 固定、合法且每 token 不重复。
+FP32 softmax(logits) 乘模型缩放系数后按以下选择定型。路由 ID 固定、合法且每 token 不重复。
+
+| 输入选择 | CLI | 用途 |
+| --- | --- | --- |
+| BF16，旧默认 | `--topk-weight-dtype bf16` | 原 BF16 输入行为 |
+| FP32，BF16 有效位 | `--topk-weight-dtype fp32 --topk-weight-values bf16-rounded` | 与同 seed 的 BF16 p.float() 逐位相同；其余输入完全一致 |
+| FP32，完整有效位 | `--topk-weight-dtype fp32` | 默认 full-precision，保留 softmax 的额外有效位，检测隐式降精 |
+
+`--topk-weight-values full-precision` 只允许 FP32。snapshot、NPU BigOp、契约参考和融合
+输入保留所选 p 类型，CPU 真值直接提升到 FP64。dtopk_weights 与 p 类型相同；
+y、dx、dw1、dw2 保持 BF16。每次调用所有 EP rank 必须使用相同 p 类型。
 
 本测试将固定随机 dy 作为上游梯度，执行 y.backward(dy)，数学上对应测试损失
 sum(y*dy)。随机的是反向输入，dx、dtopk_weights、dw1、dw2 都由实际反向计算得到。
@@ -49,8 +58,9 @@ sum(y*dy)。随机的是反向输入，dx、dtopk_weights、dw1、dw2 都由实�
 ## 3. 参考与验收
 
 - [cpu_reference.py](cpu_reference.py)：Torch CPU FP64 前向和 autograd 真值，不插入 BF16 中间舍入。
-- [npu_baseline.py](npu_baseline.py)：`fp32-boundaries-v2` NPU BigOp 作为 ATK 误差基线，
-  使用 FP32 激活、导数、dp 乘积/归约和按 TopK slot 顺序的 FP32 Y/dX 归并，最终张量写回 BF16。
+- [npu_baseline.py](npu_baseline.py)：`fp32-boundaries-v3-topk-dtype` NPU BigOp 作为 ATK 误差基线，
+  使用 FP32 激活、导数、dp 乘积/归约和按 TopK slot 顺序的 FP32 Y/dX 归并；
+  Y/dX 最终写 BF16，dp 写输入 p 的 BF16/FP32 类型，矩阵边界仍为 BF16。
   两个参考角色复用公共数值实现；BF16 保存模式下，ATK 和混合容差直接复用同一份小算子结果。
   保存模式仅决定 Gate/Up 的保存、重算或解码，不选择不同的舍入规则。
 - [atk_compare.py](atk_compare.py)：使用 ATK 26.9.8/private 0.1.0 的
@@ -62,15 +72,25 @@ ATK 最大/平均/RMSE 误差比例门限为 5/1.5/1.5，小值域数量比例�
 BF16 辅助混合容差为 atol=rtol=2^-7、匹配比例>=99%，
 最大绝对误差<=max(0.1,32*ULP)。当前测试要求混合容差、ATK 和 counts 均通过；
 辅助参考不是独立 CPU 真值，混合容差通过不能覆盖 ATK 失败。
+FP32 dtopk_weights 沿用已有 FP32 混合门禁：atol=rtol=2^-13、匹配比例>=99%，
+最大绝对误差<=max(0.01,32*ULP)。ATK actual 和 benchmark 保持同一输出 dtype，
+golden 保持 FP64。
 参考实现派生自 `fft__/ascend_deepep_hkq`（`568ac7c`），只取测试侧代码。
 
 ## 4. 执行方式
 
 辅助参考的 CPU 回归使用 `python -m unittest discover -s experiments/megamoe_train/tests/bf16 -p test_reference_contract.py -v`。
-它需要 CPU Torch，检查公共 FP32 H/dH、dp、BF16 输出边界、clipping、按 slot 归并、保存复用，
-以及原有 FP64 真值和 MXFP8 诊断重放；不启动 NPU 或 ATK。
+数值项需要 CPU Torch，检查公共 FP32 H/dH、dp、BF16 输出边界、clipping、按 slot 归并、保存复用，
+以及 FP32 p 的有效位、dP dtype、同输入变体、FP64 真值和 MXFP8 诊断重放；不启动 NPU 或 ATK。
+CLI 默认值、合法参数及用例覆盖检查不依赖 Torch；没有 Torch 时数值项显示 SKIP，不能计为通过。
 
-`priority`、`model`、`all` 当前均选择这 12 条，不再提供已归档的 smoke/core/extended 套件。
+`priority`、`model` 保持选择这 12 条；`dtype` 选择 24 条 H256/F512/M129 小用例，
+覆盖 BF16、BF16-rounded FP32、full-precision FP32 三类 p，逐一组合
+bf16/none/mxfp8/auto 与 clipping 0/0.1。`gather` 选择六条 FP32 full-precision
+用例：M8191/8192/8193、TopK4 或 TopK8，对应 R=M*TopK 为
+32764/32768/32772 和 65528/65536/65544，覆盖 32768 元素窗口的边界和第三窗口尾块。
+exact 数学边界由布局 CPU 测试覆盖；这些 NPU shape 不声称逐整数扫描窗口边界。
+`all` 选择全部 42 条，不再提供已归档的 smoke/core/extended 套件。
 `--case-id` 可重复指定，仅选择清单内的 ID。套件参数由 JSON 决定，不被单例 shape 参数覆盖。
 `--list-cases` 不导入 Torch/ATK，不启动设备：
 
@@ -89,9 +109,23 @@ python -u experiments/megamoe_train/tests/bf16/test_mega_moe.py 0,1 \
 ```
 
 `--skip precision` 仅运行有限值、计数检查和性能计时，不依赖 ATK；不加 --skip 则先精度后性能。
-性能按源仓 `test/bigop_fused`（`ascend_deepep_hkq@f575fc1`，只取测试侧代码）的口径给出三个同步 Event 区间（前向、反向、前向+反向），`--warmup`/`--loops` 各一组样本，窗口前后各同步一次，不构建也不读取设备 Timer；报告把两侧记作 `megamoe_bf16` 与 `baseline`。`--baseline on`（默认）另测移植的 dropless 小算子链（permute、dispatch、GMM1、带路由权重的 SwiGLU、GMM2、combine、加权 unpermute），与算子共用同一份路由、权重和上游梯度，GEMM 数量对齐（`none` 重算 GMM1，其余复用保存的 Gate/Up），输出各口径 speedup；`--baseline off` 只测 MegaMoE BF16。三个口径同时给 MFU（RFK 模型的 GMM FLOPs ÷ 432 TFLOPS 峰值）与 roofline（源仓 410.4 TFLOPS 分母的 floor/measured/overhead），`floor ÷ measured` 即相对该降额上限的达成率，比同口径 MFU 高约 5%，因此不再单独存百分比字段；区间内含 alltoall/permute/激活，属算子级 GMM 利用率，不是模型级 MFU。baseline 只作信息对照，不参与 PASS/FAIL，无法建立 HCCL 子组或超过 16 GiB 打包路由预算时记 `SKIPPED` 及原因。日志级由 `--log` 控制，默认 `quiet`，排查阻塞时用 `rank0`（保留 rank 0 的阶段日志与 `[PERF] stage` 标记）。
+性能按源仓 `test/bigop_fused` 的口径给出三个同步 Event 区间（前向、反向、前向+反向），`--warmup`/`--loops` 各一组样本，窗口前后各同步一次，不构建也不读取设备 Timer；报告把两侧记作 `megamoe_bf16` 与 `baseline`。`--baseline on`（默认）另测移植的 dropless 小算子链（permute、dispatch、GMM1、带路由权重的 SwiGLU、GMM2、combine、unpermute），与算子共用同一份路由、权重和上游梯度，GEMM 数量对齐（`none` 重算 GMM1，其余复用保存的 Gate/Up），输出各口径 speedup；`--baseline off` 只测 MegaMoE BF16。三个口径同时给 MFU（RFK 模型的 GMM FLOPs ÷ 432 TFLOPS 峰值）与 roofline（源仓 410.4 TFLOPS 分母的 floor/measured/overhead），`floor ÷ measured` 即相对该降额上限的达成率，比同口径 MFU 高约 5%，因此不再单独存百分比字段；区间内含 alltoall/permute/激活，属算子级 GMM 利用率，不是模型级 MFU。baseline 只作信息对照，不参与 PASS/FAIL，无法建立 HCCL 子组或超过 16 GiB 打包路由预算时记 `SKIPPED` 及原因。
+性能 baseline 与 ATK 的精度 BigOp 分开：保留移植源链的激活边界，不模拟 MXFP8 保存压缩；
+p 的通信和 dP 类型随输入，FP32 p 乘权后的 Hp 转回 BF16 后再进入 GMM。
+性能 baseline 的初始测试侧来源为 `ascend_deepep_hkq@f575fc1`。日志级由 `--log` 控制，
+默认 `quiet`，排查阻塞时用 `rank0`（保留 rank 0 的阶段日志与 `[PERF] stage` 标记）。
 默认跨用例复用 worker/runtime，输入和参考每次重新计算；`--isolate-cases` 使用独立执行器。
 CPU FP64 参考和完整权重梯度可能占用较多主机内存，需要先核对实际容器资源。
+
+类型与窗口专项将上例 `--suite priority` 分别替换为 `--suite dtype`、`--suite gather`。
+M8192/TopK16 的 131072 路由大用例保留为手动单例，不加入 all 的默认范围；获准设备和资源充足时：
+
+```bash
+python -u experiments/megamoe_train/tests/bf16/test_mega_moe.py 0,1 \
+  --seq 8192 --hidden 256 --ffn 512 --topk 16 --expert-per-rank 8 \
+  --topk-weight-dtype fp32 --skip performance --atk-ratios 5 1.5 1.5 \
+  --shmem-ip-port tcp://127.0.0.1:29862
+```
 
 ### 性能指标定义
 
@@ -110,9 +144,9 @@ MFU          = flops / measured / 432e12  # 裸峰值分母
 | backward | 12 | dHp 2 + dW2 2 + dX 4 + dW1 4；`--save-gmm1-output none` 重算 GMM1 时为 16 |
 | complete | 18 / 22 | forward + backward |
 
-因此 `floor` 三口径恒为 **1 : 2 : 3**，且与路由分布无关（只与 M/topk/F/K 有关）。三个前提同时成立才成立：恒定 410.4 TF；窗口 100% 为 GEMM（通信、permute、激活、launch 都被忽略，所以它是**下界**）；路由不丢行（行数恰为 `M×topk`，容量不足导致截断时 floor 偏高）。实测低于 floor 说明常量或 RFK 模型有误，不是算子超过硬件。
+保存模式下 `floor` 三口径为 **6 : 12 : 18 = 1 : 2 : 3**；`none` 重算模式为 **6 : 16 : 22**，且与路由分布无关（只与 M/topk/F/K 有关）。三个前提同时成立才成立：恒定 410.4 TF；窗口 100% 为 GEMM（通信、permute、激活、launch 都被忽略，所以它是**下界**）；路由不丢行（行数恰为 `M×topk`，容量不足导致截断时 floor 偏高）。实测低于 floor 说明常量或 RFK 模型有误，不是算子超过硬件。
 
-`--suite` 结束时 rank 0 打印汇总表，列为：`M/H/F/tk/E`（`E = EP × expert_per_rank`，每专家行数 `M×tk/E` 决定 ready 相关分支）、三口径中位时延、`speedup f/b/fb`（baseline ÷ megamoe_bf16）、`MFU% f/b/fb`、`floor f/b/fb`、`fb_overhead`（`complete` 的 measured − floor，即该窗口内的非 GEMM 时间）。三口径独立采样，`fb_overhead` 不等于 `fwd_overhead + bwd_overhead`，不要相加。
+`--suite` 结束时 rank 0 打印汇总表，列为：`M/H/F/tk/E`（`E = EP × expert_per_rank`，均衡路由下每专家行数 `EP×M×tk/E = M×tk/E_local` 决定 ready 相关分支）、三口径中位时延、`speedup f/b/fb`（baseline ÷ megamoe_bf16）、`MFU% f/b/fb`、`floor f/b/fb`、`fb_overhead`（`complete` 的 measured − floor，即该窗口内的非 GEMM 时间）。三口径独立采样，`fb_overhead` 不等于 `fwd_overhead + bwd_overhead`，不要相加。
 
 每次输出新目录，保留 suite_summary.json、suite.log、逐用例 summary.json 和逐 rank 指标。
 ATK 失败保留 actual/benchmark/golden 张量。数值失败使整套失败；运行错误停止后续用例，
@@ -122,21 +156,12 @@ dirty diff、环境、卡号、命令和 seed。
 
 ## 5. 未覆盖范围
 
-当前清单只用于典型尺寸的算子级回归，不构成发布资格。未覆盖：其他路由与数据分布、非 BF16
-保存模式、完整专家数（清单使用缩减专家）、多机与 EP 子组、并发与重复调用生命周期、真实模型
-router 与共享专家、多 microbatch，以及整网 loss 收敛。
+dtype/gather 清单及 CPU 回归不等于设备验证。BF16/FP32 p 的完整保存模式、
+窗口边界与手动大用例需在匹配 wheel 上逐项记录设备结果；历史 BF16 报告不能代替这些验收。
 
-这只是具名旧快照的证据，不是当前目标分支新二进制的资格验证。
-该历史记录沿用当时的原始 BF16 BigOp。`fp32-boundaries-v2` 升级激活及归并精度后，
-结果应另起报告并标注参考版本，保留旧记录；CPU FP64 真值、输入和精度阈值保持不变。
-当前不声称已覆盖其他路由、数据分布、保存模式、完整专家数、多机、并发、生命周期或真实训练收敛。
+本清单是算子级回归，不构成发布资格，也不替代其他路由与数据分布、完整专家数、多机与 EP
+子组、并发及生命周期、多 microbatch、真实模型 router/共享专家或整网 loss 收敛的专项验收。
 
-2026-11-05 对 PR #18 的同输入缓存复核：GLM 四个 M 档位的 dp 在
-`fp32-boundaries-v2` BigOp 下通过 ATK（4×8=32 个 rank-output），复用原有融合结果与
-CPU FP64 真值，仅重算 BigOp。其余四项输出没有在这轮缓存复核中重测。另以仓库外临时
-脚本完成 EP2、H7168 的 BF16/none/MXFP8 完整块、尾块及 clipping 前后向对照，18 个
-rank-case 全部通过现有混合容差和精确 counts；此轮未执行 CPU FP64 或 ATK。
-原始结果与临时脚本保存在仓库外，PR 说明记录各轮的版本与具体覆盖。
 H7168 的 `ptrDX` 中间量存在已知精度差异：中间量与最终梯度的验收分离，最终梯度通过不代表该中间量逐元素达标；过程数据保存在协作归档，不随公开导出发布。
 
-性能测试的实测数据不写入本文件，随每次运行的报告保存。
+历史精度和性能实测数据随每轮运行报告保存，不写入本规范。

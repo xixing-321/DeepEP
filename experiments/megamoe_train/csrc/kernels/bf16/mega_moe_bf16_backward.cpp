@@ -13,6 +13,7 @@
 using namespace AscendC;
 using namespace MegaMoeImpl;
 
+template <typename TopkWeightT>
 __mix__(1, 2) __global__ __aicore__
     void mega_moe_bf16_backward(GM_ADDR context, GM_ADDR gradY, GM_ADDR topkWeights, GM_ADDR weight1, GM_ADDR weight2,
                                 GM_ADDR gradX, GM_ADDR gradTopkWeights, GM_ADDR gradWeight1, GM_ADDR gradWeight2,
@@ -20,7 +21,7 @@ __mix__(1, 2) __global__ __aicore__
                                 MegaMoeTilingData tilingData, uint32_t splitExperts)
 {
     InitSocState();
-    MegaMoeBF16Backward op;
+    MegaMoeBF16Backward<TopkWeightT> op;
     op.Init(context, gradY, topkWeights, weight1, weight2, gradX, gradTopkWeights, gradWeight1, gradWeight2,
             trainingSavedState, dispatchOutput, backwardWorkspace, &tilingData, splitExperts);
     op.Process();
@@ -34,7 +35,13 @@ extern "C" ASCEND_MEGAMOE_EXPORT void deepep_train_mega_moe_bf16_backward_ready_
 {
     (void)ffts_addr;
     const auto& tiling = *reinterpret_cast<const MegaMoeTilingData*>(tiling_host);
-    mega_moe_bf16_backward<<<block_dim, nullptr, stream>>>(
-        context, grad_y, topk_weights, weight1, weight2, grad_x, grad_topk_weights, grad_weight1, grad_weight2,
-        training_saved_state, dispatch_output, backward_workspace, tiling, split_experts);
+    if (tiling.topkWeightType == 1U) {
+        mega_moe_bf16_backward<float><<<block_dim, nullptr, stream>>>(
+            context, grad_y, topk_weights, weight1, weight2, grad_x, grad_topk_weights, grad_weight1, grad_weight2,
+            training_saved_state, dispatch_output, backward_workspace, tiling, split_experts);
+    } else {
+        mega_moe_bf16_backward<bfloat16_t><<<block_dim, nullptr, stream>>>(
+            context, grad_y, topk_weights, weight1, weight2, grad_x, grad_topk_weights, grad_weight1, grad_weight2,
+            training_saved_state, dispatch_output, backward_workspace, tiling, split_experts);
+    }
 }

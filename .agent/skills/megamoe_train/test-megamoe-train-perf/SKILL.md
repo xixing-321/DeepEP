@@ -39,8 +39,8 @@ python -c "import torch, torch_npu, deep_ep_experimental.megamoe_train"
 npu-smi info | sed -n '1,40p'
 ```
 
-记录待测源码 commit 与 dirty 状态、实际原生库路径和 SHA256；只换 SO 的对照必须保持 Host、
-CANN、CATLASS 与输入一致。
+记录待测源码 commit 与 dirty 状态、实际原生库路径和 SHA256；使用 Host/设备库匹配的完整
+wheel，并保持 CANN、CATLASS 与输入一致。BF16/FP32 p 的新 tiling 布局不能混用旧 Host/设备 SO。
 
 ## 2. 选择 case 与 EP
 
@@ -53,7 +53,7 @@ python experiments/megamoe_train/tests/bf16/test_mega_moe.py "$MEGAMOE_TEST_DEVI
 ```
 
 `--list-cases` 只读配置，不导 Torch、不碰设备。四个 M 档（512/2048/4096/8192）横跨内核的
-ready 分支门槛（每专家行数 `M×tk/E`），只测 4096/8192 时的结论不能外推到 2048/512。
+ready 分支门槛（均衡路由下每专家行数 `M×tk/E_local`），只测 4096/8192 时的结论不能外推到 2048/512。
 用户未指定范围时按 `priority`（12 条）跑；形状与开关取自清单，suite 内不允许覆盖。
 
 ## 3. 执行
@@ -87,7 +87,7 @@ python -u experiments/megamoe_train/tests/bf16/test_mega_moe.py "$MEGAMOE_TEST_D
 关键量：`floor = RFK × M × topk × F × K ÷ 410.4e12`（前向 6、反向 12/16、complete 18/22）；
 `MFU = flops ÷ measured ÷ 432`；`overhead = measured − floor` 是该窗口的非 GEMM 时间。
 
-- `floor` 与路由分布无关，三口径恒为 `1:2:3`；它是**下界**（假设窗口 100% 是 GEMM）。
+- `floor` 与路由分布无关；保存模式三口径为 `6:12:18`，none 重算为 `6:16:22`；它是**下界**（假设窗口 100% 是 GEMM）。
 - `MFU` 的分子只有 GMM FLOPs，窗口内还含 alltoall/permute/激活，因此是**算子级 GMM 利用率**，
   不是模型级 MFU；`432` 沿用源仓注释，引用绝对利用率前先与官方规格核对。
 - 三个口径独立采样，`complete` 的 overhead 不等于前向与反向相加。

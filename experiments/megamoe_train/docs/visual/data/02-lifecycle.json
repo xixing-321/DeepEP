@@ -42,7 +42,7 @@
       "sources": [
         {
           "path": "experiments/megamoe_train/python/deep_ep_experimental/megamoe_train/bf16.py",
-          "anchor": "    def __init__(self, ep_group, local_mem_size, *, timeout=120):",
+          "anchor": "    def __init__(self, ep_group, local_mem_size, *, timeout=120, debug_collectives=False):",
           "after": 15
         }
       ]
@@ -70,7 +70,7 @@
       "sources": [
         {
           "path": "experiments/megamoe_train/python/deep_ep_experimental/megamoe_train/bf16.py",
-          "anchor": "        self._runtime = _TrainRuntime(ep_group, local_mem_size, timeout)",
+          "anchor": "        self._runtime = _TrainRuntime(ep_group, local_mem_size, timeout, debug_collectives=debug_collectives)",
           "after": 8
         },
         {

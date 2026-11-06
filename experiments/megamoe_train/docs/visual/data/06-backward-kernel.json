@@ -92,7 +92,7 @@
       "sources": [
         {
           "path": "experiments/megamoe_train/csrc/kernels/bf16/mega_moe_bf16_backward.hpp",
-          "anchor": "__aicore__ inline void MegaMoeBF16Backward::GatherRoutes()",
+          "anchor": "__aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::GatherRoutes()",
           "before": 0,
           "after": 13
         },
@@ -158,7 +158,7 @@
       "sources": [
         {
           "path": "experiments/megamoe_train/csrc/kernels/bf16/mega_moe_bf16_backward.hpp",
-          "anchor": "__aicore__ inline void MegaMoeBF16Backward::DispatchTokensBackward(",
+          "anchor": "__aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::DispatchTokensBackward(",
           "before": 0,
           "after": 22
         },
@@ -368,11 +368,11 @@
       "symbol": "ComputeFusedFullTile / ComputeForwardAux / ComputeSwigluGradImpl",
       "description": [
         "由保存的 Gate/Up 重建与前向相同的 FP32 H，乘 p 后一次舍入写出 BF16 Hp。dH=FP32(dHp)×FP32(p) 留在寄存器中，参与激活导数计算；最后将 dGate/dUp 分别舍入 BF16，拼成 dZ。",
-        "dp 使用 FP32(dHp)×H，每行每 256 列生成一个 FP32 partial，跨 tile 继续用 FP32 归约，最终路由权重梯度舍入为 BF16。",
+        "dp 使用 FP32(dHp)×H，每行每 256 列生成一个 FP32 partial，跨 tile 继续用 FP32 归约。最终 dtopk_weights 与 p 类型相同：BF16 舍入，FP32 保留归约结果。",
         "完整 128×256 tile 在一次读取中融合处理。尾块先产出 Hp/partial，再重读 Gate/Up 计算导数，两条路径使用相同的 FP32 H、dH 与 dp 乘积规则。"
       ],
       "reads": [
-        "Gate、Up、dHp、p 的 BF16 值"
+        "BF16 Gate、Up、dHp；原类型 BF16/FP32 p"
       ],
       "writes": [
         "ptrHp：BF16 Hp",
@@ -382,7 +382,7 @@
       "waits": [
         "dHp tile 读入完成后才覆盖同地址 Hp"
       ],
-      "formula": "R = BF16舍入；G、U、p、dHp 先提升到 FP32\ns = sigmoid(G)，S = SiLU(G)\nH = S × U                         # FP32\nHp = R(H × p)\ndH = dHp × p                      # FP32\ndGate = R((dH × U) × (s × (1 + G × (1 - s))))\ndUp = R(dH × S)\ndZ = (dGate, dUp)\ndp_tile = Σ_FP32(dHp × H)\ndp = R(Σ_FP32 dp_tile)",
+      "formula": "R = BF16舍入；G、U、p、dHp 均按 FP32 参与计算\ns = sigmoid(G)，S = SiLU(G)\nH = S × U                         # FP32\nHp = R(H × p)\ndH = dHp × p                      # FP32\ndGate = R((dH × U) × (s × (1 + G × (1 - s))))\ndUp = R(dH × S)\ndZ = (dGate, dUp)\ndp_tile = Σ_FP32(dHp × H)\ndp = cast_to_p_dtype(Σ_FP32 dp_tile)",
       "sources": [
         {
           "path": "experiments/megamoe_train/csrc/kernels/bf16/epilogue/block_epilogue_swiglu_backward_bf16.hpp",
@@ -627,7 +627,7 @@
       "sources": [
         {
           "path": "experiments/megamoe_train/csrc/kernels/bf16/mega_moe_bf16_backward.hpp",
-          "anchor": "__aicore__ inline void MegaMoeBF16Backward::GMM1DWPhase()",
+          "anchor": "__aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::GMM1DWPhase()",
           "before": 1,
           "after": 20
         },
@@ -739,27 +739,27 @@
       "lane": "b_all",
       "step": 18,
       "title": "归约 dp partial，再批量回送",
-      "subtitle": "每条 route 一个 BF16 梯度",
+      "subtitle": "每条 route 一个与 p 同类型的梯度",
       "symbol": "ReduceAndRouteTopkGrad / ReduceDpPartialBatch",
       "description": [
-        "P1 已将每行每 256 列的 FP32 乘积归约成 FP32 partial。P6按source/expert分段把这些partial批量搬入UB，用FP32完成最终F维归约，再舍入BF16，一次MTE3发送一批route标量到源rank的ptrD。没有再次乘p；dp是对独立路由权重输入求导。"
+        "P1 已将每行每 256 列的 FP32 乘积归约成 FP32 partial。P6按source/expert分段把这些partial批量搬入UB，用FP32完成最终F维归约，按输入p类型写出：BF16舍入、FP32保留。一次MTE3发送一批同类型route标量到源rank的ptrD。没有再次乘p；dp是对独立路由权重输入求导。"
       ],
       "reads": [
         "ptrDpProducts FP32 partials",
         "source/expert 前缀"
       ],
       "writes": [
-        "源 rank ptrD：紧凑 BF16 dp 表"
+        "源 rank ptrD：紧凑 dp 表，与 p 同类型"
       ],
       "waits": [
         "ptrD 的 dX 生命周期已结束",
         "routeBuf 上次发送完成"
       ],
-      "formula": "dp_route = R(Σ_FP32 dp_partial)\n跨 F tile 累加，R(x) 表示将最终结果舍入到 BF16",
+      "formula": "dp_route = cast_to_p_dtype(Σ_FP32 dp_partial)\n跨 F tile 以 FP32 累加，按 p 类型写出 BF16 或 FP32",
       "sources": [
         {
           "path": "experiments/megamoe_train/csrc/kernels/bf16/mega_moe_bf16_backward.hpp",
-          "anchor": "__aicore__ inline void MegaMoeBF16Backward::ReduceAndRouteTopkGrad()",
+          "anchor": "__aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::ReduceAndRouteTopkGrad()",
           "before": 4,
           "after": 12
         },
@@ -779,14 +779,14 @@
       "subtitle": "四项梯度分别交给框架",
       "symbol": "UnpermuteTopkGrad / Process exit",
       "description": [
-        "先跨rank确认dp发送完整，再按route逆置换把BF16标量恢复为[M,TopK]。这里是重排，不对同token的不同TopK槽求和。grad_x和dtopk_weights属于原token rank，dW1/dW2留在专家rank；整网router、共享专家和DP/FSDP同步由框架图继续处理。最后清理计数表并建立退出边界。"
+        "先跨rank确认dp发送完整，再按route逆置换，把与p同类型的BF16/FP32标量按原始位恢复为[M,TopK]。这里是重排，不对同token的不同TopK槽求和。grad_x和dtopk_weights属于原token rank，dW1/dW2留在专家rank；整网router、共享专家和DP/FSDP同步由框架图继续处理。最后清理计数表并建立退出边界。"
       ],
       "reads": [
         "ptrD 紧凑 dp 表",
         "expandedRowIdxGather"
       ],
       "writes": [
-        "grad_topk_weights [M,TopK] BF16",
+        "grad_topk_weights [M,TopK]，与 p 同类型的 BF16 或 FP32",
         "下一次调用可用的通信表"
       ],
       "waits": [
@@ -796,7 +796,7 @@
       "sources": [
         {
           "path": "experiments/megamoe_train/csrc/kernels/bf16/mega_moe_bf16_backward.hpp",
-          "anchor": "__aicore__ inline void MegaMoeBF16Backward::UnpermuteTopkGrad()",
+          "anchor": "__aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::UnpermuteTopkGrad()",
           "before": 0,
           "after": 18
         },

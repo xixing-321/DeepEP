@@ -150,7 +150,7 @@ const html = fs.readFileSync(path.join(visual, 'assets', 'page.html'), 'utf8')
   .replace('/*__DATA__*/', payload)
   .replace('/*__APP__*/', () => ['gmm2-pipeline.js', 'full-pipeline.js', 'reader.js'].map(file => fs.readFileSync(path.join(visual, 'assets', file), 'utf8')).join('\n'));
 fs.writeFileSync(path.join(visual, 'index.html'), html);
-let markdown = `# MegaMoE BF16 训练源码图解\n\n按项目结构、调用链、三核流水和内存复用逐层阅读。默认场景为 Ascend950、save=bf16、H7168/F3072、关闭 clipping。\n\n`;
+let markdown = `# MegaMoE BF16 训练源码图解\n\n按项目结构、调用链、三核流水和内存复用逐层阅读。默认场景为 Ascend950、save=bf16、H7168/F3072、BF16 路由权重 p、关闭 clipping。\n\n`;
 markdown += `源码快照：[${sourceCommit.slice(0, 7)}](${repoUrl}/tree/${sourceCommit})。\n\n[离线交互页面](index.html) · [完整调用点与源码](CALLPOINTS.md) · [维护方法](MAINTAINING.md)\n\n`;
 if (siteUrl) markdown += `[在线交互导览](${siteUrl})\n\n`;
 markdown += '**VS Code 一键定位**：按[扩展安装说明](vscode/README.md)安装一次，运行 **MegaMoE: 打开训练源码导览**。点击节点、阶段或等待查看讲解，点击 **打开源码** 或 **查看对应源码**，再在旁边的编辑器中定位到文件和行号。\n\n';

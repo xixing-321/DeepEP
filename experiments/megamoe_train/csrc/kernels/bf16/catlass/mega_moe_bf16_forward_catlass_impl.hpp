@@ -247,13 +247,13 @@ public:
 };
 
 template <bool DispatchTileReady = false, bool WaitForFullExpert = false,
-          uint32_t SaveMode = MegaMoeBF16Training::kSaveMxFp8, bool TransW = true>
+          uint32_t SaveMode = MegaMoeBF16Training::kSaveMxFp8, bool TransW = true, typename TopkWeightT = bfloat16_t>
 __aicore__ inline void GroupMatmulSwiglu(
     ForwardGroupMatmulParam<0, TransW>& gmm1Params,
-    MegaMoeBF16Impl::BlockEpilogueSwigluForwardBF16<Gmm1L1TileShape, true>& epilogueOp, const Params& params,
-    const AscendC::Shape<int64_t, int64_t, int64_t, int64_t>& problemShape, const GMMAddrInfo& gmmAddrInfo,
-    uint32_t& startBlockIdx, int32_t& vecSetSyncCom, uint32_t expertIdx, bool useTileReady,
-    uint32_t readyBlocksPerProducerPartition)
+    MegaMoeBF16Impl::BlockEpilogueSwigluForwardBF16<Gmm1L1TileShape, true, TopkWeightT>& epilogueOp,
+    const Params& params, const AscendC::Shape<int64_t, int64_t, int64_t, int64_t>& problemShape,
+    const GMMAddrInfo& gmmAddrInfo, uint32_t& startBlockIdx, int32_t& vecSetSyncCom, uint32_t expertIdx,
+    bool useTileReady, uint32_t readyBlocksPerProducerPartition)
 {
     using ReadyLayout = MegaMoeBF16Training::ForwardDispatchTileReadyLayout;
     static_assert(ReadyLayout::kReadyRows % GMM1_TILE_M == 0,
@@ -424,13 +424,13 @@ __aicore__ inline void GroupMatmulSwiglu(
 }
 
 template <bool DispatchTileReady = false, bool WaitForFullExpert = false,
-          uint32_t SaveMode = MegaMoeBF16Training::kSaveMxFp8, bool TransW = true>
+          uint32_t SaveMode = MegaMoeBF16Training::kSaveMxFp8, bool TransW = true, typename TopkWeightT = bfloat16_t>
 __aicore__ inline void GroupMatmulSwigluGm(
     ForwardGroupMatmulParam<0, TransW, true>& gmm1Params,
-    MegaMoeBF16Impl::BlockEpilogueSwigluForwardBF16<Gmm1L1TileShape, true>& epilogueOp, const Params& params,
-    const AscendC::Shape<int64_t, int64_t, int64_t, int64_t>& problemShape, const GMMAddrInfo& gmmAddrInfo,
-    uint32_t& startBlockIdx, uint32_t expertIdx, bool useTileReady, uint32_t readyBlocksPerProducerPartition,
-    uint64_t savedElementOffset)
+    MegaMoeBF16Impl::BlockEpilogueSwigluForwardBF16<Gmm1L1TileShape, true, TopkWeightT>& epilogueOp,
+    const Params& params, const AscendC::Shape<int64_t, int64_t, int64_t, int64_t>& problemShape,
+    const GMMAddrInfo& gmmAddrInfo, uint32_t& startBlockIdx, uint32_t expertIdx, bool useTileReady,
+    uint32_t readyBlocksPerProducerPartition, uint64_t savedElementOffset)
 {
     using ReadyLayout = MegaMoeBF16Training::ForwardDispatchTileReadyLayout;
     static_assert(ReadyLayout::kReadyRows % GMM1_TILE_M == 0,

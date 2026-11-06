@@ -12,16 +12,44 @@ from torch.autograd.function import once_differentiable
 
 from deep_ep._native import npu_api, require_native
 from deep_ep._runtime import Runtime, integer
+from deep_ep._store import StoreGroup
 
 
 class _TrainRuntime(Runtime):
     _megamoe_train = True
+
+    def validate_topk_weight_type(self, dtype, stage):
+        """Check dtype locally, with optional cross-rank dtype and phase checks."""
+        code = {torch.bfloat16: 0, torch.float32: 1}.get(dtype, -1)
+        if not self.debug_collectives:
+            if code < 0:
+                raise ValueError("topk_weights must be bfloat16 or float32")
+            return
+        local_values = [stage, code]
+        if isinstance(self.group, StoreGroup):
+            values = self.group.all_gather(local_values, "training TopK weight configuration")
+        else:
+            import torch.distributed as dist
+
+            backend = str(dist.get_backend(self.group))
+            with torch.inference_mode(False), torch.no_grad():
+                local = torch.tensor(
+                    local_values, dtype=torch.int64, device=f"npu:{self.device}" if backend == "hccl" else "cpu"
+                )
+                peers = [torch.empty_like(local) for _ in range(self.world_size)]
+            dist.all_gather(peers, local, group=self.group)
+            values = [value.cpu().tolist() for value in peers]
+        if any(value != values[0] for value in values):
+            raise ValueError("EP ranks must use the same forward/backward order and topk_weights dtype")
+        if code < 0:
+            raise ValueError("topk_weights must be bfloat16 or float32")
 
 
 class _MegaMoeBF16TrainFunction(torch.autograd.Function):
     @staticmethod
     def forward(ctx, op, x, ids, weights, w1, w2, max_recv, limit, mode):
         op._check_ready()
+        op._runtime.validate_topk_weight_type(weights.dtype, 0)
         result = op._executor.forward(x, ids, weights, w1, w2, max_recv, limit, mode)
         ctx.op = op
         ctx.max_recv, ctx.limit, ctx.mode = max_recv, limit, mode
@@ -35,6 +63,7 @@ class _MegaMoeBF16TrainFunction(torch.autograd.Function):
         weights, w1, w2, counts, saved, dispatch = ctx.saved_tensors
         op = ctx.op
         op._check_ready()
+        op._runtime.validate_topk_weight_type(weights.dtype, 1)
         result = op._executor.backward(
             grad_y.contiguous(),
             weights,
@@ -64,7 +93,7 @@ class MegaMoeBF16Train(torch.nn.Module):
     streams, and simultaneous inference/communication owners are unsupported.
     """
 
-    def __init__(self, ep_group, local_mem_size, *, timeout=120):
+    def __init__(self, ep_group, local_mem_size, *, timeout=120, debug_collectives=False):
         super().__init__()
         if ep_group is None:
             raise ValueError("Pass an existing EP ProcessGroup or StoreGroup")
@@ -72,7 +101,7 @@ class MegaMoeBF16Train(torch.nn.Module):
 
         self._npu = npu_api()
         self._stream = self._npu.current_stream()
-        self._runtime = _TrainRuntime(ep_group, local_mem_size, timeout)
+        self._runtime = _TrainRuntime(ep_group, local_mem_size, timeout, debug_collectives=debug_collectives)
         # Root Session memset must finish on every peer before any generation signal.
         self._runtime.barrier()
         native = require_native("MegaMoeBF16Train")
@@ -102,8 +131,10 @@ class MegaMoeBF16Train(torch.nn.Module):
     ):
         """Return (y, counts); autograd provides dX, dTopK, dW1 and dW2.
 
-        Floating inputs are contiguous BF16 tensors on the construction NPU;
-        expert IDs are int32. Weights use [E,2F,H]/[E,H,F], with legacy layouts
+        Inputs are contiguous tensors on the construction NPU. X and expert
+        matrices are BF16; TopK weights may be BF16 or FP32 and their gradient
+        has the same dtype. All EP ranks must agree on that dtype per call.
+        Expert IDs are int32. Weights use [E,2F,H]/[E,H,F], with legacy layouts
         [E,H,2F]/[E,F,H] retained. Counts are non-differentiable.
         """
         integer("max_recv_tokens", max_recv_tokens, 1, (1 << 31) - 1)

@@ -308,12 +308,12 @@
       "sources": [
         {
           "path": "experiments/megamoe_train/csrc/kernels/bf16/mega_moe_bf16_backward.hpp",
-          "anchor": "__aicore__ inline void MegaMoeBF16Backward::Process()",
+          "anchor": "__aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::Process()",
           "after": 16
         },
         {
           "path": "experiments/megamoe_train/csrc/kernels/bf16/mega_moe_bf16_backward.hpp",
-          "anchor": "__aicore__ inline void MegaMoeBF16Backward::GMM1GradReuseDOPhase()",
+          "anchor": "__aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::GMM1GradReuseDOPhase()",
           "after": 18
         }
       ]

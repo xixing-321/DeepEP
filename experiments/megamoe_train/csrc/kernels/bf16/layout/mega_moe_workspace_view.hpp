@@ -108,7 +108,10 @@ struct ForwardWorkspaceInfo {
         ptrFlagDispatchToGmm1 = base + workspaceSize;
         workspaceSize += Ops::Base::CeilAlign(SIZE_INT_32 * tilingData->expertPerRank * INT_CACHELINE, ALIGN_128);
         ptrDispatchedTopkWeights = base + workspaceSize;
-        workspaceSize += Ops::Base::CeilAlign(SIZE_BF_16 * tilingData->maxOutputSize, ALIGN_512);
+        workspaceSize += Ops::Base::CeilAlign(
+            static_cast<int64_t>(MegaMoeBF16Training::TopkWeightBytes(tilingData->topkWeightType)) *
+                tilingData->maxOutputSize,
+            ALIGN_512);
         ptrSavedTokenPerExpert = nullptr;
         savedStateSize = 0;
         transientWorkspaceSize = workspaceSize;
@@ -125,7 +128,7 @@ struct ForwardWorkspaceInfo {
             MegaMoeBF16Training::SaveGateUpAsMxFp8(tilingData->swigluLimit, tilingData->savedGateUpMode),
             tilingData->savedGateUpMode != MegaMoeBF16Training::kSaveNone,
             MegaMoeBF16Training::SaveGateUpClipMasks(tilingData->swigluLimit, tilingData->savedGateUpMode),
-            embeddedDispatchOutput);
+            embeddedDispatchOutput, MegaMoeBF16Training::TopkWeightBytes(tilingData->topkWeightType));
         ptrA = embeddedDispatchOutput ? savedStateBase + savedLayout.ptrAOffset : nullptr;
         ptrcumsumMM = savedStateBase + savedLayout.cumsumOffset;
         expandedRowIdx = savedStateBase + savedLayout.expandedRowIdxOffset;
@@ -176,7 +179,8 @@ struct ForwardWorkspaceInfo {
                                            GM_ADDR transientWorkspaceBase, const MegaMoeTilingData* tilingData)
     {
         InitSavedState(savedStateBase, tilingData, false);
-        const MegaMoeBF16Training::DispatchOutputLayout dispatchLayout(tilingData->k, tilingData->maxOutputSize);
+        const MegaMoeBF16Training::DispatchOutputLayout dispatchLayout(
+            tilingData->k, tilingData->maxOutputSize, MegaMoeBF16Training::TopkWeightBytes(tilingData->topkWeightType));
         ptrA = dispatchOutputBase + dispatchLayout.tokensOffset;
         ptrDispatchedTopkWeights = dispatchOutputBase + dispatchLayout.topkWeightsOffset;
         const MegaMoeBF16Training::ForwardTransientWorkspaceLayout transientLayout(
@@ -199,7 +203,8 @@ struct BackwardSavedStateInfo : ForwardWorkspaceInfo {
                                              const MegaMoeTilingData* tilingData)
     {
         InitSavedState(savedStateBase, tilingData, false);
-        const MegaMoeBF16Training::DispatchOutputLayout dispatchLayout(tilingData->k, tilingData->maxOutputSize);
+        const MegaMoeBF16Training::DispatchOutputLayout dispatchLayout(
+            tilingData->k, tilingData->maxOutputSize, MegaMoeBF16Training::TopkWeightBytes(tilingData->topkWeightType));
         ptrA = dispatchOutputBase + dispatchLayout.tokensOffset;
         ptrDispatchedTopkWeights = dispatchOutputBase + dispatchLayout.topkWeightsOffset;
         // Match the persistent-only backward view: no forward scratch aliases.
@@ -321,7 +326,8 @@ struct PeermemInfo {
         offset += static_cast<uint64_t>(tilingData->m) * tilingData->topK * tilingData->k * sizeof(bfloat16_t);
         ptrRoutedTopkWeights = base + offset;
         offset += Ops::Base::CeilAlign(
-            static_cast<int64_t>(tilingData->m) * tilingData->topK * static_cast<int64_t>(sizeof(bfloat16_t)),
+            static_cast<int64_t>(tilingData->m) * tilingData->topK *
+                static_cast<int64_t>(MegaMoeBF16Training::TopkWeightBytes(tilingData->topkWeightType)),
             static_cast<int64_t>(ALIGN_512));
         ptrD = base + offset;
     }

@@ -46,7 +46,7 @@
       "sources": [
         {
           "path": "experiments/megamoe_train/csrc/kernels/bf16/mega_moe_bf16_forward.hpp",
-          "anchor": "__aicore__ inline void MegaMoeBF16Forward::ProcessSelected()",
+          "anchor": "__aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::ProcessSelected()",
           "before": 1,
           "after": 10
         },
@@ -103,14 +103,14 @@
       "subtitle": "这里整理路由权重，不是专家 W1/W2",
       "symbol": "TryGatherTopkWeights / GatherRoutedTopkWeights",
       "description": [
-        "按 expandedRowIdx 将原 [M,TopK] 概率整理到 SHMEM ptrRoutedTopkWeights。每条排序 route 对应一个 BF16 p，X 与 p 使用相同排序行号。批量 gather 不适用时走 GatherRoutedTopkWeights 回退，数据顺序与结果契约相同。"
+        "按 expandedRowIdx 将原 [M,TopK] 概率整理到 SHMEM ptrRoutedTopkWeights。每条排序 route 对应一个原类型 p，BF16/FP32 均保留原始位模式，X 与 p 使用相同排序行号。批量 gather 不适用时走 GatherRoutedTopkWeights 回退，数据顺序与结果契约相同。"
       ],
       "reads": [
         "原 topk_weights",
         "排序 route → 原 route 映射"
       ],
       "writes": [
-        "SHMEM ptrRoutedTopkWeights [M×TopK] BF16"
+        "SHMEM ptrRoutedTopkWeights [M×TopK]，与 p 同类型"
       ],
       "waits": [
         "排序映射已生成",
@@ -119,7 +119,7 @@
       "sources": [
         {
           "path": "experiments/megamoe_train/csrc/kernels/bf16/mega_moe_bf16_forward.hpp",
-          "anchor": "        routedWeightsReady = MegaMoeBF16Routing::TryGatherTopkWeights(",
+          "anchor": "        routedWeightsReady = MegaMoeBF16Routing::TryGatherTopkWeights<TopkWeightT>(",
           "before": 3,
           "after": 6
         },
@@ -157,7 +157,7 @@
       "sources": [
         {
           "path": "experiments/megamoe_train/csrc/kernels/bf16/mega_moe_bf16_forward.hpp",
-          "anchor": "__aicore__ inline void MegaMoeBF16Forward::GetCumsumForMMAIV()",
+          "anchor": "__aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::GetCumsumForMMAIV()",
           "before": 0,
           "after": 20
         },
@@ -232,7 +232,7 @@
       "sources": [
         {
           "path": "experiments/megamoe_train/csrc/kernels/bf16/mega_moe_bf16_forward.hpp",
-          "anchor": "__aicore__ inline void MegaMoeBF16Forward::DispatchTokens(",
+          "anchor": "__aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::DispatchTokens(",
           "before": 1,
           "after": 15
         },
@@ -249,10 +249,10 @@
       "lane": "f_aiv1",
       "step": 6,
       "title": "拉取同一 fragment 的路由权重",
-      "subtitle": "每条 route 一个 BF16 p",
+      "subtitle": "每条 route 一个原类型 p",
       "symbol": "CopyGMToGMTopkWeights",
       "description": [
-        "对应 p 从远端排序概率表经 UB 搬入本地 ptrDispatchedTopkWeights，源、目标行段与刚才 X 完全一致。4KiB 是保留的 UB 容量，不是每次实际传输量；fragment 有128行时有效 p 只有256B。事件2保护独立 p staging 槽，小数据仍有下发和同步成本。"
+        "对应 p 从远端排序概率表经 UB 搬入本地 ptrDispatchedTopkWeights，源、目标行段与刚才 X 完全一致。4KiB 是保留的 UB 容量，不是每次实际传输量；fragment 有128行时，BF16 p 为256B，FP32 p 为512B。事件2保护独立 p staging 槽，小数据仍有下发和同步成本。"
       ],
       "reads": [
         "源 rank ptrRoutedTopkWeights"
@@ -267,7 +267,7 @@
       "sources": [
         {
           "path": "experiments/megamoe_train/csrc/kernels/bf16/mega_moe_bf16_forward.hpp",
-          "anchor": "__aicore__ inline void MegaMoeBF16Forward::CopyGMToGMTopkWeights(",
+          "anchor": "__aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::CopyGMToGMTopkWeights(",
           "before": 0,
           "after": 21
         }
@@ -406,11 +406,11 @@
       "subtitle": "H 保持 FP32，Hp 写出时舍入",
       "symbol": "ComputeSwigluDirect",
       "description": [
-        "AIV0 从本地 packed p 表批量加载当前 tile 各行的 p，一行一个值，广播到该行全部特征。SiLU(G)、H=SiLU(G)×U 和乘 p 连续使用 FP32 寄存器中间量，最后一次舍入形成 BF16 Hp，交给 GMM2。p 在 GMM2 之前使用，后面的 Combine 不再乘一次。"
+        "AIV0 从本地 packed p 表按输入类型批量加载当前 tile 各行的 p，一行一个值，广播到该行全部特征。BF16 p 提升到 FP32，FP32 p 直接参与计算。SiLU(G)、H=SiLU(G)×U 和乘 p 连续使用 FP32 寄存器中间量，最后一次舍入形成 BF16 Hp，交给 GMM2。p 在 GMM2 之前使用，后面的 Combine 不再乘一次。"
       ],
       "reads": [
         "Gate / Up tile",
-        "packed p [tileRows] BF16"
+        "packed p [tileRows] BF16 或 FP32"
       ],
       "writes": [
         "Hp tile BF16 UB"

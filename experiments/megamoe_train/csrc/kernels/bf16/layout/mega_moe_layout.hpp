@@ -26,12 +26,19 @@ constexpr uint64_t kAlignment128 = 128;
 constexpr uint64_t kAlignment256 = 256;
 constexpr uint64_t kAlignment512 = 512;
 constexpr uint64_t kBf16Bytes = 2;
+constexpr uint32_t kTopkWeightBf16 = 0;
+constexpr uint32_t kTopkWeightFp32 = 1;
 constexpr uint64_t kInt32Bytes = 4;
 constexpr uint64_t kIntCacheline = 16;
 constexpr uint32_t kSwigluNHalf = 2U;
 constexpr uint64_t kMaxEpRanks = 1024;
 constexpr uint64_t kMaxLocalExperts = 32;
 constexpr uint64_t kMaxTotalExperts = 2048;
+
+MEGA_MOE_BF16_HOST_DEVICE constexpr uint64_t TopkWeightBytes(uint32_t type)
+{
+    return type == kTopkWeightFp32 ? sizeof(float) : kBf16Bytes;
+}
 
 // Ordinary BF16 always reserves 64 KiB for one 64-byte slot per supported
 // rank and 8 KiB for per-AIV generation counters. The shared 72 KiB header
@@ -252,11 +259,12 @@ struct DispatchOutputLayout {
     uint64_t topkWeightsBytes;
     uint64_t totalBytes;
 
-    MEGA_MOE_BF16_HOST_DEVICE constexpr DispatchOutputLayout(uint64_t k, uint64_t maxRecvTokens)
+    MEGA_MOE_BF16_HOST_DEVICE constexpr DispatchOutputLayout(uint64_t k, uint64_t maxRecvTokens,
+                                                             uint64_t weightBytes = kBf16Bytes)
         : tokensOffset(0),
           tokensBytes(AlignUp(maxRecvTokens * k * kBf16Bytes, kAlignment512)),
           topkWeightsOffset(tokensOffset + tokensBytes),
-          topkWeightsBytes(AlignUp(maxRecvTokens * kBf16Bytes, kAlignment512)),
+          topkWeightsBytes(AlignUp(maxRecvTokens * weightBytes, kAlignment512)),
           totalBytes(topkWeightsOffset + topkWeightsBytes)
     {
     }
@@ -295,7 +303,8 @@ struct TrainingSavedStateLayout {
                                                                  uint64_t worldSize, uint64_t expertPerRank,
                                                                  uint64_t maxRecvTokens, uint64_t n, bool saveMxFp8,
                                                                  bool saveGateUp = true, bool saveClipMasks = false,
-                                                                 bool embedDispatchOutput = true)
+                                                                 bool embedDispatchOutput = true,
+                                                                 uint64_t weightBytes = kBf16Bytes)
         : ptrAOffset(0),
           ptrABytes(embedDispatchOutput ? AlignUp(maxRecvTokens * k * kBf16Bytes, kAlignment512) : 0),
           cumsumOffset(ptrAOffset + ptrABytes),
@@ -306,7 +315,7 @@ struct TrainingSavedStateLayout {
           dispatchedTopkWeightsOffset(
               savedTokenCountsOffset +
               AlignUp(worldSize * AlignUp(worldSize * expertPerRank, kAlignment128) * kInt32Bytes, kAlignment512)),
-          dispatchedTopkWeightsBytes(embedDispatchOutput ? AlignUp(maxRecvTokens * kBf16Bytes, kAlignment512) : 0),
+          dispatchedTopkWeightsBytes(embedDispatchOutput ? AlignUp(maxRecvTokens * weightBytes, kAlignment512) : 0),
           legacyBytes(dispatchedTopkWeightsOffset + dispatchedTopkWeightsBytes),
           gateOffset(AlignUp(legacyBytes, kAlignment512)),
           upOffset(gateOffset +

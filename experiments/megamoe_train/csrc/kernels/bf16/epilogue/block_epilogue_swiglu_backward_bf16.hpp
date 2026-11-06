@@ -24,6 +24,8 @@
 #ifndef DEEPEP_BLOCK_EPILOGUE_SWIGLU_BACKWARD_BF16_HPP
 #define DEEPEP_BLOCK_EPILOGUE_SWIGLU_BACKWARD_BF16_HPP
 
+#include <type_traits>
+
 #include "kernel_operator.h"
 #include "kernel_tiling/kernel_tiling.h"
 #include "catlass/arch/arch.hpp"
@@ -44,9 +46,11 @@ static constexpr AscendC::Reg::CastTrait kBackwardCastFP32ToBF16 = {
 // Saturate nonzero clamp differences to form a 0/1 range indicator.
 static constexpr float kClampMaskScale = 1.0e30F;
 
-template <typename L0TileShape_>
+template <typename L0TileShape_, typename TopkWeightT = bfloat16_t>
 class BlockEpilogueSwigluBackwardBF16 {
 public:
+    static_assert(std::is_same_v<TopkWeightT, bfloat16_t> || std::is_same_v<TopkWeightT, float>,
+                  "TopK weights must be BF16 or FP32");
     struct Arguments {
         GM_ADDR gatePlaneGmAddr{nullptr};
         GM_ADDR upPlaneGmAddr{nullptr};
@@ -87,7 +91,7 @@ public:
             gradZGm_.SetGlobalBuffer((__gm__ bfloat16_t*)params.gradZGmAddr);
             hpGm_.SetGlobalBuffer((__gm__ bfloat16_t*)params.hpGmAddr);
             dpPartialsGm_.SetGlobalBuffer((__gm__ float*)params.dpProductsGmAddr);
-            packedTopkWeightsGm_.SetGlobalBuffer((__gm__ bfloat16_t*)params.packedTopkWeightsGmAddr);
+            packedTopkWeightsGm_.SetGlobalBuffer((__gm__ TopkWeightT*)params.packedTopkWeightsGmAddr);
         }
     }
 
@@ -149,7 +153,7 @@ public:
         const uint32_t rowStrideInPlane = Ops::Base::CeilAlign(
             static_cast<uint32_t>(singleN), static_cast<uint32_t>(AscendC::ONE_BLK_SIZE / sizeof(bfloat16_t)));
 
-        // One contiguous BF16 p load feeds FP32 H*p and dHp*p.
+        // One contiguous p load feeds FP32 H*p and dHp*p without narrowing FP32 weights.
         LoadPackedWeights(singleM, mLoc);
 
         // In save=none, the caller's PIPE_V WaitForCube protects Fixpipe dHp;
@@ -244,7 +248,7 @@ private:
     static constexpr uint32_t kMxScratchEnd = kUpHighOffset + kClipMaskBytes;
     static_assert(kMxScratchEnd <= Catlass::Arch::Ascend950::UB_SIZE,
                   "The backward SwiGLU work tiles and MXFP8 decoder must fit in A5 UB");
-    static constexpr uint32_t kWeightBytes = (kTileRows * sizeof(bfloat16_t) + 31U) / 32U * 32U;
+    static constexpr uint32_t kWeightBytes = (kTileRows * sizeof(TopkWeightT) + 31U) / 32U * 32U;
     static constexpr uint32_t kWeightOffset = Catlass::Arch::Ascend950::UB_SIZE - kWeightBytes;
     static_assert(kWeightOffset >= kMxScratchEnd, "Prefetched weights must not alias live MXFP8 decode or clip masks");
 
@@ -254,8 +258,8 @@ private:
         // save=none, paired AIC Fixpipe targets only the first work tile.
         SyncFunc<AscendC::HardEvent::V_MTE2>();
         SyncFunc<AscendC::HardEvent::MTE3_MTE2>();
-        AscendC::DataCopyExtParams p{1U, static_cast<uint32_t>(rows * sizeof(bfloat16_t)), 0U, 0U, 0U};
-        AscendC::DataCopyPadExtParams<bfloat16_t> pad{false, 0U, 0U, 0U};
+        AscendC::DataCopyExtParams p{1U, static_cast<uint32_t>(rows * sizeof(TopkWeightT)), 0U, 0U, 0U};
+        AscendC::DataCopyPadExtParams<TopkWeightT> pad{false, 0U, 0U, 0U};
         AscendC::DataCopyPad(packedWeightUb_, packedTopkWeightsGm_[rowBase_ + mLoc], p, pad);
         SyncFunc<AscendC::HardEvent::MTE2_V>();
     }
@@ -449,7 +453,7 @@ private:
         auto* dHp = (__ubuf__ bfloat16_t*)l0cOutUbFirst_.GetPhyAddr();
         auto* gate = (__ubuf__ bfloat16_t*)l0cOutUbSecond_.GetPhyAddr();
         auto* up = (__ubuf__ bfloat16_t*)extraA_.GetPhyAddr();
-        auto* weights = (__ubuf__ bfloat16_t*)packedWeightUb_.GetPhyAddr();
+        auto* weights = (__ubuf__ TopkWeightT*)packedWeightUb_.GetPhyAddr();
         auto* partials = (__ubuf__ float*)l0cOutUbSecond_.GetPhyAddr();
 
         __VEC_SCOPE__
@@ -460,8 +464,12 @@ private:
                 AscendC::Reg::RegTensor<float> accumulated, pFp, limitFp, negLimitFp;
                 AscendC::Reg::RegTensor<bfloat16_t> pBf;
                 AscendC::Reg::Duplicate(accumulated, 0.0F, oneLane);
-                AscendC::Reg::DataCopy<bfloat16_t, AscendC::Reg::LoadDist::DIST_BRC_B16>(pBf, weights + row);
-                AscendC::Reg::Cast<float, bfloat16_t, kBackwardCastBF16ToFP32>(pFp, pBf, all);
+                if constexpr (std::is_same_v<TopkWeightT, bfloat16_t>) {
+                    AscendC::Reg::DataCopy<bfloat16_t, AscendC::Reg::LoadDist::DIST_BRC_B16>(pBf, weights + row);
+                    AscendC::Reg::Cast<float, bfloat16_t, kBackwardCastBF16ToFP32>(pFp, pBf, all);
+                } else {
+                    AscendC::Reg::DataCopy<float, AscendC::Reg::LoadDist::DIST_BRC_B32>(pFp, weights + row);
+                }
                 if (limitEnabled) {
                     AscendC::Reg::Duplicate(limitFp, limit, all);
                     AscendC::Reg::Duplicate(negLimitFp, -limit, all);
@@ -536,7 +544,7 @@ private:
         __ubuf__ bfloat16_t* dGate = dHp;
         __ubuf__ bfloat16_t* dUp = gate;  // reuse gate tile
 
-        auto* weights = (__ubuf__ bfloat16_t*)packedWeightUb_.GetPhyAddr();
+        auto* weights = (__ubuf__ TopkWeightT*)packedWeightUb_.GetPhyAddr();
 
         __VEC_SCOPE__
         {
@@ -544,8 +552,12 @@ private:
                 AscendC::Reg::RegTensor<bfloat16_t> pBf;
                 AscendC::Reg::RegTensor<float> pFp;
                 auto all = AscendC::Reg::CreateMask<float, AscendC::Reg::MaskPattern::ALL>();
-                AscendC::Reg::DataCopy<bfloat16_t, AscendC::Reg::LoadDist::DIST_BRC_B16>(pBf, weights + row);
-                AscendC::Reg::Cast<float, bfloat16_t, kBackwardCastBF16ToFP32>(pFp, pBf, all);
+                if constexpr (std::is_same_v<TopkWeightT, bfloat16_t>) {
+                    AscendC::Reg::DataCopy<bfloat16_t, AscendC::Reg::LoadDist::DIST_BRC_B16>(pBf, weights + row);
+                    AscendC::Reg::Cast<float, bfloat16_t, kBackwardCastBF16ToFP32>(pFp, pBf, all);
+                } else {
+                    AscendC::Reg::DataCopy<float, AscendC::Reg::LoadDist::DIST_BRC_B32>(pFp, weights + row);
+                }
                 uint32_t remaining = vectorColumns;
                 for (uint16_t repeat = 0; repeat < repeatsPerRow; ++repeat) {
                     AscendC::Reg::MaskReg mask = AscendC::Reg::UpdateMask<bfloat16_t>(remaining);
@@ -655,7 +667,7 @@ private:
         auto* dGate = (__ubuf__ bfloat16_t*)l0cOutUbFirst_.GetPhyAddr();
         auto* dUp = (__ubuf__ bfloat16_t*)l0cOutUbSecond_.GetPhyAddr();
         auto* hp = (__ubuf__ bfloat16_t*)extraA_.GetPhyAddr();
-        auto* weights = (__ubuf__ bfloat16_t*)packedWeightUb_.GetPhyAddr();
+        auto* weights = (__ubuf__ TopkWeightT*)packedWeightUb_.GetPhyAddr();
         auto* partials = (__ubuf__ float*)fusedDpUb_.GetPhyAddr();
         constexpr uint16_t rows = kTileRows, columns = kTileColumns;
         __VEC_SCOPE__
@@ -666,8 +678,12 @@ private:
                 AscendC::Reg::RegTensor<float> accumulated, pFp;
                 AscendC::Reg::RegTensor<bfloat16_t> pBf;
                 AscendC::Reg::Duplicate(accumulated, 0.0F, oneLane);
-                AscendC::Reg::DataCopy<bfloat16_t, AscendC::Reg::LoadDist::DIST_BRC_B16>(pBf, weights + row);
-                AscendC::Reg::Cast<float, bfloat16_t, kBackwardCastBF16ToFP32>(pFp, pBf, mask);
+                if constexpr (std::is_same_v<TopkWeightT, bfloat16_t>) {
+                    AscendC::Reg::DataCopy<bfloat16_t, AscendC::Reg::LoadDist::DIST_BRC_B16>(pBf, weights + row);
+                    AscendC::Reg::Cast<float, bfloat16_t, kBackwardCastBF16ToFP32>(pFp, pBf, mask);
+                } else {
+                    AscendC::Reg::DataCopy<float, AscendC::Reg::LoadDist::DIST_BRC_B32>(pFp, weights + row);
+                }
                 for (uint16_t col = 0; col < columns; col += 64U) {
                     const uint32_t offset = static_cast<uint32_t>(row) * kTileColumns + col;
                     AscendC::Reg::RegTensor<bfloat16_t> gBf, uBf, dHpBf;
@@ -894,7 +910,7 @@ private:
     AscendC::LocalTensor<bfloat16_t> l0cOutUbFirst_{AscendC::TPosition::VECIN, 0, kTileElements};
     AscendC::LocalTensor<bfloat16_t> l0cOutUbSecond_{AscendC::TPosition::VECIN, kTileBytes, kTileElements};
     AscendC::LocalTensor<bfloat16_t> extraA_{AscendC::TPosition::VECIN, 2 * kTileBytes, kTileElements};
-    AscendC::LocalTensor<bfloat16_t> packedWeightUb_{AscendC::TPosition::VECIN, kWeightOffset, kTileRows};
+    AscendC::LocalTensor<TopkWeightT> packedWeightUb_{AscendC::TPosition::VECIN, kWeightOffset, kTileRows};
     AscendC::LocalTensor<float> fusedDpUb_{AscendC::TPosition::VECCALC, kMxScratchEnd, kTileRows * 8U};
     AscendC::LocalTensor<int8_t> mxData_{AscendC::TPosition::VECIN, kMxDataOffset, kMxDataElements};
     AscendC::LocalTensor<int8_t> mxScale_{AscendC::TPosition::VECIN, kMxScaleOffset, kMxScaleBytes};
@@ -918,7 +934,7 @@ private:
     AscendC::GlobalTensor<bfloat16_t> gradZGm_;
     AscendC::GlobalTensor<bfloat16_t> hpGm_;
     AscendC::GlobalTensor<float> dpPartialsGm_;
-    AscendC::GlobalTensor<bfloat16_t> packedTopkWeightsGm_;
+    AscendC::GlobalTensor<TopkWeightT> packedTopkWeightsGm_;
     int64_t rowBase_{0};
     Params params_{};
     int64_t outputN_{0};

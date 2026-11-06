@@ -19,6 +19,8 @@ The commands below build the training component from a repository checkout. Envi
 requirements (platform, CANN, Python, build tools, driver, SHMEM/CATLASS) are listed once in
 the [root README](../../README.md#环境要求); packaging and multi-node installation details are
 in the [build guide](../../docs/build.md).
+Build in the target runtime image; transferred wheels must match its Python/Torch
+ABI and system libraries, including glibc.
 
 ```bash
 git submodule update --init third-party/shmem third-party/catlass
@@ -41,7 +43,9 @@ The option defaults to OFF:
   CATCCOS.
 - After changing Host or device sources, rebuild and reinstall the complete wheel: the Host
   extension, `libdeepep_megamoe_train_bf16.so` and the root runtime must come from one build, and
-  every EP rank uses that build. `deep_ep/_build_info.json` records the inputs.
+  every EP rank uses that build. BF16/FP32 routing weights share the public API and library
+  names, but their typed tiling and payload layout require matching Host/device libraries;
+  replacing only an old SO is unsupported. `deep_ep/_build_info.json` records the inputs.
 - `DEEPEP_BF16_FORCE_EXPERT_READY=ON` (or `-DDEEPEP_BF16_FORCE_EXPERT_READY=ON`) builds the
   complete-expert dispatch fallback. OFF, the default, keeps M192/Ready384 forward dispatch and
   saved-mode row-ready backward. See the
@@ -56,7 +60,7 @@ The option defaults to OFF:
 Set the current NPU and `DEEPEP_SHMEM_ENDPOINT=tcp://<rank-0-host>:<port>` before constructing the
 module, and pass an existing ProcessGroup or `deep_ep` StoreGroup as `ep_group`; the caller owns that
 group. All ranks use the same endpoint, capacity, shape, routing interpretation, save mode and call
-order.
+order, and the same routing-weight dtype in each corresponding call.
 
 ```python
 from deep_ep_experimental.megamoe_train import MegaMoeBF16Train
@@ -71,6 +75,16 @@ op.close()  # collective, before destroying ep_group
 A complete runnable script, including device selection, endpoint setup and input construction:
 [quickstart §2 (中文)](docs/BF16_QUICKSTART_ZH.md#2-最小示例).
 
+The constructor is `MegaMoeBF16Train(ep_group, local_mem_size, *, timeout=120,
+debug_collectives=False)`. Existing calls retain the default. Local dtype, stream and lifetime
+checks remain active. All ranks must agree on `debug_collectives` during initialization.
+With the default `False`, forward/backward do not add a per-call dtype collective;
+the framework must guarantee matching dtype and call order across EP ranks. `True` adds a
+cross-rank dtype and forward/backward-stage check before each native call. It is a diagnostic
+check, not a complete graph-identity or operation-order protocol, and its Host coordination
+and waits are part of the measured call cost. If one rank exits or raises a local validation
+error, the framework must terminate the distributed job rather than let other ranks continue.
+
 The training Runtime owns a root Session and selects the MTE backend. Do not construct a second
 DeepEP buffer or inference runtime concurrently in the same process.
 Device qualification is single-node. ProcessGroup-based training integration,
@@ -78,7 +92,9 @@ multi-node transport, EP subgroups and larger EP sizes need separate
 qualification before deployment; StoreGroup test coverage and the API's upper
 rank bound are not guarantees for those integration paths or topologies.
 
-- `x`: `[M,H]`, `topk_ids`: `[M,T]` int32, `topk_weights`: `[M,T]` BF16.
+- `x`: `[M,H]` BF16, `topk_ids`: `[M,T]` int32, `topk_weights`: `[M,T]` BF16 or FP32.
+  `y`, `dx`, `dw1` and `dw2` remain BF16; `dtopk_weights` has the input p dtype.
+  FP32 p is transported and used without an intermediate BF16 conversion.
   Tensor inputs are contiguous and reside on the construction NPU.
 - Canonical `w1=[E,2F,H]`, `w2=[E,H,F]`; alternative layouts
   `w1=[E,H,2F]`, `w2=[E,F,H]` are also supported. Gradients use the input layouts.
@@ -88,16 +104,17 @@ rank bound are not guarantees for those integration paths or topologies.
   routing contract.
 - `local_mem_size` is the per-rank SHMEM communication window in bytes: at least 2 MiB, 2 MiB
   aligned, identical on every rank and fixed at construction. It covers only the window, not
-  weights, saved activations or scratch. Estimate it from the largest shape to run as `4*M*T*H`
-  bytes rounded up to 2 MiB, with headroom; the exact expression, including the optional compact
-  counting area, is in [user guide §6.3](docs/BF16_USER_GUIDE_ZH.md#63-local_mem_size). An
+  weights, saved activations or scratch. Plan the token payload, actual p width (2 or 4 bytes)
+  and control area together, then round up to 2 MiB; an executable conservative planner is in
+  [user guide §6.3](docs/BF16_USER_GUIDE_ZH.md#63-local_mem_size). An
   undersized window fails the Host layout check at call time, and enlarging it requires
   constructing a new operator.
 - Calls must use the construction stream and be serialized in identical order
   across ranks. Keep weights unmodified until their corresponding backward.
   Saved state and packed dispatch output are independent per forward; scratch
-  is transient. Multiple queued forwards can be followed by their backwards in
-  a consistent order. Cross-stream/concurrent calls and higher-order derivatives
+  is transient. Multiple queued forwards can use BF16 or FP32 p and retain their own dtype;
+  their corresponding backwards must follow a consistent order across ranks.
+  Cross-stream/concurrent calls and higher-order derivatives
   are unsupported. `retain_graph=True` requires keeping the operator open for
   every subsequent backward.
 - `close()` synchronizes the launch stream and releases the root Session
@@ -120,11 +137,12 @@ linear results that SwiGLU consumes; the saved state stores those rows, not the 
 | `mxfp8` | Saved MXFP8, plus three clip-mask bitplanes when clipping is enabled |
 | `auto` | MXFP8 without clipping, BF16 with clipping |
 
-All four modes are accepted by the interface, but the published manifest covers `bf16` only:
-every case uses `save_gmm1_output="bf16"`. `none` is implemented and appears only in
-diagnostic runs. `mxfp8` and `auto` are experimental and have not passed precision
-acceptance: MXFP8 compression introduces its own error, so a reconstructed H is not
-bit-exact with the uncompressed forward. Coverage is stated in
+All four modes accept BF16 or FP32 p, independently of how Gate/Up is saved; p is never
+compressed to MXFP8. The typical model suite uses `bf16` saving, while the dtype suite
+also covers `none`, `mxfp8` and `auto` configurations. `mxfp8` and `auto` remain experimental:
+MXFP8 compression introduces its own error, so a reconstructed H is not bit-exact with the
+uncompressed forward. A case being listed does not establish precision qualification.
+Coverage and acceptance rules are stated in
 [test spec §1](tests/bf16/TEST_SPEC.md#1-范围与模型参数).
 
 `swiglu_limit<=0` disables clipping; a positive finite limit L clips Gate to the upper bound L and
@@ -134,9 +152,10 @@ policy for GMM1, SwiGLU decoupling and backward dispatch splitting:
 
 ## Tests
 
-The published [case manifest](tests/bf16/cases.json) contains 12 typical
-BF16 model-dimension cases. Other boundary, data-profile, saved-mode and historical
-matrix cases are deferred and are not part of the repository manifest.
+The published [case manifest](tests/bf16/cases.json) contains 42 cases: 12 typical BF16
+model-dimension cases (`priority` / `model`), 24 p-dtype/save-mode/clipping cases (`dtype`),
+and 6 FP32 gather-window boundary cases (`gather`). `all` selects all 42. Other data profiles
+and historical matrices are not discovered automatically.
 
 | Model dimensions | H | F / GMM1 N | TopK | Experts/rank | Clip | Route-weight scale | M/rank |
 | --- | ---: | --- | ---: | ---: | ---: | ---: | --- |
@@ -144,7 +163,7 @@ matrix cases are deferred and are not part of the repository manifest.
 | Pro | 7168 | 3072 / 6144 | 6 | 4 | 10 | 2.5 | 512 / 2048 / 4096 / 8192 |
 | GLM | 6144 | 2048 / 4096 | 8 | 8 | 0 | 2.5 | 512 / 2048 / 4096 / 8192 |
 
-All cases use balanced routing, BF16 saving and seed 20260825. These are synthetic
+The 12 model cases use balanced routing, BF16 p, BF16 saving and seed 20260825. These are synthetic
 operator tests with reduced expert counts, not full-model or convergence validation.
 M means tokens entering the operator per rank; EP alone does not split M.
 The upstream dy is fixed-seed random input shared by all comparison paths;
@@ -158,7 +177,7 @@ There is one entry, `tests/bf16/test_mega_moe.py`, with these helpers:
 - `atk_compare.py`: the private ATK CV double-benchmark comparator.
 - `precision_metrics.py`: exact counts and mixed-tolerance reports.
 - `mxfp8_diagnostics.py`: optional diagnosis for explicitly configured inputs;
-  the published manifest contains no MXFP8 cases.
+  the dtype suite independently includes MXFP8 save-mode cases.
 
 ### Run the typical cases
 
@@ -177,8 +196,26 @@ python -u experiments/megamoe_train/tests/bf16/test_mega_moe.py 0,1 \
   --shmem-ip-port tcp://127.0.0.1:29862
 ```
 
+### Check routing-weight dtypes
+
+For an explicit shape, `--topk-weight-dtype bf16/fp32` defaults to BF16. FP32 defaults to
+`--topk-weight-values full-precision`; select `bf16-rounded` to supply the same values as
+BF16 p widened with `.float()`. Other seeded inputs remain unchanged. The CPU FP64 truth,
+BigOp and fused operator consume the selected p values; the reference version is
+`fp32-boundaries-v3-topk-dtype`. Suite settings come from the manifest.
+
+```bash
+python -u experiments/megamoe_train/tests/bf16/test_mega_moe.py 0,1 \
+  --suite dtype --skip performance --shmem-ip-port tcp://127.0.0.1:29862
+python -u experiments/megamoe_train/tests/bf16/test_mega_moe.py 0,1 \
+  --suite gather --skip performance --shmem-ip-port tcp://127.0.0.1:29862
+```
+
+These are executable test configurations, not claims that every listed mode, shape or EP
+has passed on the installed wheel. Provision sufficient host RAM and device memory for the
+FP64 reference and retained gradients before selecting a suite.
+
 Case selection, custom shapes, metric definitions, report fields and known issues:
 [runbook](tests/bf16/README.md) · [test spec (中文)](tests/bf16/TEST_SPEC.md).
 Agent runbooks (中文): [ATK skill](../../.agent/skills/megamoe_train/test-megamoe-train-atk/SKILL.md) ·
 [performance skill](../../.agent/skills/megamoe_train/test-megamoe-train-perf/SKILL.md).
-

@@ -8,7 +8,7 @@
  * With R denoting BF16 rounding and Gate/Up clipped as configured,
  * H = SiLU_FP32(gate) * up; the weighted variant produces
  * Hp = R(H * p) before GMM2. Internal arithmetic stays FP32,
- * and dispatched BF16 route weights are prefetched from GM.
+ * and dispatched BF16/FP32 route weights are prefetched from GM.
  */
 #ifndef DEEPEP_BLOCK_EPILOGUE_SWIGLU_FORWARD_BF16_HPP
 #define DEEPEP_BLOCK_EPILOGUE_SWIGLU_FORWARD_BF16_HPP
@@ -19,6 +19,7 @@
 #include "tla/layout.hpp"
 #include "layout/mega_moe_context.hpp"
 #include "epilogue/block_saved_gate_up_mxfp8.hpp"
+#include <type_traits>
 
 namespace MegaMoeBF16Impl {
 
@@ -30,9 +31,11 @@ static constexpr AscendC::Reg::CastTrait kCastFP32ToBF16 = {
     AscendC::Reg::RegLayout::ZERO, AscendC::Reg::SatMode::NO_SAT, AscendC::Reg::MaskMergeMode::ZEROING,
     AscendC::RoundMode::CAST_RINT};
 
-template <typename L0TileShape_, bool ApplyTopkWeight_>
+template <typename L0TileShape_, bool ApplyTopkWeight_, typename TopkWeightT = bfloat16_t>
 class BlockEpilogueSwigluForwardBF16 {
 public:
+    static_assert(std::is_same_v<TopkWeightT, bfloat16_t> || std::is_same_v<TopkWeightT, float>,
+                  "TopK weights must be BF16 or FP32");
     struct Arguments {
         GM_ADDR yGmAddr{nullptr};
         GM_ADDR yScaleGmAddr{nullptr};
@@ -81,7 +84,7 @@ public:
             }
             groupFlagListGmAddr_ = (__gm__ int32_t*)params_.groupFlagListGmAddr + Get<2>(baseOffset) * INT_CACHELINE;
             if constexpr (ApplyTopkWeight_) {
-                routedTopkWeightGlobal_.SetGlobalBuffer((__gm__ bfloat16_t*)params_.routedTopkWeightGmAddr +
+                routedTopkWeightGlobal_.SetGlobalBuffer((__gm__ TopkWeightT*)params_.routedTopkWeightGmAddr +
                                                         Get<3>(baseOffset));
                 routedTopkWeightGlobal_.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
             }
@@ -182,17 +185,17 @@ private:
         auto* up = (__ubuf__ bfloat16_t*)l0cOutUbSecond_.GetPhyAddr();
         // Place weights beyond every MXFP8 data/scale/clamp-mask buffer: Save
         // may still have MTE3 readers. No alias and no early pipeline drain.
-        constexpr uint32_t weightBytes = (kTileRows * sizeof(bfloat16_t) + 31) / 32 * 32;
+        constexpr uint32_t weightBytes = (kTileRows * sizeof(TopkWeightT) + 31) / 32 * 32;
         constexpr uint32_t weightOffset = Catlass::Arch::Ascend950::UB_SIZE - weightBytes;
         static_assert(weightOffset >= SavedGateUpMxFp8<kTileRows>::Layout::totalBytesWithClipMasks);
-        AscendC::LocalTensor<bfloat16_t> weightUb{AscendC::TPosition::VECIN, weightOffset, kTileRows};
+        AscendC::LocalTensor<TopkWeightT> weightUb{AscendC::TPosition::VECIN, weightOffset, kTileRows};
         if constexpr (ApplyTopkWeight_) {
             AscendC::SyncFunc<AscendC::HardEvent::V_MTE2>();
-            AscendC::DataCopyExtParams p{1, uint32_t(mSize * sizeof(bfloat16_t)), 0, 0, 0};
+            AscendC::DataCopyExtParams p{1, uint32_t(mSize * sizeof(TopkWeightT)), 0, 0, 0};
             AscendC::DataCopyPad(weightUb, routedTopkWeightGlobal_[tileRow], p, {});
             AscendC::SyncFunc<AscendC::HardEvent::MTE2_V>();
         }
-        auto* weights = (__ubuf__ bfloat16_t*)weightUb.GetPhyAddr();
+        auto* weights = (__ubuf__ TopkWeightT*)weightUb.GetPhyAddr();
         // Direct B16 unpack follows the reference implementation. Arithmetic,
         // accurate division and clipping remain in FP32 until the output cast.
         __VEC_SCOPE__
@@ -203,12 +206,17 @@ private:
                 AscendC::Reg::Duplicate(negLim, -limit);
             }
             for (uint16_t row = 0; row < mSize; ++row) {
-                AscendC::Reg::RegTensor<bfloat16_t> weightBf;
                 AscendC::Reg::RegTensor<float> weightFp;
                 if constexpr (ApplyTopkWeight_) {
-                    AscendC::Reg::DataCopy<bfloat16_t, AscendC::Reg::LoadDist::DIST_BRC_B16>(weightBf, weights + row);
-                    auto all = AscendC::Reg::CreateMask<float, AscendC::Reg::MaskPattern::ALL>();
-                    AscendC::Reg::Cast<float, bfloat16_t, kCastBF16ToFP32>(weightFp, weightBf, all);
+                    if constexpr (std::is_same_v<TopkWeightT, float>) {
+                        AscendC::Reg::DataCopy<float, AscendC::Reg::LoadDist::DIST_BRC_B32>(weightFp, weights + row);
+                    } else {
+                        AscendC::Reg::RegTensor<bfloat16_t> weightBf;
+                        AscendC::Reg::DataCopy<bfloat16_t, AscendC::Reg::LoadDist::DIST_BRC_B16>(weightBf,
+                                                                                                 weights + row);
+                        auto all = AscendC::Reg::CreateMask<float, AscendC::Reg::MaskPattern::ALL>();
+                        AscendC::Reg::Cast<float, bfloat16_t, kCastBF16ToFP32>(weightFp, weightBf, all);
+                    }
                 }
                 uint32_t remaining = nSize;
                 for (uint16_t col = 0; col < nSize; col += lanes) {
@@ -249,7 +257,7 @@ private:
     AscendC::GlobalTensor<bfloat16_t> outputGlobal_;
     AscendC::GlobalTensor<bfloat16_t> savedGateGlobal_;
     AscendC::GlobalTensor<bfloat16_t> savedUpGlobal_;
-    AscendC::GlobalTensor<bfloat16_t> routedTopkWeightGlobal_;
+    AscendC::GlobalTensor<TopkWeightT> routedTopkWeightGlobal_;
     __gm__ int32_t* groupFlagListGmAddr_{nullptr};
     Params params_{};
     int64_t outputN_{0};

@@ -26,7 +26,9 @@ MegaMoE：dispatch → GMM1 → SwiGLU → GMM2 → combine
 | EP 身份 | 调用方创建已有 ProcessGroup 或 StoreGroup；ProcessGroup 初始化支持 Gloo / HCCL |
 | 数据传输 | 训练算子使用 SHMEM 的 MTE/default 路径；传入 HCCL group 只提供身份与初始化协调，不切换 token 数据面 |
 
-训练组件的唯一额外要求是：根 `deep_ep` Runtime、训练扩展和设备库来自**同一次构建**，各 rank 安装同一份 wheel，运行时加载构建所用的 CANN/SHMEM 环境。源码构建与安装步骤见[模块 README](../README.md#build-and-installation)，固定依赖见[根锁文件](../../../dependencies.lock.json)。
+训练组件还要求：根 `deep_ep` Runtime、训练扩展和设备库来自**同一次构建**，各 rank 安装同一份 wheel，运行时加载构建所用的 CANN/SHMEM 环境。在目标运行镜像中构建；转移 wheel 时需匹配 Python/Torch ABI 及 glibc 等系统库。源码构建与安装步骤见[模块 README](../README.md#build-and-installation)，固定依赖见[根锁文件](../../../dependencies.lock.json)。
+
+BF16/FP32 p 共用 `MegaMoeBF16Train`、训练 `_C` 扩展和 `libdeepep_megamoe_train_bf16.so` 名称；旧 BF16 调用无需改名或增加必填参数。但 typed tiling 与 p/dp 字节布局需要配套 Host/Device，不能只替换旧安装中的一个 SO。
 
 首次检查安装时，在源码目录以外导入两个原生扩展。检查 `PYTHONPATH` 中的空项或末尾冒号，避免当前源码目录覆盖已安装包；完整 wheel 安装后再进行本文示例。
 
@@ -65,15 +67,18 @@ endpoint 不是窗口内存地址，也不决定 NPU 数据通过哪种引擎传
 
 ### 3.1 构造与关闭
 
-构造签名为 `MegaMoeBF16Train(ep_group, local_mem_size, *, timeout=120)`。
+构造签名为 `MegaMoeBF16Train(ep_group, local_mem_size, *, timeout=120, debug_collectives=False)`。
 
 | 参数 | 类型 / 单位 | 说明 |
 | --- | --- | --- |
 | `ep_group` | 已创建的 ProcessGroup 或 StoreGroup | 提供 EP 组内 rank/size 和初始化协调，不能为 None；group 由调用方持有 |
 | `local_mem_size` | Python int，字节 | 每 rank 的 SHMEM 窗口容量，至少 2 MiB、按 2 MiB 对齐，各 rank 相同；构造后固定 |
 | `timeout` | Python int，秒，1..3600 | SHMEM 初始化和控制操作超时；group 的超时另由调用方设置，不保证覆盖设备内核中的全部自旋等待 |
+| `debug_collectives` | bool，默认 False | 构造时各 rank 设置一致；True 时在每次原生前后向前集体检查 p dtype 和前向/反向阶段 |
 
 构造前设置当前 NPU 和 `DEEPEP_SHMEM_ENDPOINT=tcp://<IPv4>:<unused-port>`。端口范围为 1024..65535，各 rank 必须使用相同容量、超时和 endpoint。
+
+初始化会协调 `debug_collectives` 配置；不一致在创建 SHMEM 资源前被拒绝。默认 False 时保留本地 dtype、流及生命周期检查，不增加逐次 dtype 集体操作；调用方仍须保证同次调用的 p dtype、其他配置和调用顺序在各 rank 一致。True 的逐次检查用于定位 dtype/阶段不一致，含 Host 协调和等待，应记录到性能配置中；它不检查计算图身份，也不构成完整操作顺序协议。
 
 `op.close()` 集体释放本模块的 SHMEM Session 和窗口。所有 rank 完成所需 backward 后，以相同顺序调用，再销毁 EP group；成功后重复 close 直接返回。Python GC 不执行集体通信清理，不能代替显式关闭。
 
@@ -94,7 +99,7 @@ y, counts = op(
 | --- | --- | --- |
 | `x` | BF16 `[M,K]` | 当前源 rank 的输入 token |
 | `topk_ids` | int32 `[M,T]` | 当前 EP 组内的专家编号，范围为 `[0,EP*E)`；同 token 内不重复 |
-| `topk_weights` | BF16 `[M,T]` | 每条路由的权重，可参与求导 |
+| `topk_weights` | BF16 或 FP32 `[M,T]` | 每条路由的权重，可参与求导；同次调用的所有 EP rank dtype 相同 |
 | `w1` | BF16 `[E,2F,K]` | 本 rank 的 Gate/Up 参数，前 F 行为 Gate、后 F 行为 Up |
 | `w2` | BF16 `[E,K,F]` | 本 rank 的 Down 参数 |
 | `max_recv_tokens` | Python int，1..int32 最大值 | 本 rank 所有本地专家合计接收的路由行容量 |
@@ -109,7 +114,7 @@ Tensor 输入必须 contiguous，全部位于构造时选定的同一 NPU。也�
 
 ### 3.3 自动求导与保存模式
 
-`loss.backward()` 自动计算 x、topk_weights、w1、w2 的梯度；对应模型参数需保留 requires_grad 及梯度连接。算子本身不注册专家参数，优化器应管理模型的 router 和专家 `nn.Parameter`。
+`loss.backward()` 自动计算 x、topk_weights、w1、w2 的梯度；对应模型参数需保留 requires_grad 及梯度连接。`dx/dw1/dw2` 为 BF16，`dtopk_weights` 跟随本次 p 的 BF16 或 FP32 类型。FP32 p 在搬运和激活计算前不降为 BF16；dp 乘积及部分和始终 FP32，仅 BF16 返回分支在末端舍入。算子本身不注册专家参数，优化器应管理模型的 router 和专家 `nn.Parameter`。
 
 topk_ids、counts 和容量/模式等非 Tensor 参数不参与求导。当前不支持二阶求导，内核不按单个输入是否 requires_grad 切换另一条梯度路径。
 
@@ -120,7 +125,7 @@ topk_ids、counts 和容量/模式等非 Tensor 参数不参与求导。当前�
 | `mxfp8` | 压缩值、scale，启用 clipping 时还有三个 mask 位平面 | 减少保存激活空间，引入压缩误差 |
 | `auto` | 关闭 clipping 时选 MXFP8，开启时选 BF16 | 按裁剪配置选择保存形式 |
 
-`mxfp8` 与 `auto` 目前为实验性质：发布用例未覆盖这两种保存形式，也未纳入 ATK 验收；MXFP8 压缩会引入独立误差，重建的 H 与未压缩前向不逐位一致。验收范围见[测试规范摘要](../tests/bf16/TEST_SPEC.md#1-范围与模型参数)。
+四种保存模式均可使用 BF16 或 FP32 p，p 保留实际类型，与 Gate/Up 保存格式独立，MXFP8 不压缩 p。`mxfp8` 与 `auto` 仍为实验性质：MXFP8 压缩会引入独立误差，重建的 H 与未压缩前向不逐位一致。典型模型用例使用 BF16 保存，dtype 专项另含其他保存模式及 clipping 组合；列入用例不代表已通过所有设备验收。用例和判据见[测试规范摘要](../tests/bf16/TEST_SPEC.md#1-范围与模型参数)。
 
 MXFP8 是激活保存格式，GEMM 仍使用 BF16。BF16 舍入位置、裁剪掩码和 TopK 权重参与位置属于数值契约；外部参考需匹配这些语义。详见[前后向数值约定](mega_moe_bf16_design.md#13-数学关系与舍入边界)及[README 的保存模式](../README.md#gateup-save-modes)。
 
@@ -130,27 +135,27 @@ MXFP8 是激活保存格式，GEMM 仍使用 BF16。BF16 舍入位置、裁剪�
 
 | 框架侧工作 | 接入要求 |
 | --- | --- |
-| router / TopK | 保持原有路由选择和辅助损失；将 IDs 转为 int32、p 转为 BF16，并保证连续性及 p 的上游梯度连接 |
+| router / TopK | 保持原有路由选择和辅助损失；将 IDs 转为 int32，p 保留 BF16/FP32 实际类型，并保证连续性及 p 的上游梯度连接 |
 | 专家参数 | 适配 Gate/Up 排列和支持的权重布局；参数、优化器状态和更新由模型持有 |
 | EP 通信 | 复用已有 EP group；算子已包含 token dispatch/combine |
 | DP / TP / SP | 外层安排参数梯度归约、张量或序列切分，使本地 Tensor 符合接口契约；算子不自动推导这些并行策略 |
 | PP / checkpoint | 各 EP rank 的前向、重放与反向调用顺序一致，调用使用构造流 |
 | 生命周期 | 模型/训练任务持有共享 op，在所有所需反向结束后统一关闭 |
 
-例如 router 输出为 FP32 权重、int64 IDs 时，适配层可进行以下转换；实际路由合法性仍由框架保证：
+例如 router 输出为 FP32 权重、int64 IDs 时，适配层可保留 FP32 p，仅转换 IDs；实际路由合法性仍由框架保证：
 
 ```python
 topk_ids = router_ids.to(torch.int32).contiguous()
-topk_weights = router_weights.to(torch.bfloat16).contiguous()
+topk_weights = router_weights.contiguous()  # router_weights 已为 torch.float32
 ```
 
-p 的转换需保留 autograd 连接，不能通过 detach 得到算子输入后还期待 router 接收梯度。权重的布局转换也需保持参数与计算图的连接；所需 backward 完成前不原地更新权重。
+若框架明确选择 BF16 p，可显式使用 `router_weights.to(torch.bfloat16).contiguous()`；这会先量化 p，后续将梯度升为 FP32 不能恢复已丢失的有效位。dtype 转换需保留 autograd 连接，不能通过 detach 得到算子输入后还期待 router 接收梯度。权重的布局转换也需保持参数与计算图的连接；所需 backward 完成前不原地更新权重。
 
 ### 4.2 多层和多个 microbatch
 
 当前同一进程同一时刻只允许一个存活的 SHMEM Session。多层 MoE 应共享同一个 op、同一 EP 组，在构造流上串行调用，逐次传入各层参数和容量。模块绑定的 EP 组、设备和构造流固定。
 
-每次前向独立保留路由、packed 输入和可选 Gate/Up，允许按一致顺序排队多个前向，再执行对应反向。尚未结束的计算图越多，保存状态占用越大；通信窗口仍是同一个。
+每次前向独立保留路由、packed 输入和可选 Gate/Up，允许按一致顺序排队多个前向，再执行对应反向。不同调用可以切换 BF16/FP32 p，各计算图保留自己的 p 类型和保存模式；同次调用各 rank 仍需一致。尚未结束的计算图越多，保存状态占用越大；通信窗口仍是同一个。
 
 当前公开接口不接受外部 Runtime 或 SHMEM 裸地址，也不支持同时持有另一个 DeepEP buffer、推理 Session 或其他已初始化的 SHMEM Session。不同层需要不同 EP 组的接入方式不能直接由这个单 Session 接口覆盖。
 
@@ -168,7 +173,7 @@ p 的转换需保留 autograd 连接，不能通过 detach 得到算子输入后
   ├─ 可选 compact 计数交换区
   ├─ dense token 计数表
   ├─ 发布区 ptrA0：前向发布排序后的 X，反向发布展开后的 dY
-  ├─ 路由权重区：与 X 同序的 p
+  ├─ 路由权重区：与 X 同序的 p，每元素按实际类型占 2 或 4 字节
   └─ 返回区 ptrD：前向接收专家输出，反向先接收 dX、再复用为 dp
 ```
 
@@ -213,7 +218,7 @@ max_recv_tokens >= EP * M * min(E, T)
 
 ### 6.3 local_mem_size
 
-当前普通 BF16 的发布/返回区按源 rank 的 `M*T` 条路由规划，专家接收端的 packed 扩张主要放在独立 Torch Tensor 中。
+当前普通 BF16 训练的发布/返回区按源 rank 的 `M*T` 条路由规划，专家接收端的 packed 扩张主要放在独立 Torch Tensor 中。令 b 为 p 的元素字节数：BF16 取 2，FP32 取 4。
 
 记 `A_a(v)` 为向上对齐到 a 的整数倍。窗口布局需要的字节数为：
 
@@ -221,14 +226,18 @@ max_recv_tokens >= EP * M * min(E, T)
 Q = 0                                                   # dense 计数交换
     或 A_512(64*EP) + A_512(72*4)                         # compact 附加区
 C = 72*1024 + Q + 4*EP*A_128(EP*E)                       # 同步与计数区
-B = C + 2*M*T*K + A_512(2*M*T) + 2*M*T*K                 # 发布、p、返回区
+B = C + 2*M*T*K + A_512(b*M*T) + 2*M*T*K                 # 发布、p、返回区
 local_mem_size >= A_(2*1024*1024)(B)
 ```
 
 以下是按本版本布局规划容量的示例辅助函数，**不是库导出的 API**。它保守计入可选 compact 区，覆盖 dense/compact 两种布局；输入需满足第 7 节约束。
 
 ```python
-def plan_bf16_window_bytes(m, hidden, topk, ep_size, experts_per_rank):
+def plan_bf16_window_bytes(m, hidden, topk, ep_size, experts_per_rank,
+                           topk_weight_bytes=2):
+    if topk_weight_bytes not in (2, 4):
+        raise ValueError("topk_weight_bytes must be 2 (BF16) or 4 (FP32)")
+
     def align_up(value, alignment):
         return (value + alignment - 1) // alignment * alignment
 
@@ -238,13 +247,13 @@ def plan_bf16_window_bytes(m, hidden, topk, ep_size, experts_per_rank):
         + optional_counts
         + 4 * ep_size * align_up(ep_size * experts_per_rank, 128)
     )
-    payload = 4 * m * topk * hidden + align_up(2 * m * topk, 512)
+    payload = 4 * m * topk * hidden + align_up(topk_weight_bytes * m * topk, 512)
     return align_up(control + payload, 2 * 1024 * 1024)
 ```
 
-按所有层和允许 shape 的最大规划值选择固定窗口，各 rank 使用同一容量。实际检查以当前构建的 Host 通信布局为准；布局公式及此函数不包含模型、计算图状态、scratch 和运行时额外显存。评估总显存时应一起计入。
+函数返回字节数，省略最后参数按 BF16 p 的 2 字节规划，FP32 p 传 `topk_weight_bytes=4`。混用两种 dtype 的实例按 4 字节及所有层允许 shape 的最大规划值选择固定窗口，各 rank 使用同一容量。返回区仍按 BF16 专家输出/dX 的矩阵容量保留，P6 在旧读者退出后复用它存放 2/4 字节 dp，不另增一个 FP32 返回面。实际检查以当前构建的 Host 通信布局为准；布局公式及此函数不包含模型、计算图状态、scratch 和运行时额外显存。评估总显存时应一起计入。
 
-保存模式控制的主要额外显存包括：BF16 Gate/Up 每个平面约 `2*R*F` 字节；MXFP8 每个数据面约 `R*F`，还需 scale 和可选 mask；none 仍有 packed X/p、路由元数据和反向重算空间。这里 R 为 max_recv_tokens，所有区域还存在对齐及控制开销。
+保存模式控制的主要额外显存包括：BF16 Gate/Up 每个平面约 `2*R*F` 字节；MXFP8 每个数据面约 `R*F`，还需 scale 和可选 mask；none 仍有 packed X/p、路由元数据和反向重算空间。packed p 按 `b*R` 字节而非固定 BF16 规划。这里 R 为 max_recv_tokens，所有区域还存在对齐及控制开销。
 
 ## 7. 限制与验收边界
 
@@ -257,12 +266,12 @@ def plan_bf16_window_bytes(m, hidden, topk, ep_size, experts_per_rank):
 | token 与维度 | `1<=M<=16384`，K/F 为正数且均是 256 的倍数；仍受实际 UB 预算检查 |
 | TopK | `1<=T<=EP*E`；IDs 合法且同 token 内唯一 |
 | Tensor | 连续、指定 dtype、同一构造 NPU；不能假定所有错误设备组合都已被 Host 全量拦截 |
-| rank 间配置 | 同次调用的 M/K/F/T/E、接收容量、保存模式、clipping、构建策略和操作顺序一致；实际输入数据及路由内容可以不同 |
+| rank 间配置 | 构造时 debug_collectives 一致；同次调用的 p dtype、M/K/F/T/E、接收容量、保存模式、clipping、构建策略和操作顺序一致；实际输入数据及路由内容可以不同 |
 | 流 / Session | 构造流串行调用、每进程一个存活 Session；不支持并发换流或外部窗口注入 |
 | 求导 | x/p/w1/w2 一阶梯度；不支持二阶，IDs/counts 不可微 |
 | 关闭 | 完成所需 backward 或丢弃不用的图后集体 close；retain_graph 后仍需反向时保持 op 开启 |
 
-部分条件由入口硬检查，路由数据合法性、实际接收容量、rank 调用顺序等仍由调用方保证。代码接受的 EP 上限不等于已经通过同等规模设备验证。
+部分条件由入口硬检查，路由数据合法性、实际接收容量、rank 调用顺序等仍由调用方保证。默认关闭逐次集体诊断时，跨 rank p dtype 一致性也由框架保证；某 rank 本地校验失败或提前退出时，框架应终止整个任务，不能让其他 rank 继续进入设备等待。代码接受的 EP 上限不等于已经通过同等规模设备验证。
 
 ### 7.2 部署前另行验证的场景
 

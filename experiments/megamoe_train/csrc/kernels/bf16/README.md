@@ -51,7 +51,7 @@ protects its asynchronous lifetime.
 
 Use `TrainingSavedStateLayout` and the transient layout helpers in
 `layout/mega_moe_layout.hpp` for sizing. Persistent state contains
-packed X, BF16 routing weights, routing metadata, expert counts and optional
+packed X, input-typed BF16/FP32 routing weights, routing metadata, expert counts and optional
 Gate/Up storage. Transient state contains forward payload and readiness flags;
 control words are initialized for each invocation. The symmetric window belongs
 to the root Session and is borrowed by this module.

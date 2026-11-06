@@ -41,6 +41,8 @@
 #ifndef MEGA_MOE_BF16_BACKWARD_HPP
 #define MEGA_MOE_BF16_BACKWARD_HPP
 
+#include <type_traits>
+
 #include "kernel_operator.h"
 #include "kernel_tiling/kernel_tiling.h"
 #include "op_kernel/mc2_kernel_utils.h"
@@ -71,8 +73,11 @@ enum BackwardPhase {
     BW_PHASE_DW2 = 4
 };
 
+template <typename TopkWeightT = bfloat16_t>
 class MegaMoeBF16Backward {
 public:
+    static_assert(std::is_same_v<TopkWeightT, bfloat16_t> || std::is_same_v<TopkWeightT, float>,
+                  "TopK weights must be BF16 or FP32");
     using QuantOutType = bfloat16_t;
     __aicore__ inline MegaMoeBF16Backward(){};
     __aicore__ inline void Init(GM_ADDR context, GM_ADDR gradY, GM_ADDR topkWeights, GM_ADDR weight1, GM_ADDR weight2,
@@ -168,7 +173,8 @@ private:
     BackwardWorkspaceInfo bwWs_{};
     uint32_t splitExperts_ = 0;
     TupleShape problemShape_{};
-    using BlockEpilogue = MegaMoeBF16Impl::BlockEpilogueSwigluBackwardBF16<MegaMoeBF16BackwardCatlassImpl::L1TileShape>;
+    using BlockEpilogue =
+        MegaMoeBF16Impl::BlockEpilogueSwigluBackwardBF16<MegaMoeBF16BackwardCatlassImpl::L1TileShape, TopkWeightT>;
     BlockEpilogue epilogueOp_;
 
     GlobalTensor<int32_t> tokenPerExpertWin_;
@@ -231,11 +237,13 @@ private:
     GM_ADDR gradTopkWeightsGmAddr_{nullptr};
 };
 
-__aicore__ inline void MegaMoeBF16Backward::Init(GM_ADDR context, GM_ADDR gradY, GM_ADDR topkWeights, GM_ADDR weight1,
-                                                 GM_ADDR weight2, GM_ADDR gradX, GM_ADDR gradTopkWeights,
-                                                 GM_ADDR gradWeight1, GM_ADDR gradWeight2, GM_ADDR trainingSavedState,
-                                                 GM_ADDR dispatchOutput, GM_ADDR backwardWorkspace,
-                                                 MegaMoeTilingData* tilingData, uint32_t splitExperts)
+template <typename TopkWeightT>
+__aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::Init(GM_ADDR context, GM_ADDR gradY, GM_ADDR topkWeights,
+                                                              GM_ADDR weight1, GM_ADDR weight2, GM_ADDR gradX,
+                                                              GM_ADDR gradTopkWeights, GM_ADDR gradWeight1,
+                                                              GM_ADDR gradWeight2, GM_ADDR trainingSavedState,
+                                                              GM_ADDR dispatchOutput, GM_ADDR backwardWorkspace,
+                                                              MegaMoeTilingData* tilingData, uint32_t splitExperts)
 {
 #if DEEPEP_BF16_FORCE_EXPERT_READY
     // Keep the device split policy consistent with Host allocation.
@@ -315,14 +323,16 @@ __aicore__ inline void MegaMoeBF16Backward::Init(GM_ADDR context, GM_ADDR gradY,
 // members (VECIN raw tiles at fixed byte offsets, fed by plain DataCopy in
 // both directions).  The return type spells bfloat16_t, NOT the class alias
 // QuantOutType: in an out-of-line member definition the return type sits
-// before the qualified MegaMoeBF16Backward:: name, where class-scope names
+// before the qualified MegaMoeBF16Backward<TopkWeightT>:: name, where class-scope names
 // are not visible yet (parameters and the body are fine).
-__aicore__ inline AscendC::LocalTensor<bfloat16_t> MegaMoeBF16Backward::StageUb(uint32_t bytes)
+template <typename TopkWeightT>
+__aicore__ inline AscendC::LocalTensor<bfloat16_t> MegaMoeBF16Backward<TopkWeightT>::StageUb(uint32_t bytes)
 {
     return AscendC::LocalTensor<bfloat16_t>(AscendC::TPosition::VECIN, BW_STAGE_BASE_BYTES, bytes / sizeof(bfloat16_t));
 }
 
-__aicore__ inline void MegaMoeBF16Backward::InitStageLayout()
+template <typename TopkWeightT>
+__aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::InitStageLayout()
 {
     // Allow for both ping slots and their alignment padding within the staging window.
     const uint32_t stageBytes = MegaMoeBF16BackwardCatlassImpl::ArchTag::UB_SIZE - BW_STAGE_BASE_BYTES;
@@ -335,7 +345,8 @@ __aicore__ inline void MegaMoeBF16Backward::InitStageLayout()
     dispatchCopyElementsPerPing_ = Ops::Base::CeilAlign(dispatchPingRows_ * k_, static_cast<uint32_t>(ALIGN_32));
 }
 
-__aicore__ inline void MegaMoeBF16Backward::UnpermuteBuffInit(TPipe* tPipe)
+template <typename TopkWeightT>
+__aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::UnpermuteBuffInit(TPipe* tPipe)
 {
     uint32_t unpermuteBufAlign = Ops::Base::CeilAlign(
         static_cast<uint32_t>(UNPERMUTE_LIST_NUM * k_ * sizeof(bfloat16_t)), static_cast<uint32_t>(ALIGN_32));
@@ -343,15 +354,17 @@ __aicore__ inline void MegaMoeBF16Backward::UnpermuteBuffInit(TPipe* tPipe)
     tPipe->InitBuffer(DataResFp32Buf_, unpermuteBufAlign * 2);
 }
 
-__aicore__ inline void MegaMoeBF16Backward::TopkGradBuffInit(TPipe* tPipe)
+template <typename TopkWeightT>
+__aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::TopkGradBuffInit(TPipe* tPipe)
 {
     tPipe->InitBuffer(TopkGradRouteBuf_,
-                      Ops::Base::CeilAlign(BW_TOPK_ROUTE_BATCH_ROWS * static_cast<uint32_t>(sizeof(bfloat16_t)),
+                      Ops::Base::CeilAlign(BW_TOPK_ROUTE_BATCH_ROWS * static_cast<uint32_t>(sizeof(TopkWeightT)),
                                            static_cast<uint32_t>(ALIGN_32)));
     tPipe->InitBuffer(TopkGradPartialBuf_, BW_TOPK_PARTIAL_UB_BYTES);
 }
 
-__aicore__ inline void MegaMoeBF16Backward::GatherRoutes()
+template <typename TopkWeightT>
+__aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::GatherRoutes()
 {
     if constexpr (g_coreType == AscendC::AIC) {
         return;
@@ -427,11 +440,12 @@ __aicore__ inline void MegaMoeBF16Backward::GatherRoutes()
     WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1);
 }
 
-__aicore__ inline void MegaMoeBF16Backward::RestoreTokenPerExpert()
+template <typename TopkWeightT>
+__aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::RestoreTokenPerExpert()
 {
     const bool prepareMetadata = MegaMoeBF16Training::UseGmForBackwardDataGrad(savedGateUpMode_) && splitExperts_ > 0;
     int32_t perRank = static_cast<int32_t>(perRankStridesInTokenPerExpert_);
-    LocalTensor<int32_t> tmpBuffer = StageUb(perRank * sizeof(int32_t)).ReinterpretCast<int32_t>();
+    LocalTensor<int32_t> tmpBuffer = StageUb(perRank * sizeof(int32_t)).template ReinterpretCast<int32_t>();
     // P0 has no TPipe; SyncFunc would access an invalid pipe. Use explicit events.
     for (int32_t sourceRank = static_cast<int32_t>(aivCoreIdx_); sourceRank < static_cast<int32_t>(worldSize_);
          sourceRank += static_cast<int32_t>(blockAivNum_)) {
@@ -479,7 +493,8 @@ __aicore__ inline void MegaMoeBF16Backward::RestoreTokenPerExpert()
     }
 }
 
-__aicore__ inline void MegaMoeBF16Backward::ResetTokenPerExpert()
+template <typename TopkWeightT>
+__aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::ResetTokenPerExpert()
 {
     // Restored counts must be cleared before the next forward's atomic count exchange.
     if (aivCoreIdx_ != blockAivNum_ - 1) {
@@ -506,9 +521,11 @@ __aicore__ inline void MegaMoeBF16Backward::ResetTokenPerExpert()
     WaitFlag<AscendC::HardEvent::MTE3_S>(EVENT_ID0);
 }
 
-__aicore__ inline void MegaMoeBF16Backward::CopyGMToGMPerTokenV2(GlobalTensor<QuantOutType> dst,
-                                                                 GlobalTensor<QuantOutType> src, int32_t rows,
-                                                                 int32_t hiddenSize, int32_t& pingpongId)
+template <typename TopkWeightT>
+__aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::CopyGMToGMPerTokenV2(GlobalTensor<QuantOutType> dst,
+                                                                              GlobalTensor<QuantOutType> src,
+                                                                              int32_t rows, int32_t hiddenSize,
+                                                                              int32_t& pingpongId)
 {
     constexpr int32_t BufferNum = 2;
     const uint32_t ringBytes = 2 * dispatchCopyElementsPerPing_ * sizeof(QuantOutType);
@@ -534,8 +551,9 @@ __aicore__ inline void MegaMoeBF16Backward::CopyGMToGMPerTokenV2(GlobalTensor<Qu
     }
 }
 
-__aicore__ inline void MegaMoeBF16Backward::DispatchTokensBackward(GM_ADDR dstBase, uint32_t expertIdx,
-                                                                   uint32_t ordinal)
+template <typename TopkWeightT>
+__aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::DispatchTokensBackward(GM_ADDR dstBase, uint32_t expertIdx,
+                                                                                uint32_t ordinal)
 {
     int64_t widthA = k_;
     int32_t pingpongId = 0;
@@ -596,7 +614,8 @@ __aicore__ inline void MegaMoeBF16Backward::DispatchTokensBackward(GM_ADDR dstBa
     WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1);
 }
 
-__aicore__ inline bool MegaMoeBF16Backward::UpdateGroupParams(uint32_t expertIdx)
+template <typename TopkWeightT>
+__aicore__ inline bool MegaMoeBF16Backward<TopkWeightT>::UpdateGroupParams(uint32_t expertIdx)
 {
     int32_t splitValue = 0;
     if (groupListType_ == 0) {
@@ -617,8 +636,9 @@ __aicore__ inline bool MegaMoeBF16Backward::UpdateGroupParams(uint32_t expertIdx
 }
 
 // Use aligned int32 stores; the caller supplies a zero tile with its V -> MTE3 dependency.
-__aicore__ inline void MegaMoeBF16Backward::ClearGradWeightPlane(GM_ADDR base, uint64_t planeElements,
-                                                                 uint32_t expertIdx)
+template <typename TopkWeightT>
+__aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::ClearGradWeightPlane(GM_ADDR base, uint64_t planeElements,
+                                                                              uint32_t expertIdx)
 {
     constexpr uint64_t WORD_BYTES = sizeof(uint32_t);
     constexpr uint64_t WORDS_PER_32_BYTES = ALIGN_32 / WORD_BYTES;
@@ -637,7 +657,7 @@ __aicore__ inline void MegaMoeBF16Backward::ClearGradWeightPlane(GM_ADDR base, u
 
     GlobalTensor<int32_t> zeroGm;
     zeroGm.SetGlobalBuffer(reinterpret_cast<__gm__ int32_t*>(base) + expertOffset + coreOffset, coreWords);
-    LocalTensor<int32_t> zeroUb = StageUb(BW_GRAD_WEIGHT_ZERO_CHUNK_BYTES).ReinterpretCast<int32_t>();
+    LocalTensor<int32_t> zeroUb = StageUb(BW_GRAD_WEIGHT_ZERO_CHUNK_BYTES).template ReinterpretCast<int32_t>();
     constexpr uint32_t ZERO_CHUNK_WORDS = BW_GRAD_WEIGHT_ZERO_CHUNK_BYTES / sizeof(int32_t);
     for (uint64_t offset = 0; offset < coreWords; offset += ZERO_CHUNK_WORDS) {
         const uint32_t words =
@@ -651,7 +671,8 @@ __aicore__ inline void MegaMoeBF16Backward::ClearGradWeightPlane(GM_ADDR base, u
 // planes while the AICs compute weight gradients for the non-empty experts.
 // Reproduce UpdateGroupParams' maxOutputSize clamp: an expert beyond the
 // receive-capacity boundary is also skipped by both GEMMs and must be zero.
-__aicore__ inline void MegaMoeBF16Backward::ClearEmptyExpertGradWeights()
+template <typename TopkWeightT>
+__aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::ClearEmptyExpertGradWeights()
 {
     int64_t previousGroupEnd = 0;
     uint64_t consumedRows = 0;
@@ -676,7 +697,8 @@ __aicore__ inline void MegaMoeBF16Backward::ClearEmptyExpertGradWeights()
         if (effectiveRows == 0) {
             if (!zeroUbReady) {
                 // Reuse drained staging storage; InitGlobalMemory cannot follow TPipe allocation.
-                LocalTensor<int32_t> zeroUb = StageUb(BW_GRAD_WEIGHT_ZERO_CHUNK_BYTES).ReinterpretCast<int32_t>();
+                LocalTensor<int32_t> zeroUb =
+                    StageUb(BW_GRAD_WEIGHT_ZERO_CHUNK_BYTES).template ReinterpretCast<int32_t>();
                 constexpr uint32_t ZERO_CHUNK_WORDS = BW_GRAD_WEIGHT_ZERO_CHUNK_BYTES / sizeof(int32_t);
                 SetFlag<HardEvent::MTE3_V>(EVENT_ID7);
                 WaitFlag<HardEvent::MTE3_V>(EVENT_ID7);
@@ -698,8 +720,9 @@ __aicore__ inline void MegaMoeBF16Backward::ClearEmptyExpertGradWeights()
     }
 }
 
-__aicore__ inline void MegaMoeBF16Backward::UpdateGlobalBuffer(GMMAddrInfo& gmmAddrInfo, uint32_t phase,
-                                                               uint32_t expertIdx)
+template <typename TopkWeightT>
+__aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::UpdateGlobalBuffer(GMMAddrInfo& gmmAddrInfo, uint32_t phase,
+                                                                            uint32_t expertIdx)
 {
     const int64_t base = cumMRows_;
     const uint64_t bf16 = sizeof(bfloat16_t);
@@ -733,7 +756,8 @@ __aicore__ inline void MegaMoeBF16Backward::UpdateGlobalBuffer(GMMAddrInfo& gmmA
     }
 }
 
-__aicore__ inline void MegaMoeBF16Backward::CrossRankSyncInWorldSize()
+template <typename TopkWeightT>
+__aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::CrossRankSyncInWorldSize()
 {
     if constexpr (g_coreType == AscendC::AIC) {
         return;
@@ -753,8 +777,9 @@ __aicore__ inline void MegaMoeBF16Backward::CrossRankSyncInWorldSize()
     *(syncCount + aivCoreIdx_ * 16) = count;
 }
 
+template <typename TopkWeightT>
 template <bool TransW>
-__aicore__ inline void MegaMoeBF16Backward::GMM1RecomputePhase()
+__aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::GMM1RecomputePhase()
 {
     using namespace MegaMoeBF16BackwardCatlassImpl;
     using WeightLayout = std::conditional_t<TransW, ColumnMajor, RowMajor>;
@@ -782,8 +807,9 @@ __aicore__ inline void MegaMoeBF16Backward::GMM1RecomputePhase()
     }
 }
 
+template <typename TopkWeightT>
 template <bool TransW, bool GmOutput>
-__aicore__ inline void MegaMoeBF16Backward::GMM2GradPhase()
+__aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::GMM2GradPhase()
 {
     using namespace MegaMoeBF16BackwardCatlassImpl;
     using WeightLayout = std::conditional_t<TransW, RowMajor, ColumnMajor>;
@@ -844,8 +870,9 @@ __aicore__ inline void MegaMoeBF16Backward::GMM2GradPhase()
     }
 }
 
+template <typename TopkWeightT>
 template <bool TransW, bool ExpertReady>
-__aicore__ inline void MegaMoeBF16Backward::GMM1GradPhase()
+__aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::GMM1GradPhase()
 {
     if constexpr (ExpertReady) {
         GMM1GradReuseDOPhase<TransW>();
@@ -880,8 +907,9 @@ __aicore__ inline void MegaMoeBF16Backward::GMM1GradPhase()
 // Saved-mode dO and dX share the same packed-row/K GM band. Complete
 // dW2=dO.T@Hp and all AIC dO reads before P2 overwrites that band with dX;
 // other experts occupy disjoint bands.
+template <typename TopkWeightT>
 template <bool TransW>
-__aicore__ inline void MegaMoeBF16Backward::GMM1GradReuseDOPhase()
+__aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::GMM1GradReuseDOPhase()
 {
     using namespace MegaMoeBF16BackwardCatlassImpl;
     using WeightLayout = std::conditional_t<TransW, RowMajor, ColumnMajor>;
@@ -935,8 +963,9 @@ __aicore__ inline void MegaMoeBF16Backward::GMM1GradReuseDOPhase()
     }
 }
 
+template <typename TopkWeightT>
 template <bool TransW>
-__aicore__ inline void MegaMoeBF16Backward::GMM1DWPhase()
+__aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::GMM1DWPhase()
 {
     using namespace MegaMoeBF16BackwardCatlassImpl;
     GMMAddrInfo gmmAddrInfo{};
@@ -964,8 +993,9 @@ __aicore__ inline void MegaMoeBF16Backward::GMM1DWPhase()
     }
 }
 
+template <typename TopkWeightT>
 template <bool TransW>
-__aicore__ inline void MegaMoeBF16Backward::GMM2DWPhase()
+__aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::GMM2DWPhase()
 {
     using namespace MegaMoeBF16BackwardCatlassImpl;
     GMMAddrInfo gmmAddrInfo{};
@@ -992,7 +1022,8 @@ __aicore__ inline void MegaMoeBF16Backward::GMM2DWPhase()
     }
 }
 
-__aicore__ inline void MegaMoeBF16Backward::UnpermuteBackward()
+template <typename TopkWeightT>
+__aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::UnpermuteBackward()
 {
     if constexpr (g_coreType == AscendC::AIC) {
         return;
@@ -1047,17 +1078,18 @@ __aicore__ inline void MegaMoeBF16Backward::UnpermuteBackward()
     WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID1);
 }
 
-// Reduce each partial row into one packed BF16 value.
-__aicore__ inline void MegaMoeBF16Backward::ReduceDpPartialBatch(uint16_t batchRows, uint16_t partialTiles,
-                                                                 uint16_t partialStride)
+// Reduce each FP32 partial row into the routing-weight gradient dtype.
+template <typename TopkWeightT>
+__aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::ReduceDpPartialBatch(uint16_t batchRows, uint16_t partialTiles,
+                                                                              uint16_t partialStride)
 {
     constexpr uint16_t fp32PerReg = 256U / sizeof(float);
     const uint16_t repeatsPerRow = static_cast<uint16_t>(
         Ops::Base::CeilDiv(static_cast<uint32_t>(partialTiles), static_cast<uint32_t>(fp32PerReg)));
     LocalTensor<float> partialBuf = TopkGradPartialBuf_.Get<float>();
-    LocalTensor<bfloat16_t> routeBuf = TopkGradRouteBuf_.Get<bfloat16_t>();
+    LocalTensor<TopkWeightT> routeBuf = TopkGradRouteBuf_.template Get<TopkWeightT>();
     __ubuf__ float* partialData = reinterpret_cast<__ubuf__ float*>(partialBuf.GetPhyAddr());
-    __ubuf__ bfloat16_t* routeData = reinterpret_cast<__ubuf__ bfloat16_t*>(routeBuf.GetPhyAddr());
+    __ubuf__ TopkWeightT* routeData = reinterpret_cast<__ubuf__ TopkWeightT*>(routeBuf.GetPhyAddr());
 
     __VEC_SCOPE__
     {
@@ -1079,16 +1111,22 @@ __aicore__ inline void MegaMoeBF16Backward::ReduceDpPartialBatch(uint16_t batchR
                 AscendC::Reg::Add(accumulated, accumulated, rowSum, oneLane);
                 remaining -= lanes;
             }
-            AscendC::Reg::RegTensor<bfloat16_t> result;
-            AscendC::Reg::Cast<bfloat16_t, float, MegaMoeBF16Impl::kBackwardCastFP32ToBF16>(result, accumulated,
-                                                                                            oneLane);
-            AscendC::Reg::DataCopy<bfloat16_t, AscendC::Reg::StoreDist::DIST_FIRST_ELEMENT_B16>(routeData + row, result,
+            if constexpr (std::is_same_v<TopkWeightT, bfloat16_t>) {
+                AscendC::Reg::RegTensor<bfloat16_t> result;
+                AscendC::Reg::Cast<bfloat16_t, float, MegaMoeBF16Impl::kBackwardCastFP32ToBF16>(result, accumulated,
                                                                                                 oneLane);
+                AscendC::Reg::DataCopy<bfloat16_t, AscendC::Reg::StoreDist::DIST_FIRST_ELEMENT_B16>(routeData + row,
+                                                                                                    result, oneLane);
+            } else {
+                AscendC::Reg::DataCopy<float, AscendC::Reg::StoreDist::DIST_FIRST_ELEMENT_B32>(routeData + row,
+                                                                                               accumulated, oneLane);
+            }
         }
     }
 }
 
-__aicore__ inline void MegaMoeBF16Backward::ReduceAndRouteTopkGrad()
+template <typename TopkWeightT>
+__aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::ReduceAndRouteTopkGrad()
 {
     if constexpr (g_coreType == AscendC::AIC) {
         return;
@@ -1099,7 +1137,7 @@ __aicore__ inline void MegaMoeBF16Backward::ReduceAndRouteTopkGrad()
     AscendC::GlobalTensor<float> partials;
     partials.SetGlobalBuffer(reinterpret_cast<__gm__ float*>(bwWs_.ptrDpProducts));
     const uint64_t remoteDOffset = params_.peermemInfo.ptrD - params_.peermemInfo.ptrBase;
-    LocalTensor<bfloat16_t> routeBuf = TopkGradRouteBuf_.Get<bfloat16_t>();
+    LocalTensor<TopkWeightT> routeBuf = TopkGradRouteBuf_.template Get<TopkWeightT>();
     LocalTensor<float> partialBuf = TopkGradPartialBuf_.Get<float>();
     const int32_t partialCapacity = static_cast<int32_t>(BW_TOPK_PARTIAL_UB_BYTES / sizeof(float));
     // Masked arithmetic does not mask Reg::DataCopy's full-register load.
@@ -1136,7 +1174,7 @@ __aicore__ inline void MegaMoeBF16Backward::ReduceAndRouteTopkGrad()
                 continue;
             }
             // Assign whole 32-byte blocks to AIVs so adjacent MTE3 writes cannot overlap.
-            constexpr int32_t rowsPerBlock = ALIGN_32 / static_cast<int32_t>(sizeof(bfloat16_t));
+            constexpr int32_t rowsPerBlock = ALIGN_32 / static_cast<int32_t>(sizeof(TopkWeightT));
             const int32_t ownershipBlocks = static_cast<int32_t>(
                 Ops::Base::CeilDiv(static_cast<uint32_t>(rankRows), static_cast<uint32_t>(rowsPerBlock)));
             const int32_t blocksPerCore = ownershipBlocks / static_cast<int32_t>(blockAivNum_);
@@ -1153,9 +1191,9 @@ __aicore__ inline void MegaMoeBF16Backward::ReduceAndRouteTopkGrad()
             if (coreRows > 0) {
                 const int64_t dstExpertOffset =
                     static_cast<int64_t>(preSumBeforeRankWorkSpace_(dstRank * expertPerRank_ + expert));
-                AscendC::GlobalTensor<bfloat16_t> remoteD;
+                AscendC::GlobalTensor<TopkWeightT> remoteD;
                 remoteD.SetGlobalBuffer(
-                    reinterpret_cast<__gm__ bfloat16_t*>(GetRankWinAddrWithOffset(dstRank, remoteDOffset)));
+                    reinterpret_cast<__gm__ TopkWeightT*>(GetRankWinAddrWithOffset(dstRank, remoteDOffset)));
                 for (int64_t batchBegin = 0; batchBegin < coreRows; batchBegin += batchCapacity) {
                     const int32_t batchRows = coreRows - batchBegin > batchCapacity
                                                   ? batchCapacity
@@ -1172,8 +1210,8 @@ __aicore__ inline void MegaMoeBF16Backward::ReduceAndRouteTopkGrad()
                                          static_cast<uint16_t>(partialStride));
                     SyncFunc<AscendC::HardEvent::V_MTE2>();
                     SyncFunc<AscendC::HardEvent::V_MTE3>();
-                    AscendC::DataCopyExtParams copyParams{1U, static_cast<uint32_t>(batchRows * sizeof(bfloat16_t)), 0U,
-                                                          0U, 0U};
+                    AscendC::DataCopyExtParams copyParams{1U, static_cast<uint32_t>(batchRows * sizeof(TopkWeightT)),
+                                                          0U, 0U, 0U};
                     AscendC::DataCopyPad(remoteD[dstExpertOffset + coreRowBegin + batchBegin], routeBuf, copyParams);
 
                     // Retire MTE3 before the next batch refills routeBuf.
@@ -1186,7 +1224,8 @@ __aicore__ inline void MegaMoeBF16Backward::ReduceAndRouteTopkGrad()
     }
 }
 
-__aicore__ inline void MegaMoeBF16Backward::UnpermuteTopkGrad()
+template <typename TopkWeightT>
+__aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::UnpermuteTopkGrad()
 {
     if constexpr (g_coreType == AscendC::AIC) {
         return;
@@ -1195,16 +1234,18 @@ __aicore__ inline void MegaMoeBF16Backward::UnpermuteTopkGrad()
     int32_t coreOffset = 0;
     TilingByCore(static_cast<int32_t>(m_ * topK_), coreLen, coreOffset, 1);
     __gm__ int32_t* routeToPacked = reinterpret_cast<__gm__ int32_t*>(params_.workspaceInfo.expandedRowIdxGather);
-    __gm__ uint16_t* routedDp = reinterpret_cast<__gm__ uint16_t*>(params_.peermemInfo.ptrD);
-    __gm__ uint16_t* gradTopk = reinterpret_cast<__gm__ uint16_t*>(gradTopkWeightsGmAddr_);
+    using GradientBits = std::conditional_t<std::is_same_v<TopkWeightT, float>, uint32_t, uint16_t>;
+    __gm__ GradientBits* routedDp = reinterpret_cast<__gm__ GradientBits*>(params_.peermemInfo.ptrD);
+    __gm__ GradientBits* gradTopk = reinterpret_cast<__gm__ GradientBits*>(gradTopkWeightsGmAddr_);
     for (int32_t route = coreOffset; route < coreOffset + coreLen; ++route) {
-        const uint16_t dpBf16 = ReadGmByPassDCache(routedDp + routeToPacked[route]);
-        // Bypass DCache to avoid cross-AIV BF16 cache-line writeback races.
-        WriteGmByPassDCache(gradTopk + route, dpBf16);
+        const GradientBits dpBits = ReadGmByPassDCache(routedDp + routeToPacked[route]);
+        // Each slot has one owner. Preserve its bits and bypass cross-AIV DCache writeback.
+        WriteGmByPassDCache(gradTopk + route, dpBits);
     }
 }
 
-__aicore__ inline void MegaMoeBF16Backward::Process()
+template <typename TopkWeightT>
+__aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::Process()
 {
     // P0 staging (gather slots / count-table restore / dispatch ring) is a
     // fixed static UB window above the P1/P2 tile region (StageUb), so P0

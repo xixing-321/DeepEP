@@ -247,14 +247,14 @@ __aicore__ inline void GroupMatmulRecompute(BackwardGroupMatmulParam<RowMajor, W
 // loads the complete dHp into UB before replacing it with Hp. All AIC writes
 // retire before either lane starts consuming this expert. Other experts use
 // disjoint bands; each expert's dW2 retires before P2 overwrites its dO.
-template <class WeightLayout>
-__aicore__ inline void GMM2GradSwiGLUGradGM(BackwardGroupMatmulParam<RowMajor, WeightLayout, 0, true>& gmm2Params,
-                                            MegaMoeBF16Impl::BlockEpilogueSwigluBackwardBF16<L1TileShape>& epilogueOp,
-                                            const AscendC::Shape<int64_t, int64_t, int64_t, int64_t>& problemShape,
-                                            const GMMAddrInfo& gmmAddrInfo, GM_ADDR dHpBase, uint32_t& startBlockIdx,
-                                            uint32_t& nextTargetAiv, uint32_t expertIdx, int64_t expertRowBase,
-                                            __gm__ int32_t* dispatchReadyFlag, int32_t dispatchTarget,
-                                            const BackwardDispatchReadyView& rowReady, __gm__ int32_t* dHpReadyFlag)
+template <class WeightLayout, typename TopkWeightT>
+__aicore__ inline void GMM2GradSwiGLUGradGM(
+    BackwardGroupMatmulParam<RowMajor, WeightLayout, 0, true>& gmm2Params,
+    MegaMoeBF16Impl::BlockEpilogueSwigluBackwardBF16<L1TileShape, TopkWeightT>& epilogueOp,
+    const AscendC::Shape<int64_t, int64_t, int64_t, int64_t>& problemShape, const GMMAddrInfo& gmmAddrInfo,
+    GM_ADDR dHpBase, uint32_t& startBlockIdx, uint32_t& nextTargetAiv, uint32_t expertIdx, int64_t expertRowBase,
+    __gm__ int32_t* dispatchReadyFlag, int32_t dispatchTarget, const BackwardDispatchReadyView& rowReady,
+    __gm__ int32_t* dHpReadyFlag)
 {
     const uint32_t m = Get<M_VALUE>(problemShape);
     const uint32_t n = Get<N_VALUE>(problemShape);
@@ -333,10 +333,10 @@ __aicore__ inline void GMM2GradSwiGLUGradGM(BackwardGroupMatmulParam<RowMajor, W
 // produce tile i+1 while the other AIV consumes tile i. A slot is reused only
 // after its AIV has published completion through the matching cross-core
 // event.
-template <class WeightLayout>
+template <class WeightLayout, typename TopkWeightT>
 __aicore__ inline void GMM2GradSwiGLUGradDualAiv(
     BackwardGroupMatmulParam<RowMajor, WeightLayout, DUAL_AIV_TARGET>& gmm2Params,
-    MegaMoeBF16Impl::BlockEpilogueSwigluBackwardBF16<L1TileShape>& epilogueOp, const Params& params,
+    MegaMoeBF16Impl::BlockEpilogueSwigluBackwardBF16<L1TileShape, TopkWeightT>& epilogueOp, const Params& params,
     const AscendC::Shape<int64_t, int64_t, int64_t, int64_t>& problemShape, const GMMAddrInfo& gmmAddrInfo,
     uint32_t& startBlockIdx, int32_t& outstandingMask, uint32_t& nextTargetAiv, uint32_t expertIdx,
     int64_t expertRowBase, __gm__ int32_t* dispatchReadyFlag, int32_t dispatchTarget, uint32_t p1Event)

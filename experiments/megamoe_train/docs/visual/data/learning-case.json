@@ -32,7 +32,7 @@
     "activeFfn": [0, 1],
     "x": "X[0]=(1+(token+rank)%3)/2; X[1]=(1+(token+2*rank)%4)/4; 其他列为0",
     "dy": [0.25, 0.5],
-    "rounding": "R表示先按FP32值取BF16最近偶数舍入；GMM输出、Hp、dHp、dGate/dUp、dXroute 保留该边界。H、dH和dHp×H乘积保持FP32；Y、dX和dp均在FP32归约后最终舍入BF16。",
+    "rounding": "本教学案例固定使用BF16 p。R表示先按FP32值取BF16最近偶数舍入；GMM输出、Hp、dHp、dGate/dUp、dXroute 保留该边界。H、dH和dHp×H乘积保持FP32；Y、dX和dp均在FP32归约后最终舍入BF16。实际接口也支持FP32 p，此时dp以FP32写出。",
     "zeroRule": "各专家按编号循环选取下列 8 组 2×2 权重子块，其余权重、X 和 dY 坐标为 0。",
     "weightPatterns": [
       {"expert": 0, "wg": [[1, 0], [0, 1]], "wu": [[1, 0], [0, 0.5]], "w2": [[1, 0], [0, 0.5]]},

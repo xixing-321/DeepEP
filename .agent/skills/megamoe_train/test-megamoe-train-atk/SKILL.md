@@ -67,7 +67,7 @@ PY
 
 物理设备列表通过位置参数传入，EP 等于列表长度；worker 使用映射后的逻辑 local rank。常用 EP2/4/8，实际结论仅覆盖本轮运行规模。多机需要单独确认网络和启动方式，不把单机通过扩大为多机通过。
 
-当前公开清单只保留 12 条典型尺寸：Flash、Pro、GLM 各取每 rank M=512、2048、4096、8192，统一 balanced 路由、BF16 保存和固定 seed。`priority`、`model`、`all` 都选择这 12 条，旧 smoke/core/extended 已移出。其他用例仅本地归档，不自动恢复或加载。运行前用当前入口核对实际配置：
+当前公开清单保留 12 条典型尺寸：Flash、Pro、GLM 各取每 rank M=512、2048、4096、8192，统一 balanced 路由、BF16 路由权重、BF16 保存和固定 seed。`priority`、`model` 选择这 12 条；`dtype` 另有 24 条 BF16/FP32 路由权重、保存模式和 clipping 组合，`gather` 有 6 条 FP32 源窗口边界，`all` 选择全部 42 条。旧 smoke/core/extended 已移出，其他历史用例不自动恢复或加载。运行前用当前入口核对实际配置：
 
 ```bash
 : "${MEGAMOE_TEST_DEVICES:?填写本轮用户指定的物理设备列表}"
@@ -112,7 +112,7 @@ python -u "$entry" "$MEGAMOE_TEST_DEVICES" \
 
 当前精度默认启用 ATK，保留显式 `--atk` 便于审阅命令；`--skip performance` 只测精度。默认不加 skip 会先做精度、再做性能，不属于本 skill 范围；`--skip precision` 不是精度验证。
 
-套件默认复用 worker、进程组和算子实例，逐 case 重新生成输入、参考和梯度。`--suite all` 在一个作业内运行当前 12 条，避免拆成重复初始化的多轮套件。只在需要隔离复现或比较时使用 `--isolate-cases`。套件由一次普通 `python` 启动，不放到 `torchrun` 下重复启动。
+套件默认复用 worker、进程组和算子实例，逐 case 重新生成输入、参考和梯度。`--suite all` 在一个作业内运行当前 42 条；仅需原 12 条模型用例时选 `priority` 或 `model`。只在需要隔离复现或比较时使用 `--isolate-cases`。套件由一次普通 `python` 启动，不放到 `torchrun` 下重复启动。
 
 执行时保留真实 Python 退出码。套件会实时输出并保存 `suite.log` 和 case 日志，无需另造输出框架；若使用 `tee`，开启 pipefail 并保留 Python 的退出码，不能将 tee 成功当作测试通过。运行期间不更新源码或重新安装 wheel。
 
@@ -123,7 +123,7 @@ python -u "$entry" "$MEGAMOE_TEST_DEVICES" \
 ATK 对每个 rank 的 `y`、`dx`、`dtopk_weights`、`dw1`、`dw2` 分别比较：
 
 - actual：融合 MegaMoE 的结果。
-- benchmark：`fp32-boundaries-v2` NPU BigOp，BF16 GMM 输入输出与 FP32 激活、导数、dp 及有序 Y/dX 归并。
+- benchmark：`fp32-boundaries-v3-topk-dtype` NPU BigOp，BF16 GMM 输入输出与 FP32 激活、导数、dp 及有序 Y/dX 归并；p/dp 保持输入 BF16 或 FP32 类型。
 - golden：独立 Torch CPU FP64 真值。
 
 显式最大/平均相对误差及 RMSE 比例门限为 5/1.5/1.5，`number_count_radio=2`。ATK 是唯一双标杆；另外仍须通过 `megamoe_contract` 混合容差与精确 counts。BF16 保存时，BigOp 与混合容差共用同一份小算子结果。不要合并不同输出或 rank 的数据后判定，不恢复已删除的自写双标杆，也不为得到 PASS 修改真值、融合结果或门限。参考数值规则升级须记录新版本，保留旧报告。
@@ -142,4 +142,4 @@ ATK 对每个 rank 的 `y`、`dx`、`dtopk_weights`、`dw1`、`dw2` 分别比较
 
 交付实际源码/原生库身份、Python 和 ATK 版本、命令、设备及 EP、套件/case 范围、退出码、PASS/FAIL/ERROR/NOT_RUN 数量、各失败输出和报告路径。没有执行的用例明确标为未测；不能将一组通过扩大为其他保存模式、EP 或完整套件通过。
 
-当前典型清单不包含其他路由、数据分布或保存模式。历史 GLM M4096 的 ATK 超差与 GLM M512 未完成状态见[训练模块说明](../../../../experiments/megamoe_train/README.md)的历史结果段；测试方案只记录用例与判据，不累积设备数据。收敛清单、环境加载或静态检查不改变这些记录，也不证明新二进制已通过。
+典型模型清单仍仅使用 BF16 保存；dtype/gather 专项的具体配置见当前测试规范，不扩大为其他路由、数据分布或设备规模已通过。历史 GLM M4096 的 ATK 超差与 GLM M512 未完成状态见[训练模块说明](../../../../experiments/megamoe_train/README.md)的历史结果段；测试规范只记录用例与判据，不累积设备数据。新增清单、环境加载或静态检查不改变历史记录，也不证明新二进制已通过。

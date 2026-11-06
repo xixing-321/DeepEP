@@ -6,7 +6,7 @@ Modified by guofanfeng 2026
 # MegaMoE BF16 测试入口
 
 本目录只有**一个**测试入口 `test_mega_moe.py`，精度与性能共用它。用例清单见
-[cases.json](cases.json)；12 条典型尺寸的选择依据、覆盖理由与已知限制见
+[cases.json](cases.json)；12 条典型尺寸、24 条类型/保存模式和 6 条 Gather 边界的覆盖理由见
 [TEST_SPEC.md](TEST_SPEC.md)；模块级构建、接口与保存模式见
 [模块 README](../../README.md)。
 
@@ -25,7 +25,7 @@ Modified by guofanfeng 2026
 
 精度和性能用同一个入口，靠 `--skip` 选择跑哪一个。下面的设备列表 `0,1,2,3,4,5,6,7`、端口
 `tcp://127.0.0.1:29862` 和用例 `flash_m512`、`pro_m2048` 都是示例，换成本轮实际分配的物理卡、未占用端口
-（Gloo 再用端口 +2）和要测的用例。示例只跑一条；去掉 `--case-id` 会跑所选套件的全部 12 条，
+（Gloo 再用端口 +2）和要测的用例。示例只跑一条；去掉 `--case-id` 会跑 `model` 套件的全部 12 条，
 耗时明显更长。
 
 ### 精度测试
@@ -66,10 +66,15 @@ python -u experiments/megamoe_train/tests/bf16/test_mega_moe.py 0,1,2,3,4,5,6,7 
 
 | 方式 | 说明 |
 | --- | --- |
-| `--suite priority` / `model` / `all` | 当前三者是同一组 12 条；suite 内**不接受** `--seq/--hidden/--ffn/--topk/--routing-mode/--data-profile/--save-gmm1-output/--swiglu-limit/--seed` 覆盖 |
+| `--suite priority` / `model` | 同一组 12 条模型用例 |
+| `--suite dtype` / `gather` / `all` | 分别选择 24 条类型/保存模式、6 条 FP32 Gather 边界、全部 42 条 |
 | `--case-id <id>`（可重复） | 在选中套件内取子集，例如 `--case-id pro_m4096 --case-id glm_m8192` |
 | `--list-cases` | 只打印配置，不导入 Torch/ATK、不访问设备 |
 | 不使用 `--suite` | 单 case 模式，全部参数由命令行给出（见下） |
+
+suite 内不接受 shape、p dtype/values、路由、数据分布、保存模式、clipping 和 seed 的覆盖。
+`dtype` 包含 BF16 p、BF16-rounded FP32 p 和 full-precision FP32 p，分别组合全部四种
+保存模式及 clipping 开关；清单存在不等于设备已通过。
 
 自定义 shape 示例：
 
@@ -86,6 +91,10 @@ python -u experiments/megamoe_train/tests/bf16/test_mega_moe.py 0,1,2,3,4,5,6,7 
 约束：`hidden % 256 == 0`、`ffn % 256 == 0`（`--ffn` 就是 SwiGLU 输出宽 F，GMM1 输出是 `2F`）、
 `1 ≤ seq ≤ 16384`、`1 ≤ expert-per-rank ≤ 32`（EP8 时总专家 E ≤ 256）、
 `topk ≤ EP × expert_per_rank`。`seq` 是**每 rank** token 数，EP 不会把它再切分。
+单例参数 `--topk-weight-dtype bf16/fp32` 默认为 BF16；选择 FP32 时默认保留完整有效位，
+加 `--topk-weight-values bf16-rounded` 则使用相同 BF16 p.float() 数值。dtopk_weights 与 p
+同类型，GMM 输入/输出及其余最终浮点输出保持 BF16。旧命令 `--gmm-n N` 仍按 N=2F 解析，
+不能与 `--ffn F` 同时指定；清单和报告统一使用 `ffn`。
 
 ## 性能口径
 
@@ -100,17 +109,20 @@ python -u experiments/megamoe_train/tests/bf16/test_mega_moe.py 0,1,2,3,4,5,6,7 
 `--warmup N --loops M` 对三个口径和 baseline 共用。**不构建、不开启、不读取任何设备 Timer**。
 
 `--baseline on`（默认）额外计时移植过来的 dropless 小算子链（permute、alltoall dispatch、
-GMM1、带路由权重的 SwiGLU、GMM2、combine、加权 unpermute），与算子共用同一份路由、权重
+GMM1、带路由权重的 SwiGLU、GMM2、combine、unpermute），与算子共用同一份路由、权重
 和上游梯度；`--save-gmm1-output none` 时它同样重算 GMM1，保证两侧 GEMM 数量一致。
 baseline 需要一条可复用的 HCCL 子组（协调组是 Gloo），建不出来或打包路由超过 16 GiB
 预算时记 `SKIPPED` 并打印原因，**不影响 PASS/FAIL**。`--baseline off` 只测算子。
+性能 baseline 保留移植源链的激活数值边界，和 ATK 使用的 `npu_baseline.py` 是两个不同角色。
+它不模拟 MXFP8 保存压缩，只对齐 GEMM 数量；p 的通信保持输入类型，FP32 p 乘权后的 Hp
+转回 BF16 供 GMM，dP 保持 FP32。精度结论仍由 ATK、量化契约和 counts 的原门禁决定。
 
 四个派生量的定义（公式、RFK 构成、三个适用前提）以
 [TEST_SPEC 的性能指标定义](TEST_SPEC.md#性能指标定义)为准；跑之前只需要记住：
 
 | 量 | 一句话 |
 | --- | --- |
-| `floor` | 纸面 FLOPs ÷ 410.4 TF 的理论下界；三口径恒为 `1:2:3`，与路由分布无关 |
+| `floor` | 纸面 FLOPs ÷ 410.4 TF 的理论下界；保存模式三口径为 `6:12:18`，none 重算为 `6:16:22` |
 | `MFU` | 实测 GMM 吞吐 ÷ 432 TF 裸峰值；窗口内含通信/激活，是算子级而不是模型级 |
 | `overhead` | `measured − floor`，该窗口内的非 GEMM 时间 |
 
@@ -139,7 +151,7 @@ baseline 需要一条可复用的 HCCL 子组（协调组是 Gloo），建不出
 
 `--suite` 结束时 rank 0 再打一张跨 case 汇总表（每行一个 case，取 rank 0 中位数）：
 `M/H/F/tk/E`、三口径时延、`speedup f/b/fb`、`MFU% f/b/fb`、`floor f/b/fb`、`fb_overhead`。
-其中 `E = EP × expert_per_rank`，每专家行数 `M×tk/E` 决定了 ready 相关分支，是解释
+其中 `E = EP × expert_per_rank`，均衡路由下每专家行数 `EP×M×tk/E = M×tk/E_local` 决定了 ready 相关分支，是解释
 MFU 差异的关键量。
 
 ## 输出目录

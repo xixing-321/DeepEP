@@ -75,7 +75,7 @@ def parse_args(argv=None):
         default=None,
         help="Explicit ATK ratio limits; default 5 / 1.5 / 1.5, number_count_radio stays 2",
     )
-    parser.add_argument("--suite", choices=("priority", "model", "all"), default=None)
+    parser.add_argument("--suite", choices=("priority", "model", "dtype", "gather", "all"), default=None)
     parser.add_argument(
         "--skip-mxfp8",
         action="store_true",
@@ -106,11 +106,23 @@ def parse_args(argv=None):
         "--seq", type=int, default=129, help="Tokens per rank entering this operator, not model sequence length"
     )
     parser.add_argument("--hidden", type=int, default=256)
-    parser.add_argument("--ffn", type=int, default=512, help="SwiGLU output width F; GMM1 output is 2*F")
+    width = parser.add_mutually_exclusive_group()
+    width.add_argument("--ffn", type=int, default=512, help="SwiGLU output width F; GMM1 output is 2*F")
+    width.add_argument("--gmm-n", type=int, default=None, help=argparse.SUPPRESS)
     parser.add_argument("--topk", type=int, default=4)
+    parser.add_argument("--topk-weight-dtype", choices=("bf16", "fp32"), default="bf16")
+    parser.add_argument(
+        "--topk-weight-values",
+        choices=("bf16-rounded", "full-precision"),
+        default=None,
+        help="Default: BF16-rounded for BF16, full precision for FP32; rounded FP32 equals BF16 p.float()",
+    )
     parser.add_argument("--expert-per-rank", type=int, default=2)
     parser.add_argument(
-        "--routed-scaling-factor", type=float, default=1.0, help="Scale normalized route weights before BF16 conversion"
+        "--routed-scaling-factor",
+        type=float,
+        default=1.0,
+        help="Scale normalized route weights before dtype conversion",
     )
     parser.add_argument(
         "--routing-mode",
@@ -143,6 +155,17 @@ def parse_args(argv=None):
     parser.add_argument("--shmem-ip-port", default="tcp://127.0.0.1:29862")
     parser.add_argument("--output", type=Path, default=None, help="New report directory")
     args = parser.parse_args(argv)
+    # Keep earlier standalone commands usable while publishing only F in the
+    # new manifest/report schema. N denotes GMM1's full Gate+Up width, 2*F.
+    if args.gmm_n is not None:
+        if args.gmm_n <= 0 or args.gmm_n % 512:
+            parser.error("gmm-n must be positive and divisible by 512")
+        args.ffn = args.gmm_n // 2
+    del args.gmm_n
+    if args.topk_weight_values is None:
+        args.topk_weight_values = "bf16-rounded" if args.topk_weight_dtype == "bf16" else "full-precision"
+    if args.topk_weight_dtype == "bf16" and args.topk_weight_values != "bf16-rounded":
+        parser.error("full-precision route weights require --topk-weight-dtype fp32")
     if (args.list_cases or args.case_id) and not args.suite:
         parser.error("--list-cases and --case-id require --suite")
     if args.skip_mxfp8 and (not args.suite or args.diagnose_mxfp8):
@@ -167,7 +190,10 @@ def parse_args(argv=None):
             "--seq",
             "--hidden",
             "--ffn",
+            "--gmm-n",
             "--topk",
+            "--topk-weight-dtype",
+            "--topk-weight-values",
             "--expert-per-rank",
             "--routed-scaling-factor",
             "--routing-mode",
@@ -248,7 +274,7 @@ def suite_cases(args, *, include_skipped=False):
         seen.add(identity)
         if not item.get("covers", "").strip():
             raise ValueError(f"Missing coverage rationale in {identity}")
-        if not item["suites"] or set(item["suites"]) - {"priority", "model"}:
+        if not item["suites"] or set(item["suites"]) - {"priority", "model", "dtype", "gather"}:
             raise ValueError(f"Invalid suite membership in {identity}")
         unknown = set(item) - set(defaults) - {"id", "suites", "covers"}
         if unknown:
@@ -376,6 +402,7 @@ def case_progress(index, count, record, log_path):
         f"M={case['seq']} H={case['hidden']} F={case['ffn']} TopK={case['topk']} "
         f"E/rank={case['expert_per_rank']} save={case['save_gmm1_output']} data={case['data_profile']} "
         f"clip={case['swiglu_limit']} p_scale={case['routed_scaling_factor']} "
+        f"p={case['topk_weight_dtype']}/{case['topk_weight_values']} "
         f"log={log_path}",
         flush=True,
     )
@@ -492,13 +519,9 @@ def suite_performance_summary(cases, args):
         speed_cell = (
             f"{speeds['forward']:.2f}/{speeds['backward']:.2f}/{speeds['complete']:.2f}" if speeds else "--/--/--"
         )
-        mfu_cell = "/".join(
-            f"{mfu[scope]['mfu']:.0f}" for scope in ("forward", "backward", "complete") if scope in mfu
-        )
+        mfu_cell = "/".join(f"{mfu[scope]['mfu']:.0f}" for scope in ("forward", "backward", "complete") if scope in mfu)
         floor_cell = "/".join(
-            f"{roofline[scope]['floor_ms']:.2f}"
-            for scope in ("forward", "backward", "complete")
-            if scope in roofline
+            f"{roofline[scope]['floor_ms']:.2f}" for scope in ("forward", "backward", "complete") if scope in roofline
         )
         overhead = roofline.get("complete", {}).get("overhead_ms")
         rows.append(
@@ -510,8 +533,7 @@ def suite_performance_summary(cases, args):
             f"{perf['complete_ms']['median']:>9.2f}  "
             f"{speed_cell:<15} "
             f"{mfu_cell:<12}"
-            f"{floor_cell:<20}"
-            + (f"{overhead:>+12.2f}" if overhead is not None else f"{'--':>12}")
+            f"{floor_cell:<20}" + (f"{overhead:>+12.2f}" if overhead is not None else f"{'--':>12}")
         )
     if not rows:
         return []
@@ -558,7 +580,7 @@ def run_suite(args):
             flush=True,
         )
     if args.list_cases:
-        print("id\tEP\tM/rank\tH\tF\tTopK\tE/rank\trouting\tdata\tsave\tclip\tp_scale\tseed\tcovers")
+        print("id\tEP\tM/rank\tH\tF\tTopK\tE/rank\trouting\tdata\tsave\tclip\tp_scale\tp_dtype\tp_values\tseed\tcovers")
         for case in cases:
             print(
                 "\t".join(
@@ -577,6 +599,8 @@ def run_suite(args):
                             case["save_gmm1_output"],
                             case["swiglu_limit"],
                             case["routed_scaling_factor"],
+                            case["topk_weight_dtype"],
+                            case["topk_weight_values"],
                             case["seed"],
                             case["covers"],
                         ),
@@ -766,7 +790,7 @@ def installed_root():
 
 
 def make_inputs(args, rank, world, global_tokens=True):
-    """Generate reproducible BF16 CPU snapshots shared by all three paths."""
+    """Generate shared CPU snapshots; preserve the selected route-weight dtype."""
     import torch
 
     def rng(source, stream):
@@ -821,7 +845,7 @@ def make_inputs(args, rank, world, global_tokens=True):
             xs.append(sample(rng(source, 0), (args.seq, args.hidden), 0.1))
             logits = torch.empty((args.seq, args.topk), dtype=torch.float32, device="cpu")
             logits.uniform_(-1, 1, generator=rng(source, 2))
-            probabilities.append((torch.softmax(logits, dim=1) * args.routed_scaling_factor).to(torch.bfloat16))
+            probabilities.append(torch.softmax(logits, dim=1) * args.routed_scaling_factor)
             upstreams.append(sample(rng(source, 3), (args.seq, args.hidden), 0.1))
     ids = torch.cat(all_ids)
     counts = torch.bincount(ids.reshape(-1).long(), minlength=total)
@@ -840,11 +864,17 @@ def make_inputs(args, rank, world, global_tokens=True):
         ),
     }
     apply_data_profile(inputs, args, token_start=0 if global_tokens else rank * args.seq)
+    # Convert once, after profiles. Rounded FP32 and BF16 runs have identical
+    # values and RNG streams; full FP32 retains the router's additional bits.
+    if args.topk_weight_values == "bf16-rounded":
+        inputs["p"] = inputs["p"].to(torch.bfloat16)
+    if args.topk_weight_dtype == "fp32":
+        inputs["p"] = inputs["p"].float()
     return inputs
 
 
 def apply_data_profile(inputs, args, token_start=0):
-    """Alter only the shared BF16 input snapshot, never a reference result."""
+    """Alter only the shared input snapshot, never a reference result."""
     import torch
 
     profile = args.data_profile
@@ -891,8 +921,8 @@ def combine_baseline(partial, args, rank, world, device):
 
     m, h = args.seq, args.hidden
     for destination in range(world):
-        # Every row/slot has one owning expert. FP32 carries BF16 values
-        # exactly; this reduction transports them without combining routes.
+        # Every row/slot has one owning expert. FP32 carries BF16 y/dx and
+        # either BF16 or FP32 dp exactly; no route contributions are combined.
         buffer = torch.zeros((m, args.topk, 2 * h + 1), dtype=torch.float32, device="cpu")
         for route in partial["routes"]:
             mask = route["rows"] // m == destination
@@ -903,7 +933,9 @@ def combine_baseline(partial, args, rank, world, device):
         dist.reduce(buffer, dst=destination)
         if rank == destination:
             ids = partial["ids"][rank * m : (rank + 1) * m]
-            result = unpermute_routes(buffer, ids, device, reference=partial["reference"])
+            result = unpermute_routes(
+                buffer, ids, device, reference=partial["reference"], topk_weight_dtype=partial["topk_weight_dtype"]
+            )
     result.update(dw1=partial["dw1"], dw2=partial["dw2"])
     return result
 
@@ -991,9 +1023,7 @@ def exchanged_rows(group, value, receive_splits, send_splits):
         return value
     value = value.contiguous()
     output = value.new_empty([sum(receive_splits), *value.shape[1:]])
-    dist.all_to_all_single(
-        output, value, output_split_sizes=receive_splits, input_split_sizes=send_splits, group=group
-    )
+    dist.all_to_all_single(output, value, output_split_sizes=receive_splits, input_split_sizes=send_splits, group=group)
     return output
 
 
@@ -1140,9 +1170,7 @@ def baseline_chain():
 
             counts = plan.counts
             global_x = reorder_chunks(
-                exchanged_rows(
-                    plan.group, x.index_select(0, plan.route_row), plan.output_splits, plan.input_splits
-                ),
+                exchanged_rows(plan.group, x.index_select(0, plan.route_row), plan.output_splits, plan.input_splits),
                 plan.received_sizes,
                 plan.sort_index,
                 plan.local_experts,
@@ -1160,7 +1188,12 @@ def baseline_chain():
             )
             gate_up = _grouped_matmul(global_x, plan.weight1, counts)
             gate, up = clip_gate_up(*torch.chunk(gate_up, 2, dim=-1), plan.swiglu_limit)
-            intermediate = (torch.nn.functional.silu(gate) * up) * global_p.unsqueeze(-1)
+            activation = torch.nn.functional.silu(gate) * up
+            if global_p.dtype == torch.float32:
+                # FP32 p must not promote the following BF16 GMM operands.
+                intermediate = (activation.float() * global_p.unsqueeze(-1)).to(activation.dtype)
+            else:
+                intermediate = activation * global_p.unsqueeze(-1)
             packed_y = _grouped_matmul(intermediate, plan.weight2, counts)
             combined = exchanged_rows(
                 plan.group,
@@ -1195,17 +1228,21 @@ def baseline_chain():
                 plan.sort_index,
                 plan.local_experts,
             )
-            gate_up = (
-                _grouped_matmul(global_x, plan.weight1, counts) if plan.recompute else ctx.saved_tensors[2]
-            )
+            gate_up = _grouped_matmul(global_x, plan.weight1, counts) if plan.recompute else ctx.saved_tensors[2]
             gate, up = clip_gate_up(*torch.chunk(gate_up, 2, dim=-1), plan.swiglu_limit)
             activation = torch.nn.functional.silu(gate) * up
-            intermediate = activation * global_p.unsqueeze(-1)
+            if global_p.dtype == torch.float32:
+                intermediate = (activation.float() * global_p.unsqueeze(-1)).to(activation.dtype)
+            else:
+                intermediate = activation * global_p.unsqueeze(-1)
             grad_intermediate = _grouped_matmul(grad_packed_y, weight2_transposed, counts)
             grad_w2 = _grouped_wgrad(intermediate, grad_packed_y, counts)
             grad_w2 = grad_w2.reshape(plan.weight2.shape).transpose(1, 2).contiguous()
             grad_activation = grad_intermediate * global_p.unsqueeze(-1)
-            grad_p = (grad_intermediate * activation).sum(dim=-1)
+            if global_p.dtype == torch.float32:
+                grad_p = (grad_intermediate.float() * activation.float()).sum(dim=-1)
+            else:
+                grad_p = (grad_intermediate * activation).sum(dim=-1)
             # The source differentiates the same PyTorch graph it ran in forward
             # instead of substituting a different activation backward.
             with torch.enable_grad():
@@ -1426,7 +1463,9 @@ def phase_timer(rank, phase_seconds):
 
 def local_mem_bytes(args, world):
     needed = (72 << 10) + world * math.ceil(world * args.expert_per_rank / 128) * 128 * 4
-    needed += 4 * args.seq * args.topk * args.hidden + math.ceil(2 * args.seq * args.topk / 512) * 512 + (2 << 20)
+    weight_bytes = 4 if args.topk_weight_dtype == "fp32" else 2
+    needed += 4 * args.seq * args.topk * args.hidden
+    needed += math.ceil(weight_bytes * args.seq * args.topk / 512) * 512 + (2 << 20)
     return args.local_mem_size or math.ceil(max(2 << 30, needed) / (2 << 20)) * (2 << 20)
 
 
@@ -1438,9 +1477,7 @@ def prepare_worker(local_rank, args, rank, world, phase_seconds):
         import torch_npu  # noqa: F401
 
     if log_visible(rank):
-        print(
-            f"[STAGE] rank={rank} logical_device={local_rank} physical_device={args.devices[local_rank]}", flush=True
-        )
+        print(f"[STAGE] rank={rank} logical_device={local_rank} physical_device={args.devices[local_rank]}", flush=True)
     with phase("device_setup"):
         torch.npu.set_device(local_rank)
         installed_root()
@@ -1556,7 +1593,7 @@ def execute_case(local_rank, args, rank, world, op, local_mem, phase_seconds, ex
         x, ids, p, w1, w2, dy = (
             tensor(inputs["x"][sl], grad=True),
             tensor(inputs["ids"][sl], torch.int32),
-            tensor(inputs["p"][sl], grad=True),
+            tensor(inputs["p"][sl], inputs["p"].dtype, grad=True),
             tensor(inputs["w1"], grad=True),
             tensor(inputs["w2"], grad=True),
             tensor(inputs["dy"][sl]),
@@ -1730,14 +1767,13 @@ def performance_summary(reports):
         floor = "/".join(f"{roofline[scope]['floor_ms']:.2f}" for scope in scopes)
         overhead = "/".join(f"{roofline[scope]['overhead_ms']:+.2f}" for scope in scopes)
         lines.append(
-            f"[PERF] roofline floor={floor}ms overhead={overhead}ms "
-            f"@ {roofline['roofline_tflops']} TF (fwd/bwd/fb)"
+            f"[PERF] roofline floor={floor}ms overhead={overhead}ms @ {roofline['roofline_tflops']} TF (fwd/bwd/fb)"
         )
     if baseline.get("status") != "RUN":
         lines.append(f"[PERF] baseline {str(baseline.get('status', '?')).lower()}: {baseline.get('reason', '')}")
     for report in reports[1:]:
         other = report["performance"]
-        other_speed = (other.get("baseline", {}).get("speedup") or {})
+        other_speed = other.get("baseline", {}).get("speedup") or {}
         row = (
             f"[PERF] rank={report['rank']} "
             f"forward={other['forward_ms']['median']:.3f}ms "
