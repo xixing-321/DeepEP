@@ -1,16 +1,14 @@
 # MegaMoE BF16 训练源码图解
 
-按项目结构、调用链、三核流水和内存复用逐层阅读。默认场景为 Ascend950、save=bf16、H7168/F3072、BF16 路由权重 p、关闭 clipping。
+按项目结构、调用链、三核流水和内存复用逐层阅读。默认场景为 Ascend950、save=bf16、K7168/F3072、BF16 路由权重 p、关闭 clipping。K 表示 hidden 维，H 表示 SwiGLU 激活。
 
-源码快照：[5852ec7](https://github.com/xixing-321/DeepEP/tree/5852ec7f502e1ff365792297797bc714b50ed0eb)。
+源码快照：[75abce5](https://github.com/xixing-321/DeepEP/tree/75abce562b8912c4ccc8f649e5bb3bea60b39303)。
 
 [离线交互页面](index.html) · [完整调用点与源码](CALLPOINTS.md) · [维护方法](MAINTAINING.md)
 
-[在线交互导览](https://xixing-321.github.io/DeepEP/)
-
 **VS Code 一键定位**：按[扩展安装说明](vscode/README.md)安装一次，运行 **MegaMoE: 打开训练源码导览**。点击节点、阶段或等待查看讲解，点击 **打开源码** 或 **查看对应源码**，再在旁边的编辑器中定位到文件和行号。
 
-[下载 VS Code 导览扩展](https://xixing-321.github.io/DeepEP/downloads/megamoe-train-source-guide.vsix)
+VS Code 安装包可按[本地打包方法](vscode/README.md#一次性安装)生成，无需在线站点。
 
 本地用浏览器打开 index.html，即可点击节点查看读写、等待和带行号源码。仓库网页可以直接阅读下方图文，通过调用点表跳转源码。
 
@@ -30,15 +28,43 @@
 
 ### 前向保存的数据，反向怎样使用
 
-连接生产者与消费者，再沿同一地址看三次生命周期切换。
+连接前向保存与反向读取，分别查看前向GM、UB与反向同址复用的等待条件。
 
 ![前向保存的数据，反向怎样使用](diagrams/learn-saved.png)
 
 ### 前后向流水与缓冲复用
 
-在 rank0 的前后向专家时间轴上调节耗时、点等待查看源码，再用独立练习展开 GMM2 双槽。
+沿专家时间轴查看计算重叠，再按路径与保存模式展开前向GM/UB切换和反向复用。
 
 ![前后向流水与缓冲复用](diagrams/learn-pipeline.png)
+
+## 前向与反向的内存用途切换
+
+在“前向保存的数据，反向怎样使用”和“前后向流水与缓冲复用”中，点击对应内存或等待条件可查看源码。GM交接与UB交接分别展示；保存模式auto先解析为bf16或mxfp8，再选择交接路径。
+
+### 前向 GM 复用
+
+区分bf16直接保存和none/mxfp8的原始Gate→Hp原位切换。
+
+![前向 GM 复用](diagrams/forward-gm-reuse.png)
+
+[查看矢量图](diagrams/forward-gm-reuse.svg)
+
+### 前向 UB 复用
+
+Gather、AIV0 Gate→Hp、AIV1 Dispatch→GMM2与双槽回收的等待条件。
+
+![前向 UB 复用](diagrams/forward-ub-reuse.png)
+
+[查看矢量图](diagrams/forward-ub-reuse.svg)
+
+### 反向的三个复用位置
+
+dHp→Hp、dO→dXroute、SHMEM返回矩阵→dP标量表分别等待不同旧读者结束。
+
+![反向的三个复用位置](diagrams/backward-memory-reuse.png)
+
+[查看矢量图](diagrams/backward-memory-reuse.svg)
 
 ## L1 · MegaMoE BF16 训练做什么
 
@@ -82,7 +108,7 @@ autograd将dY与前向状态送入Host反向入口；Host规划scratch并提交�
 
 ## L5 · 前向：Dispatch、GMM1、SwiGLU、GMM2 与回传
 
-沿普通 BF16、H7168、F3072、saved-bf16、clipping 关闭的路径阅读。纵向表示源码阶段和依赖，不是耗时比例；不同核可以处于不同阶段。X/p 就绪、专家 SwiGLU 完成、UB 槽可复用是三种不同条件。
+沿普通 BF16、K7168、F3072、saved-bf16、clipping 关闭的路径阅读。纵向表示源码阶段和依赖，不是耗时比例；不同核可以处于不同阶段。X/p 就绪、专家 SwiGLU 完成、UB 槽可复用是三种不同条件。
 
 ![前向：Dispatch、GMM1、SwiGLU、GMM2 与回传](diagrams/05-forward-kernel.png)
 
@@ -98,7 +124,7 @@ autograd将dY与前向状态送入Host反向入口；Host规划scratch并提交�
 
 ## L5 · 内存与生命周期：哪些保存，哪些复用
 
-按一次前向及匹配反向追踪内存。R 是预留接收容量，M_e 是当前专家实际行数；SHMEM窗口、持久状态、调用临时GM、核内UB有不同所有者。复用成立依赖生产者和所有读者退休，不能仅凭两个指针相同或本核执行完判断安全。
+按一次前向及匹配反向追踪内存。C 是预留接收容量，R 是实际接收行数，M_e 是当前专家实际行数；SHMEM窗口、持久状态、调用临时GM、核内UB有不同所有者。复用成立依赖生产者和所有读者退休，不能仅凭两个指针相同或本核执行完判断安全。
 
 ![内存与生命周期：哪些保存，哪些复用](diagrams/07-memory.png)
 

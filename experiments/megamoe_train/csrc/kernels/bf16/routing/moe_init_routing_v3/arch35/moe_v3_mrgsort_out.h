@@ -1,12 +1,5 @@
-/**
- * Copyright (c) 2026 Huawei Technologies Co., Ltd.
- * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
- * CANN Open Software License Agreement Version 2.0 (the "License").
- * Please refer to the License for details. You may not use this file except in compliance with the License.
- * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
- * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
- * See LICENSE in the root of the software repository for the full text of the License.
- */
+// Copyright (c) 2026, Lu Lu
+// Modified by xixing 2026
 
 /*!
  * \file moe_v3_mrgsort_out.h
@@ -120,7 +113,6 @@ __aicore__ inline void MoeMrgsortOut::UpdateMrgParam()
 __aicore__ inline void MoeMrgsortOut::CopyIn()
 {
     this->remainListNum = 0;
-    // event_t eventIdMte3ToMte2 = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::MTE3_MTE2));
     SetFlag<HardEvent::MTE3_MTE2>(EVENT_ID7);
     WaitFlag<HardEvent::MTE3_MTE2>(EVENT_ID7);
     for (int64_t i = 0, j = 0; i < listNum; i++) {

@@ -1,12 +1,5 @@
-/**
- * Copyright (c) 2026 Huawei Technologies Co., Ltd.
- * This program is free software and you can redistribute it and/or modify it under the terms and conditions of
- * CANN Open Software License Agreement Version 2.0 (the "License").
- * Please refer to the License for details. You may use this file except in compliance with the License.
- * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
- * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
- * See LICENSE in the root of the software repository for the full text of the License.
- */
+// Copyright (c) 2026, Lu Lu
+// Modified by xixing 2026
 
 /*!
  * \file moe_v3_expert_tokens_count_v2.h
@@ -94,7 +87,6 @@ __aicore__ inline void ExpertTokensCountV2::Process()
                                  0, 0, 0};
     SetAtomicAdd<int32_t>();
     DataCopyPad(expertTokensCountGm_, tmpSum, copyParams);
-    // DataCopy(expertTokensCountGm_, tmpSum, actualExpertNum_);
     SetAtomicNone();
 }
 
