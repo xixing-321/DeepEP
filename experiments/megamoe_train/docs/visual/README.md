@@ -2,7 +2,7 @@
 
 按项目结构、调用链、三核流水和内存复用逐层阅读。默认场景为 Ascend950、save=bf16、K7168/F3072、BF16 路由权重 p、关闭 clipping。K 表示 hidden 维，H 表示 SwiGLU 激活。
 
-源码快照：[75abce5](https://github.com/xixing-321/DeepEP/tree/75abce562b8912c4ccc8f649e5bb3bea60b39303)。
+源码快照：[a730203](https://github.com/xixing-321/DeepEP/tree/a73020310e74544219d9a3f7c71849c9f4b50140)。
 
 [离线交互页面](index.html) · [完整调用点与源码](CALLPOINTS.md) · [维护方法](MAINTAINING.md)
 
