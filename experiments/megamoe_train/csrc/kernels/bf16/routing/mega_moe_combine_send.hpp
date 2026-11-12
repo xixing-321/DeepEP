@@ -18,7 +18,8 @@ template <typename ElementMMadOut2, typename GemmCoord>
 __aicore__ inline void CombineTokens(uint32_t mLoc, uint32_t nLoc, uint32_t n, uint32_t groupIdx,
                                      uint32_t expertRowOffset, uint32_t rankId,
                                      LocalTensor<ElementMMadOut2>& l0cOutUbGMM2, GemmCoord& actualBlockShape,
-                                     const Params& params)
+                                     const Params& params, LocalTensor<int32_t>* cachedCumsum = nullptr,
+                                     LocalTensor<int32_t>* cachedSourcePrefix = nullptr)
 {
     int32_t lenTile = actualBlockShape.m();
     // mLoc is relative to the current GMM2 slice. Combine routing metadata is
@@ -31,12 +32,21 @@ __aicore__ inline void CombineTokens(uint32_t mLoc, uint32_t nLoc, uint32_t n, u
     tokenPerExpertWin.SetGlobalBuffer((__gm__ int32_t*)params.peermemInfo.ptrTokenPerExpert);
     preSumBeforeRankWorkSpace.SetGlobalBuffer((__gm__ int32_t*)params.workspaceInfo.ptrSumBeforeRank);
     for (int32_t dstEpIdx = 0; dstEpIdx < params.tilingData->epWorldSize; dstEpIdx++) {
-        int32_t lenRankInExpert =
-            tokenPerExpertWin(dstEpIdx * Ops::Base::CeilAlign(static_cast<uint32_t>(params.tilingData->epWorldSize *
-                                                                                    params.tilingData->expertPerRank),
-                                                              static_cast<uint32_t>(ALIGN_128)) +
-                              rankId * params.tilingData->expertPerRank + groupIdx);
-        int32_t dstExpertOffset = preSumBeforeRankWorkSpace(dstEpIdx * params.tilingData->expertPerRank + groupIdx);
+        int32_t lenRankInExpert;
+        int32_t dstExpertOffset;
+        if (cachedCumsum != nullptr && cachedSourcePrefix != nullptr) {
+            const int32_t previous =
+                dstEpIdx ? cachedCumsum->GetValue((dstEpIdx - 1U) * params.tilingData->expertPerRank + groupIdx) : 0;
+            lenRankInExpert = cachedCumsum->GetValue(dstEpIdx * params.tilingData->expertPerRank + groupIdx) - previous;
+            dstExpertOffset = cachedSourcePrefix->GetValue(dstEpIdx * params.tilingData->expertPerRank + groupIdx);
+        } else {
+            lenRankInExpert = tokenPerExpertWin(
+                dstEpIdx * Ops::Base::CeilAlign(
+                               static_cast<uint32_t>(params.tilingData->epWorldSize * params.tilingData->expertPerRank),
+                               static_cast<uint32_t>(ALIGN_128)) +
+                rankId * params.tilingData->expertPerRank + groupIdx);
+            dstExpertOffset = preSumBeforeRankWorkSpace(dstEpIdx * params.tilingData->expertPerRank + groupIdx);
+        }
         int32_t stRankInExpert = preSumRankInExpert;
         int32_t edRankInExpert = stRankInExpert + lenRankInExpert;
         preSumRankInExpert += lenRankInExpert;

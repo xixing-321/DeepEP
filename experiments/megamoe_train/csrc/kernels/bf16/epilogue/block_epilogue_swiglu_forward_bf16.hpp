@@ -31,7 +31,7 @@ static constexpr AscendC::Reg::CastTrait kCastFP32ToBF16 = {
     AscendC::Reg::RegLayout::ZERO, AscendC::Reg::SatMode::NO_SAT, AscendC::Reg::MaskMergeMode::ZEROING,
     AscendC::RoundMode::CAST_RINT};
 
-template <typename L0TileShape_, bool ApplyTopkWeight_, typename TopkWeightT = bfloat16_t>
+template <typename L0TileShape_, bool ApplyTopkWeight_, typename TopkWeightT = bfloat16_t, bool PerMTileReady = false>
 class BlockEpilogueSwigluForwardBF16 {
 public:
     static_assert(std::is_same_v<TopkWeightT, bfloat16_t> || std::is_same_v<TopkWeightT, float>,
@@ -82,7 +82,11 @@ public:
                 savedGateGlobal_.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
                 savedUpGlobal_.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
             }
-            groupFlagListGmAddr_ = (__gm__ int32_t*)params_.groupFlagListGmAddr + Get<2>(baseOffset) * INT_CACHELINE;
+            if constexpr (PerMTileReady)
+                groupFlagListGmAddr_ = (__gm__ int32_t*)params_.groupFlagListGmAddr + Get<5>(baseOffset);
+            else
+                groupFlagListGmAddr_ =
+                    (__gm__ int32_t*)params_.groupFlagListGmAddr + Get<2>(baseOffset) * INT_CACHELINE;
             if constexpr (ApplyTopkWeight_) {
                 routedTopkWeightGlobal_.SetGlobalBuffer((__gm__ TopkWeightT*)params_.routedTopkWeightGmAddr +
                                                         Get<3>(baseOffset));
@@ -125,7 +129,10 @@ public:
         AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(0);
         AscendC::SetFlag<AscendC::HardEvent::MTE3_S>(0);
         AscendC::WaitFlag<AscendC::HardEvent::MTE3_S>(0);
-        AscendC::AtomicAdd(groupFlagListGmAddr_, 1);
+        if constexpr (PerMTileReady)
+            AscendC::AtomicAdd(groupFlagListGmAddr_ + tileRow / params_.baseM, 1);
+        else
+            AscendC::AtomicAdd(groupFlagListGmAddr_, 1);
     }
 
     __aicore__ inline void LoadRawTile(GM_ADDR gate, GM_ADDR up, uint64_t expertOffset, uint16_t mSize, uint16_t nSize,

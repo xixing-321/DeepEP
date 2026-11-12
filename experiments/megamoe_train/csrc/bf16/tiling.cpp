@@ -14,6 +14,7 @@
 #include "csrc/kernels/bf16/common/mega_moe_tiling.hpp"
 #include "tiling_impl.hpp"
 #include "csrc/kernels/bf16/layout/mega_moe_layout.hpp"
+#include "csrc/kernels/bf16/schedule/forward_wave_plan.hpp"
 
 namespace {
 
@@ -108,6 +109,13 @@ MegaMoeHostTiling MakeMegaMoeHostTiling(MegaMoeTilingData& tiling, int64_t m, in
     tiling.savedGateUpMode = saveMode;
     TORCH_CHECK(topk_weight_type <= kTopkWeightFp32, "unsupported TopK weight type");
     tiling.topkWeightType = topk_weight_type;
+    const uint32_t minimumWave = Wave::GroupsPerWave(aic_num, static_cast<uint32_t>(n / 2), static_cast<uint32_t>(k));
+    const uint64_t expectedExpertGroups = (static_cast<uint64_t>(m) * topk + expert_per_rank * Wave::kGroupRows - 1U) /
+                                          (expert_per_rank * Wave::kGroupRows);
+    // Amortize projection switches while bounding the first Wave payload.
+    const uint64_t targetGroups = std::min<uint64_t>(6ULL * minimumWave, 2ULL * expectedExpertGroups);
+    tiling.mGroupsPerWave = static_cast<uint32_t>(
+        std::max<uint64_t>(minimumWave, (targetGroups + minimumWave - 1U) / minimumWave * minimumWave));
     tiling.compactTokenCountExchange =
         ResolveCompactTokenCountExchange(bf16_direct_dispatch, world_size, expert_per_rank) ? 1U : 0U;
     const auto workspace_info = optiling::CalcWorkspaceSize(tiling);

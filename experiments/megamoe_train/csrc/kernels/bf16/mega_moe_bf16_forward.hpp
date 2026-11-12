@@ -19,6 +19,7 @@
 #include "tla/layout.hpp"
 #include "epilogue/block_epilogue_swiglu_forward_bf16.hpp"
 #include "catlass/mega_moe_bf16_forward_catlass_impl.hpp"
+#include "catlass/forward_wave_matmul.hpp"
 #include "common/mega_moe_forward_save.hpp"
 #include "routing/mega_moe_topk_weight_gather.hpp"
 #include "routing/mega_moe_unpermute.hpp"
@@ -56,6 +57,29 @@ public:
     __aicore__ inline void EnableDispatchTileReady(GM_ADDR transientWorkspaceGM);
 
 private:
+    using WaveRange = MegaMoeBF16Training::Wave::Range;
+    using WaveSlice = MegaMoeBF16Training::Wave::Slice;
+    struct WaveCounts {
+        const uint32_t* values;
+        __aicore__ inline uint64_t operator()(uint32_t expert) const
+        {
+            return values[expert];
+        }
+    };
+    __aicore__ inline bool UseWavePath() const;
+    __aicore__ inline void DispatchWave(const WaveRange& range);
+    __aicore__ inline void AdvanceWaveStart(const WaveRange& range, uint32_t columns, uint32_t& startBlock);
+    __aicore__ inline void CopyWavePayload(uint32_t source, uint32_t sourceRow, uint64_t packedRow, uint32_t rows);
+    template <bool TransW, class Epilogue>
+    __aicore__ inline void Gmm1Wave(const WaveRange& range, MegaMoeBF16ForwardCatlassImpl::WaveMatmul<TransW>& matmul,
+                                    Epilogue& epilogue, uint32_t& startBlock);
+    template <bool TransW>
+    __aicore__ inline void Gmm2Wave(const WaveRange& range,
+                                    typename MegaMoeBF16ForwardCatlassImpl::WaveMatmul<TransW>::DownProjection& down,
+                                    uint32_t& startBlock);
+    template <bool TransW>
+    __aicore__ inline void ProcessWave(TPipe& firstPipe);
+    __aicore__ inline void FinishForward(int64_t oriOverflowMode);
     __aicore__ inline void FirstBuffInit(TPipe* tPipe);
     __aicore__ inline void ResetWorkSpaceFlagList();
     __aicore__ inline void GetCumsumForMMAIV();
@@ -174,6 +198,11 @@ private:
     GM_ADDR dispatchTileReadyBase_ = nullptr;
     uint64_t dispatchTileSlotsPerExpert_ = 0;
     bool preparedPhaseEnabled_ = false;
+    uint32_t waveGroups_ = 1;
+    uint32_t waveExpertRows_[MegaMoeBF16Training::kMaxLocalExperts]{};
+    GM_ADDR waveReadyBase_{nullptr};
+    LocalTensor<int32_t> waveCumsum_;
+    LocalTensor<int32_t> waveSourcePrefix_;
 
     using L1TileShape = tla::Shape<tla::Int<256>, tla::Int<256>, tla::Int<256>>;
     using BlockEpilogue =
@@ -253,6 +282,16 @@ __aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::Init(
 template <typename TopkWeightT>
 __aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::EnableDispatchTileReady(GM_ADDR transientWorkspaceGM)
 {
+    if (UseWavePath()) {
+        // Wave uses cumulative expert-slice completion, not Ready384 row
+        // counters or their prepared-phase metadata. Host storage stays valid.
+        dispatchTileReadyBase_ = nullptr;
+        const MegaMoeBF16Training::ForwardDispatchTileReadyLayout layout(params_.tilingData->n, expertPerRank_,
+                                                                         maxOutputSize_);
+        waveReadyBase_ = transientWorkspaceGM + layout.offset;
+        preparedPhaseEnabled_ = false;
+        return;
+    }
     const MegaMoeBF16Training::ForwardDispatchTileReadyLayout layout(params_.tilingData->n, expertPerRank_,
                                                                      maxOutputSize_);
     dispatchTileReadyBase_ = transientWorkspaceGM + layout.offset;
@@ -293,6 +332,17 @@ __aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::ResetWorkSpaceFlagList()
     // control flag here on each invocation before the pre-Dispatch SyncAll.
     groupFlagListGm_.SetGlobalBuffer((__gm__ int32_t*)params_.workspaceInfo.ptrFlagSwiGluToGmm2);
     if constexpr (g_coreType == AIV) {
+        if (UseWavePath()) {
+            auto* rowFlags = reinterpret_cast<__gm__ int32_t*>(waveReadyBase_);
+            const uint64_t slots =
+                (maxOutputSize_ + MegaMoeBF16Training::Wave::kGroupRows - 1U) / MegaMoeBF16Training::Wave::kGroupRows +
+                expertPerRank_;
+            for (uint64_t slot = aivCoreIdx_; slot < slots; slot += blockAivNum_)
+                WriteGmByPassDCache(rowFlags + slot, 0);
+            auto* flags = reinterpret_cast<__gm__ int32_t*>(params_.workspaceInfo.ptrFlagDispatchToGmm1);
+            for (uint32_t expert = aivCoreIdx_; expert < expertPerRank_; expert += blockAivNum_)
+                WriteGmByPassDCache(flags + expert * INT_CACHELINE, 0);
+        }
         if (aivCoreIdx_ == 0) {
             int32_t flagNum = expertPerRank_ * INT_CACHELINE * 2;
             LocalTensor<int32_t> initTensor{TPosition::VECIN, 0, 0};
@@ -1161,6 +1211,14 @@ __aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::ProcessWithSaveMode()
     }
     SyncAll<false>();
 
+    if constexpr (SaveMode == MegaMoeBF16Training::kSaveBf16 && !GmSwiglu) {
+        if (UseWavePath()) {
+            ProcessWave<TransW>(firstPipe);
+            FinishForward(oriOverflowMode);
+            return;
+        }
+    }
+
     // 4. for循环按照本卡专家id进行Dispatch，内部gmm1SwigluQuant按照基本块进行流水
     GMMAddrInfo gmmAddrInfo{};
     {
@@ -1277,6 +1335,275 @@ __aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::ProcessWithSaveMode()
     }
     EndSync();
     EndGMM2Sync();
+    FinishForward(oriOverflowMode);
+}
+
+template <typename TopkWeightT>
+__aicore__ inline bool MegaMoeBF16Forward<TopkWeightT>::UseWavePath() const
+{
+    using namespace MegaMoeBF16Training;
+    // The existing build-time escape retains the original full-expert path.
+    // Wave's expert-slice readiness is independent of that escape option.
+    if constexpr (DEEPEP_BF16_FORCE_EXPERT_READY != 0) return false;
+    const uint32_t mode = ResolveSavedGateUpMode(params_.tilingData->savedGateUpMode, params_.tilingData->swigluLimit);
+    return useSplitTrainingState_ && groupListType_ == 1 && Wave::MetadataFits(worldSize_, expertPerRank_) &&
+           mode == kSaveBf16 && !ForwardUsesGmSwiglu(k_, mode) && Wave::ScratchFits(k_);
+}
+
+template <typename TopkWeightT>
+__aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::CopyWavePayload(uint32_t source, uint32_t sourceRow,
+                                                                        uint64_t packedRow, uint32_t rows)
+{
+    using namespace MegaMoeBF16Training::Wave;
+    const uint32_t stride = (k_ + 31U) / 32U * 32U;
+    const uint32_t rowsPerPing = (248U * 1024U - kDispatchUbBase - kWeightUbBytes - kMetadataUbBytes) / (4U * stride);
+    const uint32_t copyElements = rowsPerPing * stride;
+    LocalTensor<bfloat16_t> x0{TPosition::VECIN, kDispatchUbBase, copyElements};
+    LocalTensor<bfloat16_t> x1{TPosition::VECIN, kDispatchUbBase + copyElements * 2U, copyElements};
+    GlobalTensor<bfloat16_t> sourceX, targetX;
+    sourceX.SetGlobalBuffer(
+        reinterpret_cast<__gm__ bfloat16_t*>(GetRankWinAddrWithOffset(source, params_.peermemInfo.payloadOffset)) +
+        static_cast<uint64_t>(sourceRow) * k_);
+    targetX.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(params_.workspaceInfo.ptrA) + packedRow * k_);
+    targetX.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
+    SetFlag<HardEvent::MTE3_MTE2>(EVENT_ID0);
+    SetFlag<HardEvent::MTE3_MTE2>(EVENT_ID1);
+    uint32_t ping = 0;
+    for (uint32_t row = 0; row < rows; row += rowsPerPing) {
+        const uint32_t count = rows - row < rowsPerPing ? rows - row : rowsPerPing;
+        const TEventID event = ping ? EVENT_ID1 : EVENT_ID0;
+        auto buffer = ping ? x1 : x0;
+        WaitFlag<HardEvent::MTE3_MTE2>(event);
+        DataCopy(buffer, sourceX[static_cast<uint64_t>(row) * k_], count * k_);
+        SetFlag<HardEvent::MTE2_MTE3>(event);
+        WaitFlag<HardEvent::MTE2_MTE3>(event);
+        DataCopy(targetX[static_cast<uint64_t>(row) * k_], buffer, count * k_);
+        SetFlag<HardEvent::MTE3_MTE2>(event);
+        ping = 1U - ping;
+    }
+    WaitFlag<HardEvent::MTE3_MTE2>(EVENT_ID0);
+    WaitFlag<HardEvent::MTE3_MTE2>(EVENT_ID1);
+
+    constexpr uint32_t elements = kWeightUbBytes / sizeof(TopkWeightT);
+    LocalTensor<TopkWeightT> weights{TPosition::VECIN, kDispatchUbBase + 4U * copyElements, elements};
+    GlobalTensor<TopkWeightT> sourceP, targetP;
+    const uint64_t weightOffset = params_.peermemInfo.ptrRoutedTopkWeights - params_.peermemInfo.ptrBase;
+    sourceP.SetGlobalBuffer(reinterpret_cast<__gm__ TopkWeightT*>(GetRankWinAddrWithOffset(source, weightOffset)) +
+                            sourceRow);
+    targetP.SetGlobalBuffer(reinterpret_cast<__gm__ TopkWeightT*>(params_.workspaceInfo.ptrDispatchedTopkWeights) +
+                            packedRow);
+    SetFlag<HardEvent::MTE3_MTE2>(EVENT_ID2);
+    for (uint32_t row = 0; row < rows; row += elements) {
+        const uint32_t count = rows - row < elements ? rows - row : elements;
+        const DataCopyExtParams copy{1U, count * static_cast<uint32_t>(sizeof(TopkWeightT)), 0U, 0U, 0U};
+        WaitFlag<HardEvent::MTE3_MTE2>(EVENT_ID2);
+        DataCopyPad(weights, sourceP[row], copy, DataCopyPadExtParams<TopkWeightT>{false, 0U, 0U, 0U});
+        SetFlag<HardEvent::MTE2_MTE3>(EVENT_ID2);
+        WaitFlag<HardEvent::MTE2_MTE3>(EVENT_ID2);
+        DataCopyPad(targetP[row], weights, copy);
+        SetFlag<HardEvent::MTE3_MTE2>(EVENT_ID2);
+    }
+    WaitFlag<HardEvent::MTE3_MTE2>(EVENT_ID2);
+}
+
+template <typename TopkWeightT>
+__aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::DispatchWave(const WaveRange& range)
+{
+    using namespace MegaMoeBF16Training::Wave;
+    const WaveCounts counts{waveExpertRows_};
+    // Match inference: partition the complete Wave across all AIV1 workers,
+    // then project each owned interval onto expert/source intersections.
+    const uint64_t rows = range.end.packed - range.begin.packed;
+    const uint32_t owner = (blockIdx_ + blockNum_ - range.begin.packed % blockNum_) % blockNum_;
+    const uint64_t quotient = rows / blockNum_, remainder = rows % blockNum_;
+    const uint64_t ownBegin = range.begin.packed + owner * quotient + (owner < remainder ? owner : remainder);
+    const uint64_t ownEnd = ownBegin + quotient + (owner < remainder ? 1U : 0U);
+    auto cursor = range.begin;
+    uint32_t groups = waveGroups_;
+    WaveSlice slice{};
+    while (Next(cursor, groups, expertPerRank_, maxOutputSize_, counts, slice)) {
+        const uint64_t expertBase = slice.packed - slice.row;
+        const uint64_t begin = ownBegin > slice.packed ? ownBegin : slice.packed;
+        const uint64_t end = ownEnd < slice.packed + slice.rows ? ownEnd : slice.packed + slice.rows;
+        if (begin < end) {
+            for (uint32_t source = 0; source < worldSize_; ++source) {
+                const uint32_t sourceBegin =
+                    source ? waveCumsum_.GetValue((source - 1U) * expertPerRank_ + slice.expert) : 0;
+                if (sourceBegin >= slice.fullRows) break;
+                const uint32_t rawRows = waveCumsum_.GetValue(source * expertPerRank_ + slice.expert) - sourceBegin;
+                const uint32_t sourceRows =
+                    rawRows < slice.fullRows - sourceBegin ? rawRows : slice.fullRows - sourceBegin;
+                const uint64_t sourcePacked = expertBase + sourceBegin;
+                const uint64_t copyBegin = begin > sourcePacked ? begin : sourcePacked;
+                const uint64_t copyEnd = end < sourcePacked + sourceRows ? end : sourcePacked + sourceRows;
+                if (copyBegin < copyEnd) {
+                    const uint32_t sortedSource =
+                        waveSourcePrefix_.GetValue(source * expertPerRank_ + slice.expert) + copyBegin - sourcePacked;
+                    CopyWavePayload(source, sortedSource, copyBegin, copyEnd - copyBegin);
+                }
+            }
+        }
+        // All workers retire each slice, including empty intersections.
+        // Publish only after both X and p writes have completed.
+        SyncFunc<HardEvent::MTE3_S>();
+        AtomicAdd(reinterpret_cast<__gm__ int32_t*>(params_.workspaceInfo.ptrFlagDispatchToGmm1) +
+                      slice.expert * INT_CACHELINE,
+                  int32_t(1));
+    }
+}
+
+template <typename TopkWeightT>
+__aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::AdvanceWaveStart(const WaveRange& range, uint32_t columns,
+                                                                         uint32_t& startBlock)
+{
+    using namespace MegaMoeBF16Training::Wave;
+    const WaveCounts counts{waveExpertRows_};
+    auto cursor = range.begin;
+    uint32_t groups = waveGroups_;
+    WaveSlice slice{};
+    while (Next(cursor, groups, expertPerRank_, maxOutputSize_, counts, slice)) {
+        startBlock =
+            (startBlock + Ops::Base::CeilDiv(slice.rows, kGroupRows) * Ops::Base::CeilDiv(columns, 256U)) % blockNum_;
+    }
+}
+
+template <typename TopkWeightT>
+template <bool TransW, class Epilogue>
+__aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::Gmm1Wave(
+    const WaveRange& range, MegaMoeBF16ForwardCatlassImpl::WaveMatmul<TransW>& matmul, Epilogue& epilogue,
+    uint32_t& startBlock)
+{
+    using namespace MegaMoeBF16Training::Wave;
+    const WaveCounts counts{waveExpertRows_};
+    auto cursor = range.begin;
+    uint32_t groups = waveGroups_;
+    WaveSlice slice{};
+    const uint32_t f = params_.tilingData->n / 2U;
+    while (Next(cursor, groups, expertPerRank_, maxOutputSize_, counts, slice)) {
+        epilogue.UpdateGlobalAddr({static_cast<int64_t>(slice.packed * f), 0, slice.expert,
+                                   static_cast<int64_t>(slice.packed), 0,
+                                   static_cast<int64_t>(MegaMoeBF16Training::Wave::ReadySlot(
+                                       slice.packed - slice.row, slice.expert, slice.row))});
+        matmul.GateUp(params_, slice, epilogue, startBlock, gmm1VecSetSyncCom_);
+    }
+}
+
+template <typename TopkWeightT>
+template <bool TransW>
+__aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::Gmm2Wave(
+    const WaveRange& range, typename MegaMoeBF16ForwardCatlassImpl::WaveMatmul<TransW>::DownProjection& down,
+    uint32_t& startBlock)
+{
+    using namespace MegaMoeBF16Training::Wave;
+    const WaveCounts counts{waveExpertRows_};
+    auto cursor = range.begin;
+    uint32_t groups = waveGroups_;
+    WaveSlice slice{};
+    const uint32_t f = params_.tilingData->n / 2U;
+    while (Next(cursor, groups, expertPerRank_, maxOutputSize_, counts, slice)) {
+        GMMAddrInfo addr{};
+        addr.aGlobal = params_.workspaceInfo.ptrA2 + slice.packed * f * sizeof(bfloat16_t);
+        addr.bGlobal = params_.b2GmAddr + static_cast<uint64_t>(slice.expert) * f * k_ * sizeof(bfloat16_t);
+        addr.groupFlagList =
+            reinterpret_cast<__gm__ int32_t*>(params_.workspaceInfo.ptrFlagSwiGluToGmm2) + slice.expert * INT_CACHELINE;
+        const uint32_t tasks = Ops::Base::CeilDiv(slice.row + slice.rows, kGroupRows) * Ops::Base::CeilDiv(f, 256U);
+        const TupleShape shape{slice.rows, params_.tilingData->n, k_, 0};
+        MegaMoeBF16ForwardCatlassImpl::GroupMatmul2(down, params_, shape, addr, startBlock, gmm2VecSetSyncCom_,
+                                                    slice.expert, slice.row, gmm2PingPongIdx_, rankId_, tasks,
+                                                    reinterpret_cast<__gm__ int32_t*>(waveReadyBase_) +
+                                                        ReadySlot(slice.packed - slice.row, slice.expert, slice.row),
+                                                    &waveCumsum_, &waveSourcePrefix_);
+    }
+}
+
+template <typename TopkWeightT>
+template <bool TransW>
+__aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::ProcessWave(TPipe& firstPipe)
+{
+    using namespace MegaMoeBF16Training::Wave;
+    using Matmul = MegaMoeBF16ForwardCatlassImpl::WaveMatmul<TransW>;
+    using WaveEpilogue = MegaMoeBF16Impl::BlockEpilogueSwigluForwardBF16<MegaMoeBF16ForwardCatlassImpl::L1TileShape,
+                                                                         true, TopkWeightT, true>;
+    const uint32_t f = params_.tilingData->n / 2U;
+    waveGroups_ =
+        params_.tilingData->mGroupsPerWave ? params_.tilingData->mGroupsPerWave : GroupsPerWave(blockNum_, f, k_);
+    for (uint32_t expert = 0; expert < expertPerRank_; ++expert) {
+        const int32_t rows = ReadGmByPassDCache(reinterpret_cast<__gm__ int32_t*>(params_.workspaceInfo.ptrcumsumMM) +
+                                                (worldSize_ - 1U) * expertPerRank_ + expert);
+        waveExpertRows_[expert] = rows > 0 ? static_cast<uint32_t>(rows) : 0;
+    }
+    if constexpr (g_coreType == AscendC::AIV) {
+        if (subBlockIdx_ == 1) {
+            if (aivCoreIdx_ == 1) ExpertTokenNumCopyOut();
+            PipeBarrier<PIPE_ALL>();
+            firstPipe.Destroy();
+        }
+    }
+    Matmul matmul;
+    typename Matmul::DownProjection down(matmul, k_, f);
+    if constexpr (g_coreType == AscendC::AIV) {
+        if (subBlockIdx_ == 1) {
+            const uint32_t elements = (worldSize_ * expertPerRank_ + 7U) / 8U * 8U;
+            waveCumsum_ = LocalTensor<int32_t>{TPosition::VECCALC, kMetadataUbBase, elements};
+            waveSourcePrefix_ = LocalTensor<int32_t>{TPosition::VECCALC, kMetadataUbBase + elements * 4U, elements};
+            const DataCopyExtParams copy{1U, worldSize_ * expertPerRank_ * 4U, 0U, 0U, 0U};
+            DataCopyPad(waveCumsum_, cumsumInWorkSpace_, copy, DataCopyPadExtParams<int32_t>{false, 0U, 0U, 0});
+            DataCopyPad(waveSourcePrefix_, preSumBeforeRankWorkSpace_, copy,
+                        DataCopyPadExtParams<int32_t>{false, 0U, 0U, 0});
+            SyncFunc<HardEvent::MTE2_S>();
+        }
+    }
+    const WaveCounts counts{waveExpertRows_};
+    WaveRange current = Plan(Cursor{}, waveGroups_, expertPerRank_, maxOutputSize_, counts);
+    uint32_t startBlock = 0;
+    if constexpr (g_coreType == AscendC::AIV) {
+        if (subBlockIdx_ == 1) {
+            if (current.valid) DispatchWave(current);
+            while (current.valid) {
+                const auto next = Plan(current.end, waveGroups_, expertPerRank_, maxOutputSize_, counts);
+                if (next.valid) DispatchWave(next);
+                // AIV1: D0, D1, C0, D2, C1, ..., C_last. Dispatch uses UB
+                // above 128 KiB; Combine's two output slots remain below it.
+                const uint32_t waveStart = startBlock;
+                AdvanceWaveStart(current, f, startBlock);
+                const uint32_t gateEnd = startBlock;
+                Gmm2Wave<TransW>(current, down, startBlock);
+                if (next.valid && startBlock == waveStart && gateEnd != waveStart) startBlock = gateEnd;
+                current = next;
+            }
+            PipeBarrier<PIPE_ALL>();
+            return;
+        }
+    }
+    WaveEpilogue epilogue;
+    epilogue.Init({params_.workspaceInfo.ptrA2, params_.workspaceInfo.ptrA2Scale, waveReadyBase_,
+                   params_.workspaceInfo.ptrDispatchedTopkWeights, nullptr, nullptr, nullptr, 128, 256,
+                   params_.tilingData->swigluLimit, params_.workspaceInfo.ptrSavedGate,
+                   params_.workspaceInfo.ptrSavedUp, params_.workspaceInfo.ptrSavedGateScale,
+                   params_.workspaceInfo.ptrSavedUpScale, params_.workspaceInfo.ptrSavedGateHigh,
+                   params_.workspaceInfo.ptrSavedUpLow, params_.workspaceInfo.ptrSavedUpHigh});
+    epilogue.UpdateNextProblem({0, f, k_, 0});
+    while (current.valid) {
+        // Match AIV1's one-wave lookahead. Lagging GMM2 by another wave
+        // would require dispatching one additional wave before Combine.
+        const uint32_t waveStart = startBlock;
+        Gmm1Wave<TransW>(current, matmul, epilogue, startBlock);
+        const uint32_t gateEnd = startBlock;
+        if constexpr (g_coreType == AscendC::AIC)
+            Gmm2Wave<TransW>(current, down, startBlock);
+        else
+            AdvanceWaveStart(current, k_, startBlock);
+        current = Plan(current.end, waveGroups_, expertPerRank_, maxOutputSize_, counts);
+        if (current.valid && startBlock == waveStart && gateEnd != waveStart) startBlock = gateEnd;
+    }
+    EndSync();
+    EndGMM2Sync();
+    PipeBarrier<PIPE_ALL>();
+}
+
+template <typename TopkWeightT>
+__aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::FinishForward(int64_t oriOverflowMode)
+{
     SyncAll<true>();
 
     // 6. unpermute & 清理win区上放置token的位置

@@ -62,6 +62,7 @@ constexpr uint32_t SWIGLU_N_HALF = MegaMoeBF16Training::kSwigluNHalf;
 constexpr uint32_t MAX_SINGLE_MN = L1_TILE_M * L1_TILE_N;
 constexpr uint32_t GMM1_TILE_M = MegaMoeBF16Training::ForwardDispatchTileReadyLayout::kComputeRows;
 constexpr uint32_t GMM1_TILE_ELEMENTS = GMM1_TILE_M * L1_TILE_N;
+template <uint32_t TileRows = GMM1_TILE_M>
 __aicore__ inline void ConsiderGmm1NStripeWidth(uint32_t width, uint32_t lanes, uint32_t mTiles, uint32_t nTiles,
                                                 uint32_t minWaveColumns, uint32_t& bestWidth,
                                                 uint32_t& bestAddressUnits, uint32_t& bestBRun)
@@ -72,7 +73,7 @@ __aicore__ inline void ConsiderGmm1NStripeWidth(uint32_t width, uint32_t lanes, 
     const uint32_t activeM = mTiles < lanes ? mTiles : lanes;
     const uint32_t candidateActiveB = width < minWaveColumns ? minWaveColumns : width;
     const uint32_t activeB = candidateActiveB < nTiles ? candidateActiveB : nTiles;
-    const uint32_t addressUnits = activeM * GMM1_TILE_M + activeB * SWIGLU_N_HALF * L1_TILE_N;
+    const uint32_t addressUnits = activeM * TileRows + activeB * SWIGLU_N_HALF * L1_TILE_N;
     const uint32_t bRun = Ops::Base::CeilDiv(mTiles, lanes);
     if (addressUnits < bestAddressUnits || (addressUnits == bestAddressUnits && bRun > bestBRun)) {
         bestWidth = width;
@@ -81,9 +82,10 @@ __aicore__ inline void ConsiderGmm1NStripeWidth(uint32_t width, uint32_t lanes, 
     }
 }
 
+template <uint32_t TileRows = GMM1_TILE_M>
 __aicore__ inline uint32_t SelectGmm1NStripeWidth(uint32_t m, uint32_t outputN, uint32_t blockNum)
 {
-    const uint32_t mTiles = Ops::Base::CeilDiv(m, GMM1_TILE_M);
+    const uint32_t mTiles = Ops::Base::CeilDiv(m, TileRows);
     const uint32_t nTiles = Ops::Base::CeilDiv(outputN, L1_TILE_N);
     if (mTiles == 0 || nTiles == 0 || blockNum == 0) {
         return 0;
@@ -99,27 +101,32 @@ __aicore__ inline uint32_t SelectGmm1NStripeWidth(uint32_t m, uint32_t outputN, 
     uint32_t bestWidth = 1;
     const uint32_t bestActiveM = mTiles < blockNum ? mTiles : blockNum;
     const uint32_t bestActiveB = minWaveColumns < nTiles ? minWaveColumns : nTiles;
-    uint32_t bestAddressUnits = bestActiveM * GMM1_TILE_M + bestActiveB * SWIGLU_N_HALF * L1_TILE_N;
+    uint32_t bestAddressUnits = bestActiveM * TileRows + bestActiveB * SWIGLU_N_HALF * L1_TILE_N;
     uint32_t bestBRun = Ops::Base::CeilDiv(mTiles, blockNum);
     if (blockNum == 28) {
-        ConsiderGmm1NStripeWidth(2, 14, mTiles, nTiles, minWaveColumns, bestWidth, bestAddressUnits, bestBRun);
-        ConsiderGmm1NStripeWidth(4, 7, mTiles, nTiles, minWaveColumns, bestWidth, bestAddressUnits, bestBRun);
+        ConsiderGmm1NStripeWidth<TileRows>(2, 14, mTiles, nTiles, minWaveColumns, bestWidth, bestAddressUnits,
+                                           bestBRun);
+        ConsiderGmm1NStripeWidth<TileRows>(4, 7, mTiles, nTiles, minWaveColumns, bestWidth, bestAddressUnits, bestBRun);
     } else if (blockNum == 32) {
-        ConsiderGmm1NStripeWidth(2, 16, mTiles, nTiles, minWaveColumns, bestWidth, bestAddressUnits, bestBRun);
-        ConsiderGmm1NStripeWidth(4, 8, mTiles, nTiles, minWaveColumns, bestWidth, bestAddressUnits, bestBRun);
+        ConsiderGmm1NStripeWidth<TileRows>(2, 16, mTiles, nTiles, minWaveColumns, bestWidth, bestAddressUnits,
+                                           bestBRun);
+        ConsiderGmm1NStripeWidth<TileRows>(4, 8, mTiles, nTiles, minWaveColumns, bestWidth, bestAddressUnits, bestBRun);
     } else {
-        ConsiderGmm1NStripeWidth(2, 18, mTiles, nTiles, minWaveColumns, bestWidth, bestAddressUnits, bestBRun);
-        ConsiderGmm1NStripeWidth(3, 12, mTiles, nTiles, minWaveColumns, bestWidth, bestAddressUnits, bestBRun);
-        ConsiderGmm1NStripeWidth(4, 9, mTiles, nTiles, minWaveColumns, bestWidth, bestAddressUnits, bestBRun);
-        ConsiderGmm1NStripeWidth(6, 6, mTiles, nTiles, minWaveColumns, bestWidth, bestAddressUnits, bestBRun);
+        ConsiderGmm1NStripeWidth<TileRows>(2, 18, mTiles, nTiles, minWaveColumns, bestWidth, bestAddressUnits,
+                                           bestBRun);
+        ConsiderGmm1NStripeWidth<TileRows>(3, 12, mTiles, nTiles, minWaveColumns, bestWidth, bestAddressUnits,
+                                           bestBRun);
+        ConsiderGmm1NStripeWidth<TileRows>(4, 9, mTiles, nTiles, minWaveColumns, bestWidth, bestAddressUnits, bestBRun);
+        ConsiderGmm1NStripeWidth<TileRows>(6, 6, mTiles, nTiles, minWaveColumns, bestWidth, bestAddressUnits, bestBRun);
     }
     return bestWidth;
 }
 
+template <uint32_t TileRows = GMM1_TILE_M>
 __aicore__ inline Catlass::GemmCoord GetGmm1AdaptiveNStripeCoord(uint32_t taskIdx, uint32_t m, uint32_t outputN,
                                                                  uint32_t stripeWidth)
 {
-    const uint32_t mTiles = Ops::Base::CeilDiv(m, GMM1_TILE_M);
+    const uint32_t mTiles = Ops::Base::CeilDiv(m, TileRows);
     const uint32_t nTiles = Ops::Base::CeilDiv(outputN, L1_TILE_N);
     const uint32_t fullStripeTasks = mTiles * stripeWidth;
     const uint32_t stripe = taskIdx / fullStripeTasks;
@@ -632,11 +639,14 @@ __aicore__ inline void GroupMatmulSwigluGm(
     startBlockIdx = (startBlockIdx + coreLoops) % gmm1Params.blockNum;
 }
 
-template <bool TransW = true>
-__aicore__ inline void GroupMatmul2(ForwardGroupMatmulParam<1, TransW>& gmm2Params, const Params& params,
+template <class Gmm2Params>
+__aicore__ inline void GroupMatmul2(Gmm2Params& gmm2Params, const Params& params,
                                     const AscendC::Shape<int64_t, int64_t, int64_t, int64_t>& problemShape,
                                     const GMMAddrInfo& gmmAddrInfo, uint32_t& startBlockIdx, int32_t& vecSetSyncCom,
-                                    uint32_t groupIdx, uint32_t expertRowOffset, uint16_t& pingpongIdx, int32_t rankId)
+                                    uint32_t groupIdx, uint32_t expertRowOffset, uint16_t& pingpongIdx, int32_t rankId,
+                                    uint32_t cumulativeSwigluTasks = 0, __gm__ int32_t* tileReadyFlags = nullptr,
+                                    LocalTensor<int32_t>* cachedCumsum = nullptr,
+                                    LocalTensor<int32_t>* cachedSourcePrefix = nullptr)
 {
     const uint32_t m = Get<M_VALUE>(problemShape);
     const uint32_t n = gmm2Params.n;
@@ -661,6 +671,7 @@ __aicore__ inline void GroupMatmul2(ForwardGroupMatmulParam<1, TransW>& gmm2Para
         (gmm2Params.blockIdx < startBlockIdx ? gmm2Params.blockIdx + gmm2Params.blockNum : gmm2Params.blockIdx) -
         startBlockIdx;
 
+    uint32_t readyM = 0xffffffffU;
     for (uint32_t loopIdx = startLoopIdx; loopIdx < coreLoops; loopIdx += gmm2Params.blockNum) {
         const Catlass::GemmCoord blockCoord = scheduler.GetBlockCoord(loopIdx);
         Catlass::GemmCoord actualShape = scheduler.GetActualBlockShape(blockCoord);
@@ -671,11 +682,24 @@ __aicore__ inline void GroupMatmul2(ForwardGroupMatmulParam<1, TransW>& gmm2Para
         auto outputUb = pingpongIdx == 0 ? gmm2Params.l0cOutUbFirst : gmm2Params.l0cOutUbSecond;
 
         if constexpr (g_coreType == AscendC::AIC) {
-            if (loopIdx == startLoopIdx) {
+            if (tileReadyFlags != nullptr) {
+                const uint32_t row = mLoc / L1_TILE_M;
+                if (row != readyM) {
+                    const uint32_t expected = Ops::Base::CeilDiv(k, L1_TILE_N);
+                    while (AscendC::ReadGmByPassDCache(tileReadyFlags + row) < expected) {
+                        const int64_t begin = AscendC::GetSystemCycle();
+                        while (AscendC::GetSystemCycle() - begin < 100) {
+                        }
+                    }
+                    readyM = row;
+                }
+            } else if (loopIdx == startLoopIdx) {
                 BlockScheduler gmm1Scheduler({m, k, n}, Catlass::MakeCoord(GMM1_TILE_M, L1_TILE_N));
-                const uint32_t target = gmm1Scheduler.GetCoreLoops();
+                const uint32_t target =
+                    cumulativeSwigluTasks == 0 ? gmm1Scheduler.GetCoreLoops() : cumulativeSwigluTasks;
                 __gm__ int32_t* flag = (__gm__ int32_t*)swigluFlags.GetPhyAddr();
-                while (target != AscendC::ReadGmByPassDCache(flag)) {
+                while (cumulativeSwigluTasks == 0 ? target != AscendC::ReadGmByPassDCache(flag)
+                                                  : target > AscendC::ReadGmByPassDCache(flag)) {
                     const int64_t start = AscendC::GetSystemCycle();
                     while (AscendC::GetSystemCycle() - start < 100) {
                     }
@@ -705,7 +729,8 @@ __aicore__ inline void GroupMatmul2(ForwardGroupMatmulParam<1, TransW>& gmm2Para
                 AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(0);
                 AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(0);
                 MegaMoeCombineImpl::CombineTokens<bfloat16_t, Catlass::GemmCoord>(
-                    mLoc, nLoc, n, groupIdx, expertRowOffset, rankId, outputUb, actualShape, params);
+                    mLoc, nLoc, n, groupIdx, expertRowOffset, rankId, outputUb, actualShape, params, cachedCumsum,
+                    cachedSourcePrefix);
                 AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(0);
                 AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(0);
                 NotifyCube(pingpongIdx);
