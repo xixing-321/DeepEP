@@ -2,9 +2,6 @@
 
 `MegaMoeBF16Train` 提供融合 Dispatch、GMM1、SwiGLU、GMM2 和 Combine 的 MoE 前向计算，并支持输入、路由权重和专家权重的自动求导。
 
-本分支包含自动选择的 Wave 前向路径，沿用现有 Python 调用与反向接口。
-调度方式、GM/UB 布局和适用条件见 [Wave 实现说明](WAVE.md)。
-
 ## 构建与安装
 
 支持 Linux、Ascend950，当前设备验收范围为单节点。环境与固定依赖要求见
