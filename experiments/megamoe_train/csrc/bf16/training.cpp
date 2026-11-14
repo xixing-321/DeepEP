@@ -21,6 +21,7 @@
 #include "csrc/kernels/bf16/common/mega_moe_tiling.hpp"
 #include "csrc/kernels/bf16/layout/mega_moe_layout.hpp"
 #include "csrc/kernels/bf16/layout/mega_moe_saved_meta.hpp"
+#include "csrc/kernels/bf16/schedule/forward_wave_plan.hpp"
 #include "torch_npu/csrc/core/npu/NPUStream.h"
 #include "torch_npu/csrc/core/npu/NPUCachingAllocator.h"
 
@@ -55,8 +56,20 @@ torch::Tensor AllocateForwardTransientWorkspace(
         extraBytes <= static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) - dispatchReadyLayout.totalBytes,
         "MegaMoe BF16 decoupled transient workspace exceeds int64 capacity");
 
-    return torch::empty({static_cast<int64_t>(dispatchReadyLayout.totalBytes + extraBytes)},
-                        like.options().dtype(torch::kUInt8));
+    uint64_t bytes = dispatchReadyLayout.totalBytes + extraBytes;
+    namespace Wave = MegaMoeBF16Training::Wave;
+    if (savedMode == MegaMoeBF16Training::kSaveBf16 && !MegaMoeBF16SwigluDecoupled(tiling.k, savedMode) &&
+        Wave::ScratchFits(tiling.k) && Wave::MetadataFits(tiling.epWorldSize, tiling.expertPerRank)) {
+        TORCH_CHECK(static_cast<uint64_t>(tiling.maxOutputSize) <=
+                        static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) / (uint64_t(tiling.k) * 2U),
+                    "MegaMoe BF16 Wave output exceeds int64 capacity");
+        const Wave::ReadyLayout wave(tiling.maxOutputSize, tiling.expertPerRank, tiling.k);
+        TORCH_CHECK(
+            wave.bytes <= static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) - dispatchReadyLayout.offset,
+            "MegaMoe BF16 Wave ready workspace exceeds int64 capacity");
+        bytes = std::max(bytes, dispatchReadyLayout.offset + wave.bytes);
+    }
+    return torch::empty({static_cast<int64_t>(bytes)}, like.options().dtype(torch::kUInt8));
 }
 
 struct Bf16WeightLayoutInfo {

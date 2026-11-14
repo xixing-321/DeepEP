@@ -41,13 +41,14 @@
 #include "layout/mega_moe_context.hpp"
 #include "routing/mega_moe_combine_send.hpp"
 #include "schedule/forward_prepared_phase.hpp"
+#include "schedule/forward_wave_plan.hpp"
 
 namespace MegaMoeBF16ForwardCatlassImpl {
 
 using ArchTag = Catlass::Arch::Ascend950;
 using DispatchPolicy = Catlass::Gemm::MmadPingpong<ArchTag, true, false, 1, false, 2, 2, 2, 2>;
-using L1TileShape = tla::Shape<tla::Int<128>, tla::Int<256>, tla::Int<256>>;
-using L0TileShape = tla::Shape<tla::Int<128>, tla::Int<256>, tla::Int<64>>;
+using L1TileShape = tla::Shape<tla::Int<192>, tla::Int<256>, tla::Int<256>>;
+using L0TileShape = tla::Shape<tla::Int<192>, tla::Int<256>, tla::Int<64>>;
 using Gmm1L1TileShape = tla::Shape<tla::Int<MegaMoeBF16Training::ForwardDispatchTileReadyLayout::kComputeRows>,
                                    tla::Int<256>, tla::Int<256>>;
 using Gmm1L0TileShape = tla::Shape<tla::Int<MegaMoeBF16Training::ForwardDispatchTileReadyLayout::kComputeRows>,
@@ -55,7 +56,7 @@ using Gmm1L0TileShape = tla::Shape<tla::Int<MegaMoeBF16Training::ForwardDispatch
 using BlockScheduler = Catlass::Gemm::Block::GemmIdentityBlockSwizzle<3, 1>;
 using Gmm2BlockScheduler = BlockScheduler;
 
-constexpr uint32_t L1_TILE_M = 128;
+constexpr uint32_t L1_TILE_M = 192;
 constexpr uint32_t L1_TILE_N = 256;
 constexpr uint32_t L1_TILE_K = 256;
 constexpr uint32_t SWIGLU_N_HALF = MegaMoeBF16Training::kSwigluNHalf;
@@ -646,7 +647,8 @@ __aicore__ inline void GroupMatmul2(Gmm2Params& gmm2Params, const Params& params
                                     uint32_t groupIdx, uint32_t expertRowOffset, uint16_t& pingpongIdx, int32_t rankId,
                                     uint32_t cumulativeSwigluTasks = 0, __gm__ int32_t* tileReadyFlags = nullptr,
                                     LocalTensor<int32_t>* cachedCumsum = nullptr,
-                                    LocalTensor<int32_t>* cachedSourcePrefix = nullptr)
+                                    LocalTensor<int32_t>* cachedSourcePrefix = nullptr,
+                                    uint32_t readyTileRows = L1_TILE_M)
 {
     const uint32_t m = Get<M_VALUE>(problemShape);
     const uint32_t n = gmm2Params.n;
@@ -686,9 +688,13 @@ __aicore__ inline void GroupMatmul2(Gmm2Params& gmm2Params, const Params& params
                 const uint32_t row = mLoc / L1_TILE_M;
                 if (row != readyM) {
                     const uint32_t expected = Ops::Base::CeilDiv(k, L1_TILE_N);
-                    while (AscendC::ReadGmByPassDCache(tileReadyFlags + row) < expected) {
-                        const int64_t begin = AscendC::GetSystemCycle();
-                        while (AscendC::GetSystemCycle() - begin < 100) {
+                    const auto producers =
+                        MegaMoeBF16Training::Wave::ReadyProducers(mLoc, actualShape.m(), readyTileRows);
+                    for (uint32_t producer = producers.first; producer <= producers.last; ++producer) {
+                        while (AscendC::ReadGmByPassDCache(tileReadyFlags + producer) < expected) {
+                            const int64_t begin = AscendC::GetSystemCycle();
+                            while (AscendC::GetSystemCycle() - begin < 100) {
+                            }
                         }
                     }
                     readyM = row;

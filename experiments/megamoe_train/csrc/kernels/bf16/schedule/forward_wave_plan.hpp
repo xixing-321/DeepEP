@@ -13,34 +13,31 @@
 
 namespace MegaMoeBF16Training::Wave {
 
-constexpr uint32_t kGroupRows = 128;
-constexpr uint32_t kDispatchUbBase = 128 * 1024;
+constexpr uint32_t kGmm1Rows = 192;
+constexpr uint32_t kGmm2Rows = 192;
+constexpr uint32_t kGroupRows = 192;
+constexpr uint32_t kTileColumns = 256;
+static_assert(kGroupRows % kGmm1Rows == 0 && kGroupRows % kGmm2Rows == 0);
+// Retain the established copy-batch budget; actual buffers use DispatchUbBase().
+constexpr uint32_t kDispatchUbBase = 2U * kGmm2Rows * kTileColumns * sizeof(uint16_t);
 constexpr uint32_t kWeightUbBytes = 4096;
 constexpr uint32_t kMetadataUbBytes = 4096;
 constexpr uint32_t kMetadataUbBase = 248 * 1024 - kMetadataUbBytes;
 
-MEGA_MOE_WAVE_HOST_DEVICE constexpr uint32_t Gcd(uint32_t a, uint32_t b)
+MEGA_MOE_WAVE_HOST_DEVICE constexpr uint32_t DispatchUbBase(uint32_t hidden)
 {
-    while (b) {
-        const uint32_t next = a % b;
-        a = b;
-        b = next;
-    }
-    return a;
+    // Two complete BF16 Combine rows precede the Dispatch ping-pong buffers.
+    return 4U * ((hidden + 31U) / 32U * 32U);
 }
 
 MEGA_MOE_WAVE_HOST_DEVICE constexpr uint32_t GroupsPerWave(uint32_t cores, uint32_t f, uint32_t h)
 {
-    const uint32_t gateUpPairs = (f + 255U) / 256U;
-    const uint32_t downTasks = (h + 255U) / 256U;
-    if (!cores || !gateUpPairs || !downTasks) return 1;
-    // A Gate/Up pair is one scheduler job containing two MMAD calls.
-    // Round the work budget to complete core rounds in both projections.
-    const uint32_t first = (2U * cores + gateUpPairs - 1U) / gateUpPairs;
-    const uint32_t second = (cores + downTasks - 1U) / downTasks;
-    const uint32_t minimum = first > second ? first : second;
-    const uint32_t quantum = cores / Gcd(Gcd(cores, gateUpPairs), downTasks);
-    return (minimum + quantum - 1U) / quantum * quantum;
+    const uint64_t gmm1Tiles = (2ULL * f + kTileColumns - 1U) / kTileColumns;
+    const uint64_t gmm2Tiles = (static_cast<uint64_t>(h) + kTileColumns - 1U) / kTileColumns;
+    if (!cores || !gmm1Tiles || !gmm2Tiles) return 1U;
+    const uint64_t first = (4ULL * cores + gmm1Tiles - 1U) / gmm1Tiles;
+    const uint64_t second = (static_cast<uint64_t>(cores) + gmm2Tiles - 1U) / gmm2Tiles;
+    return static_cast<uint32_t>(first > second ? first : second);
 }
 
 MEGA_MOE_WAVE_HOST_DEVICE constexpr bool ScratchFits(uint32_t hidden)
@@ -56,7 +53,39 @@ MEGA_MOE_WAVE_HOST_DEVICE constexpr bool MetadataFits(uint32_t world, uint32_t e
 
 MEGA_MOE_WAVE_HOST_DEVICE constexpr uint64_t ReadySlot(uint64_t expertBase, uint32_t expert, uint32_t row)
 {
-    return expertBase / kGroupRows + expert + row / kGroupRows;
+    return expertBase / kGmm1Rows + expert + row / kGmm1Rows;
+}
+
+constexpr uint32_t kMaxCores = 36;
+MEGA_MOE_WAVE_HOST_DEVICE constexpr bool UseGmm2Lag(uint32_t sourceRows)
+{
+    return sourceRows >= 512;
+}
+
+// Per-slice Hp/Dispatch/output counters, per-core issued words, then unique
+// packed GMM2 rows. No output slot can be overwritten by a later Wave.
+struct ReadyLayout {
+    uint64_t words, dispatchOffset, downReadyOffset, issuedOffset, outputOffset, bytes;
+    MEGA_MOE_WAVE_HOST_DEVICE constexpr ReadyLayout(uint64_t capacity, uint64_t experts, uint64_t hidden)
+        : words((capacity + kGmm1Rows - 1U) / kGmm1Rows + experts),
+          dispatchOffset((words * sizeof(int32_t) + 127U) / 128U * 128U),
+          downReadyOffset(dispatchOffset + (words * sizeof(int32_t) + 127U) / 128U * 128U),
+          issuedOffset(downReadyOffset + (words * sizeof(int32_t) + 127U) / 128U * 128U),
+          outputOffset((issuedOffset + kMaxCores * 16U * sizeof(int32_t) + 511U) / 512U * 512U),
+          bytes(outputOffset + capacity * hidden * sizeof(uint16_t))
+    {
+    }
+};
+
+struct ProducerRange {
+    uint32_t first;
+    uint32_t last;
+};
+
+// Cover a non-empty consumer interval with producer tiles.
+MEGA_MOE_WAVE_HOST_DEVICE constexpr ProducerRange ReadyProducers(uint32_t row, uint32_t rows, uint32_t producerRows)
+{
+    return {row / producerRows, (row + rows - 1U) / producerRows};
 }
 
 struct Cursor {
