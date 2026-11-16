@@ -31,6 +31,13 @@ static constexpr AscendC::Reg::CastTrait kCastFP32ToBF16 = {
     AscendC::Reg::RegLayout::ZERO, AscendC::Reg::SatMode::NO_SAT, AscendC::Reg::MaskMergeMode::ZEROING,
     AscendC::RoundMode::CAST_RINT};
 
+// The GM staging path consumes already saved BF16 planes and needs no MXFP8 save scratch.
+struct NoSavedGateUpQuant {
+    struct Layout {
+        static constexpr uint32_t totalBytesWithClipMasks = 0;
+    };
+};
+
 template <typename L0TileShape_, bool ApplyTopkWeight_, typename TopkWeightT = bfloat16_t, bool PerMTileReady = false>
 class BlockEpilogueSwigluForwardBF16 {
 public:
@@ -156,6 +163,7 @@ private:
     static constexpr uint32_t kTileRows = tla::get<0>(L0TileShape_{});
     static constexpr uint32_t kTileColumns = tla::get<1>(L0TileShape_{});
     static constexpr uint32_t kTileElements = kTileRows * kTileColumns;
+    using QuantSave = std::conditional_t<PerMTileReady, NoSavedGateUpQuant, SavedGateUpMxFp8<kTileRows>>;
     static_assert(2U * kTileElements * sizeof(bfloat16_t) <= Catlass::Arch::Ascend950::UB_SIZE,
                   "The BF16 SwiGLU input tiles must fit in A5 UB");
 
@@ -163,6 +171,7 @@ private:
     __aicore__ inline void SaveGateUp(uint16_t mSize, uint16_t nSize, int64_t offset)
     {
         if constexpr (SaveMode == MegaMoeBF16Training::kSaveMxFp8) {
+            static_assert(!PerMTileReady, "Wave GM staging retains BF16 saves");
             quantSave_.Save(l0cOutUbFirst_, l0cOutUbSecond_, params_.savedGateGmAddr, params_.savedUpGmAddr,
                             params_.savedGateScaleGmAddr, params_.savedUpScaleGmAddr, params_.savedGateHighGmAddr,
                             params_.savedUpLowGmAddr, params_.savedUpHighGmAddr, params_.swigluLimit, mSize, nSize,
@@ -194,7 +203,8 @@ private:
         // may still have MTE3 readers. No alias and no early pipeline drain.
         constexpr uint32_t weightBytes = (kTileRows * sizeof(TopkWeightT) + 31) / 32 * 32;
         constexpr uint32_t weightOffset = Catlass::Arch::Ascend950::UB_SIZE - weightBytes;
-        static_assert(weightOffset >= SavedGateUpMxFp8<kTileRows>::Layout::totalBytesWithClipMasks);
+        static_assert(weightOffset >= 2U * kTileElements * sizeof(bfloat16_t));
+        static_assert(weightOffset >= QuantSave::Layout::totalBytesWithClipMasks);
         AscendC::LocalTensor<TopkWeightT> weightUb{AscendC::TPosition::VECIN, weightOffset, kTileRows};
         if constexpr (ApplyTopkWeight_) {
             AscendC::SyncFunc<AscendC::HardEvent::V_MTE2>();
@@ -269,10 +279,11 @@ private:
     Params params_{};
     int64_t outputN_{0};
     int64_t savedBaseOffset_{0};
-    SavedGateUpMxFp8<kTileRows> quantSave_;
-    static_assert(SavedGateUpMxFp8<kTileRows>::Layout::totalBytesWithClipMasks <= Catlass::Arch::Ascend950::UB_SIZE,
+    QuantSave quantSave_;
+    static_assert(QuantSave::Layout::totalBytesWithClipMasks <= Catlass::Arch::Ascend950::UB_SIZE,
                   "Saved gate/up MXFP8 scratch must fit AIV0 UB");
-    static_assert((kTileRows == 128 || kTileRows == 192) && kTileColumns == 256,
+    static_assert(PerMTileReady ? ((kTileRows == 192 || kTileRows == 256) && kTileColumns == 128)
+                                : ((kTileRows == 128 || kTileRows == 192) && kTileColumns == 256),
                   "Update saved quant UB for a new tile shape");
 };
 

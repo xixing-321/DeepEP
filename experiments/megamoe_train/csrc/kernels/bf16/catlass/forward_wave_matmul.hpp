@@ -10,6 +10,97 @@
 namespace MegaMoeBF16ForwardCatlassImpl {
 
 using WaveBlockScheduler = Catlass::Gemm::Block::GemmIdentityBlockSwizzle<3, 0>;
+using WaveL1TileShape = tla::Shape<tla::Int<MegaMoeBF16Training::Wave::kGmm1Rows>, tla::Int<256>, tla::Int<256>>;
+using WaveL0TileShape = tla::Shape<tla::Int<MegaMoeBF16Training::Wave::kGmm1Rows>, tla::Int<256>, tla::Int<64>>;
+using WaveEpilogueTileShape = tla::Shape<tla::Int<MegaMoeBF16Training::Wave::kGmm1Rows>, tla::Int<128>, tla::Int<256>>;
+
+template <class Tensor>
+struct WaveGateUpWeight : Tensor {
+    __aicore__ inline explicit WaveGateUpWeight(const Tensor& tensor) : Tensor(tensor) {}
+};
+
+template <class Tensor>
+struct IsWaveGateUpWeight : std::false_type {};
+template <class Tensor>
+struct IsWaveGateUpWeight<WaveGateUpWeight<Tensor>> : std::true_type {};
+
+template <class TensorB, class WeightLayout>
+struct WaveWeightCopy {
+    template <class TensorDst, class TensorSrc>
+    __aicore__ inline void operator()(const TensorDst& dst, const TensorSrc& src)
+    {
+        using Copy = typename ForwardGmTileCopy<WeightLayout>::template CopyGmToL1B<TensorSrc>;
+        Copy copy;
+        if constexpr (IsWaveGateUpWeight<TensorB>::value) {
+            using namespace MegaMoeBF16Training::Wave;
+            const uint32_t k = tla::get<0>(src.coord());
+            const uint32_t n = tla::get<1>(src.coord()) / 2U;
+            const uint32_t f = [&]() __aicore__ {
+                if constexpr (std::is_same_v<WeightLayout, Catlass::layout::ColumnMajor>) {
+                    return static_cast<uint32_t>(src.data().GetSize() / (2ULL * tla::get<1>(src.stride())));
+                } else {
+                    return static_cast<uint32_t>(tla::get<0>(src.stride()) / 2U);
+                }
+            }();
+            const auto halfShape = tla::MakeShape(tla::get<0>(src.originShape()), kPairedColumns);
+            const auto rawLayout = tla::MakeLayout(halfShape, src.stride());
+            auto gate = tla::MakeTensor(src.data(), rawLayout, tla::MakeCoord(k, n), Catlass::Arch::PositionGM{});
+            auto up = tla::MakeTensor(src.data(), rawLayout, tla::MakeCoord(k, f + n), Catlass::Arch::PositionGM{});
+            auto left = tla::GetTile(dst, tla::MakeCoord(0U, 0U), halfShape);
+            auto right = tla::GetTile(dst, tla::MakeCoord(0U, kPairedColumns), halfShape);
+            // Both loads precede BlockMmad's MTE2_MTE1 event, for the first K window and prefetches alike.
+            copy(left, gate);
+            copy(right, up);
+        } else {
+            copy(dst, src);
+        }
+    }
+};
+
+template <class Tensor>
+struct WaveGateUpOutput : Tensor {
+    using BaseTensor = Tensor;
+    Tensor up;
+    __aicore__ inline WaveGateUpOutput(const Tensor& gate, const Tensor& upTensor) : Tensor(gate), up(upTensor) {}
+};
+
+template <class Tensor>
+struct IsWaveGateUpOutput : std::false_type {};
+template <class Tensor>
+struct IsWaveGateUpOutput<WaveGateUpOutput<Tensor>> : std::true_type {};
+
+template <class TensorDst>
+struct WaveOutputCopy {
+    template <class TensorSrc>
+    __aicore__ inline void operator()(const TensorDst& dst, const TensorSrc& src, uint8_t unitFlag = 0)
+    {
+        if constexpr (IsWaveGateUpOutput<TensorDst>::value) {
+            using BaseTensor = typename TensorDst::BaseTensor;
+            const auto halfShape = tla::MakeShape(tla::get<0>(dst.originShape()), tla::get<1>(dst.originShape()));
+            auto gate = tla::GetTile(src, tla::MakeCoord(0U, 0U), halfShape);
+            auto up = tla::GetTile(src, tla::MakeCoord(0U, MegaMoeBF16Training::Wave::kPairedColumns), halfShape);
+            Catlass::Gemm::Tile::CopyL0CToGmTla<ArchTag, decltype(gate), BaseTensor,
+                                                Catlass::Gemm::Tile::ScaleGranularity::NO_QUANT, false>
+                copy;
+            // Each N128 half owns separate L0C storage units and retains its completion handshake.
+            copy(static_cast<const BaseTensor&>(dst), gate, unitFlag);
+            copy(dst.up, up, unitFlag);
+        } else {
+            Catlass::Gemm::Tile::CopyL0CToGmTla<ArchTag, TensorSrc, TensorDst,
+                                                Catlass::Gemm::Tile::ScaleGranularity::NO_QUANT, false>
+                copy;
+            copy(dst, src, unitFlag);
+        }
+    }
+};
+
+template <class WeightLayout>
+struct WaveGmTileCopy : ForwardGmTileCopy<WeightLayout> {
+    template <class TensorB>
+    using CopyGmToL1B = WaveWeightCopy<TensorB, WeightLayout>;
+    template <class TensorC>
+    using CopyL0CToDst = WaveOutputCopy<TensorC>;
+};
 
 // Both projections write BF16 to GM. One persistent MMAD retains its L1/L0
 // buffers and event sequence when switching between W1 and W2.
@@ -19,8 +110,8 @@ public:
     static constexpr uint32_t kRows = MegaMoeBF16Training::Wave::kGmm1Rows;
     static constexpr uint32_t kDownRows = MegaMoeBF16Training::Wave::kGmm2Rows;
     using WeightLayout = std::conditional_t<TransW, Catlass::layout::ColumnMajor, Catlass::layout::RowMajor>;
-    using BlockMmad = Catlass::Gemm::Block::BlockMmadTla<DispatchPolicy, Gmm1L1TileShape, Gmm1L0TileShape, bfloat16_t,
-                                                         bfloat16_t, bfloat16_t, void, ForwardGmTileCopy<WeightLayout>>;
+    using BlockMmad = Catlass::Gemm::Block::BlockMmadTla<DispatchPolicy, WaveL1TileShape, WaveL0TileShape, bfloat16_t,
+                                                         bfloat16_t, bfloat16_t, void, WaveGmTileCopy<WeightLayout>>;
     Catlass::Arch::Resource<ArchTag> resource;
     BlockMmad blockMmad;
 
@@ -35,8 +126,9 @@ public:
         const uint32_t core = AscendC::GetBlockIdx() / AscendC::GetTaskRation();
         AscendC::GlobalTensor<bfloat16_t> a, b, gate, up;
         a.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(params.workspaceInfo.ptrA) + slice.packed * h);
-        b.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(params.bGmAddr) +
-                          static_cast<uint64_t>(slice.expert) * 2U * f * h);
+        b.SetGlobalBuffer(
+            reinterpret_cast<__gm__ bfloat16_t*>(params.bGmAddr) + static_cast<uint64_t>(slice.expert) * 2U * f * h,
+            2ULL * f * h);
         gate.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(params.workspaceInfo.ptrSavedGate) +
                              slice.packed * f);
         up.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(params.workspaceInfo.ptrSavedUp) + slice.packed * f);
@@ -49,14 +141,14 @@ public:
                                   Catlass::Arch::PositionGM{});
         auto tu = tla::MakeTensor(up, tla::MakeLayout<bfloat16_t, Catlass::layout::RowMajor>(slice.rows, f),
                                   Catlass::Arch::PositionGM{});
-        WaveBlockScheduler scheduler({slice.rows, f, h}, Catlass::MakeCoord(kRows, L1_TILE_N));
+        WaveBlockScheduler scheduler({slice.rows, f, h}, Catlass::MakeCoord(kRows, kPairedColumns));
         const uint32_t tasks = scheduler.GetCoreLoops();
         const uint32_t first = (core < startBlock ? core + cores : core) - startBlock;
         bool ready = false;
         for (uint32_t task = first; task < tasks; task += cores) {
             const auto coord = scheduler.GetBlockCoord(task);
             const auto shape = scheduler.GetActualBlockShape(coord);
-            const uint32_t m = coord.m() * kRows, n = coord.n() * L1_TILE_N;
+            const uint32_t m = coord.m() * kRows, n = coord.n() * kPairedColumns;
             if (!ready) {
                 while (AscendC::ReadGmByPassDCache(dispatchReady) < cores) {
                 }
@@ -65,13 +157,12 @@ public:
             }
             GateUpCompletion::Acquire(sequence);
             auto tileA = tla::GetTile(ta, tla::MakeCoord(m, 0U), tla::MakeShape(shape.m(), shape.k()));
+            auto tileB = tla::GetTile(tb, tla::MakeCoord(0U, 2U * n), tla::MakeShape(shape.k(), 2U * shape.n()));
+            WaveGateUpWeight<decltype(tileB)> pairedWeight(tileB);
             auto tileGate = tla::GetTile(tg, tla::MakeCoord(m, n), tla::MakeShape(shape.m(), shape.n()));
             auto tileUp = tla::GetTile(tu, tla::MakeCoord(m, n), tla::MakeShape(shape.m(), shape.n()));
-            for (uint32_t part = 0; part < 2U; ++part) {
-                auto tileB = tla::GetTile(tb, tla::MakeCoord(0U, n + part * f), tla::MakeShape(shape.k(), shape.n()));
-                auto& output = part ? tileUp : tileGate;
-                blockMmad(tileA, tileB, output, shape);
-            }
+            WaveGateUpOutput<decltype(tileGate)> output(tileGate, tileUp);
+            blockMmad(tileA, pairedWeight, output, Catlass::GemmCoord{shape.m(), 2U * shape.n(), shape.k()});
             GateUpCompletion::Publish(sequence++);
         }
         startBlock = (startBlock + tasks) % cores;
@@ -105,7 +196,8 @@ public:
             const uint32_t m = coord.m() * kDownRows, n = coord.n() * L1_TILE_N;
             const uint32_t rows = shape.m(), columns = shape.n();
             if (m != readyM) {
-                while (AscendC::ReadGmByPassDCache(hpFlags + m / kRows) < Ops::Base::CeilDiv(f, L1_TILE_N)) {
+                const uint32_t activationColumns = MegaMoeBF16Training::Wave::kPairedColumns;
+                while (AscendC::ReadGmByPassDCache(hpFlags + m / kRows) < Ops::Base::CeilDiv(f, activationColumns)) {
                 }
                 AscendC::SyncFunc<AscendC::HardEvent::S_MTE2>();
                 readyM = m;

@@ -11,6 +11,7 @@
 #include "catlass/gemm_coord.hpp"
 #include "kernel_operator.h"
 #include "layout/mega_moe_context.hpp"
+#include "routing/peer_row_view.hpp"
 using namespace AscendC;
 
 namespace MegaMoeCombineImpl {
@@ -26,6 +27,33 @@ __aicore__ inline void CombineTokens(uint32_t mLoc, uint32_t nLoc, uint32_t n, u
     // expressed in full-expert row coordinates, so add the slice offset.
     int32_t stTile = expertRowOffset + mLoc;
     int32_t edTile = stTile + lenTile;
+    if (params.peerRowsGroups != 0U) {
+        using namespace MegaMoeBF16Training::Wave;
+        const auto expert = GetPeerExpert(params, groupIdx);
+        const PeerCounts<GmPeerPrefix> counts{
+            GmPeerPrefix{reinterpret_cast<__gm__ int32_t*>(params.workspaceInfo.ptrcumsumMM)},
+            params.tilingData->expertPerRank, groupIdx, expert.rows};
+        PeerRowCursor<PeerCounts<GmPeerPrefix>> cursor(counts, params.tilingData->epWorldSize, rankId,
+                                                       params.peerRowsGroups, expert.rows, expert.firstSliceRows,
+                                                       stTile, edTile);
+        MegaMoeImpl::PeerTransfer transfer{};
+        while (cursor.Next(transfer)) {
+            const auto prefix = reinterpret_cast<__gm__ int32_t*>(params.workspaceInfo.ptrSumBeforeRank);
+            const uint32_t sourceRow = AscendC::ReadGmByPassDCache(
+                                           prefix + transfer.sourceRank * params.tilingData->expertPerRank + groupIdx) +
+                                       transfer.sourceOrdinalBegin;
+            AscendC::GlobalTensor<ElementMMadOut2> target;
+            target.SetGlobalBuffer(reinterpret_cast<__gm__ ElementMMadOut2*>(
+                GetRankWinAddrWithOffset(transfer.sourceRank, params.peermemInfo.ptrD - params.peermemInfo.ptrBase)));
+            const AscendC::DataCopyExtParams copy{
+                static_cast<uint16_t>(transfer.rowCount),
+                static_cast<uint32_t>(actualBlockShape.n() * sizeof(ElementMMadOut2)), 0U,
+                static_cast<uint32_t>((n - actualBlockShape.n()) * sizeof(ElementMMadOut2)), 0U};
+            AscendC::DataCopyPad(target[static_cast<uint64_t>(sourceRow) * n + nLoc],
+                                 l0cOutUbGMM2[(transfer.destinationRow - stTile) * actualBlockShape.n()], copy);
+        }
+        return;
+    }
     int32_t preSumRankInExpert = 0;
     int32_t tileOffset = 0;
     GlobalTensor<int32_t> tokenPerExpertWin, preSumBeforeRankWorkSpace;

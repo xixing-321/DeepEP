@@ -53,6 +53,8 @@ if(api_header)
 endif()
 set(kernel_library "${CMAKE_CURRENT_BINARY_DIR}/libmegamoe_kernel.so")
 file(GLOB_RECURSE kernel_headers CONFIGURE_DEPENDS "csrc/kernels/*.hpp")
+file(GLOB_RECURSE shared_kernel_headers CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/csrc/kernels/common/*.hpp")
+list(APPEND kernel_headers ${shared_kernel_headers})
 add_custom_command(OUTPUT "${kernel_library}"
     COMMAND "${BISHENG}" ${kernel_flags} csrc/kernels/mega_moe/mega_moe.cpp
         "-L${ASCEND_HOME_PATH}/lib64" "-L${SHMEM_ROOT}/lib"

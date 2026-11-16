@@ -104,6 +104,8 @@ private:
     __aicore__ inline void UnpermuteBackward();
     __aicore__ inline void ReduceDpPartialBatch(uint16_t batchRows, uint16_t partialTiles, uint16_t partialStride);
     __aicore__ inline void ReduceAndRouteTopkGrad();
+    __aicore__ inline void CopyTopkGradBatch(uint64_t packedRow, uint64_t remoteRow, uint32_t rank, uint32_t rows,
+                                             uint32_t partialTiles, uint32_t partialStride);
     __aicore__ inline void UnpermuteTopkGrad();
     __aicore__ inline void CrossRankSyncInWorldSize();
 
@@ -225,6 +227,13 @@ private:
         v.progressSlot = ordinal;
         v.rowLimit = static_cast<uint32_t>(maxOutputSize_);
         v.enabled = UseDispatchRowReady(ordinal);
+        if (params_.peerRowsGroups != 0U) {
+            const auto info = MegaMoeBF16Training::Wave::GetPeerExpert(params_, expert);
+            v.peerGroups = params_.peerRowsGroups;
+            v.peerRank = rankId_;
+            v.peerRows = info.rows;
+            v.peerFirstSliceRows = info.firstSliceRows;
+        }
         return v;
     }
 
@@ -280,6 +289,13 @@ __aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::Init(GM_ADDR context, G
     params_.workspaceInfo = savedState_;
     params_.peermemInfo = PeermemInfo(winRankAddr_[rankId_], tilingData, true);
     params_.tilingData = tilingData;
+#if !DEEPEP_BF16_FORCE_EXPERT_READY
+    if (MegaMoeBF16Training::Wave::CanUsePeerRows(k_, savedGateUpMode_ == MegaMoeBF16Training::kSaveBf16,
+                                                  groupListType_, true, blockNum_, worldSize_, expertPerRank_) &&
+        !MegaMoeBF16Training::ForwardUsesGmSwiglu(k_, savedGateUpMode_)) {
+        params_.peerRowsGroups = tilingData->mGroupsPerWave;
+    }
+#endif
     gradWeight1GmAddr_ = gradWeight1;
     gradWeight2GmAddr_ = gradWeight2;
     gradTopkWeightsGmAddr_ = gradTopkWeights;
@@ -443,7 +459,8 @@ __aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::GatherRoutes()
 template <typename TopkWeightT>
 __aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::RestoreTokenPerExpert()
 {
-    const bool prepareMetadata = MegaMoeBF16Training::UseGmForBackwardDataGrad(savedGateUpMode_) && splitExperts_ > 0;
+    const bool prepareMetadata = params_.peerRowsGroups == 0U &&
+                                 MegaMoeBF16Training::UseGmForBackwardDataGrad(savedGateUpMode_) && splitExperts_ > 0;
     int32_t perRank = static_cast<int32_t>(perRankStridesInTokenPerExpert_);
     LocalTensor<int32_t> tmpBuffer = StageUb(perRank * sizeof(int32_t)).template ReinterpretCast<int32_t>();
     // P0 has no TPipe; SyncFunc would access an invalid pipe. Use explicit events.
@@ -555,6 +572,56 @@ template <typename TopkWeightT>
 __aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::DispatchTokensBackward(GM_ADDR dstBase, uint32_t expertIdx,
                                                                                 uint32_t ordinal)
 {
+    if (params_.peerRowsGroups != 0U) {
+        using namespace MegaMoeBF16Training::Wave;
+        const auto info = GetPeerExpert(params_, expertIdx);
+        const PeerCounts<GmPeerPrefix> counts{
+            GmPeerPrefix{reinterpret_cast<__gm__ int32_t*>(params_.workspaceInfo.ptrcumsumMM)}, expertPerRank_,
+            expertIdx, info.rows};
+        int32_t ping = 0;
+        SetFlag<HardEvent::MTE3_MTE2>(EVENT_ID0);
+        SetFlag<HardEvent::MTE3_MTE2>(EVENT_ID1);
+        for (uint32_t idx = blockIdx_; idx < worldSize_ * dispatchBlockNumPerEP_; idx += blockNum_) {
+            const uint32_t source = idx / dispatchBlockNumPerEP_;
+            const uint32_t producer = idx % dispatchBlockNumPerEP_;
+            const uint32_t rows = counts.Get(source);
+            const uint32_t bandRows = (rows + dispatchBlockNumPerEP_ - 1U) / dispatchBlockNumPerEP_;
+            const uint32_t ownBegin = producer * bandRows;
+            const uint32_t ownEnd = ownBegin + bandRows < rows ? ownBegin + bandRows : rows;
+            const uint32_t sourceBase = preSumBeforeRankWorkSpace_(source * expertPerRank_ + expertIdx);
+            GlobalTensor<QuantOutType> input, output;
+            input.SetGlobalBuffer(reinterpret_cast<__gm__ QuantOutType*>(
+                GetRankWinAddrWithOffset(source, params_.peermemInfo.payloadOffset)));
+            output.SetGlobalBuffer(reinterpret_cast<__gm__ QuantOutType*>(dstBase));
+            PeerRowCursor<PeerCounts<GmPeerPrefix>> cursor(counts, worldSize_, rankId_, params_.peerRowsGroups,
+                                                           info.rows, info.firstSliceRows, 0U,
+                                                           ownBegin < ownEnd ? info.rows : 0U);
+            MegaMoeImpl::PeerTransfer transfer{};
+            while (cursor.Next(transfer)) {
+                if (transfer.sourceRank != source) continue;
+                const uint32_t begin = ownBegin > transfer.sourceOrdinalBegin ? ownBegin : transfer.sourceOrdinalBegin;
+                const uint32_t end = ownEnd < transfer.sourceOrdinalBegin + transfer.rowCount
+                                         ? ownEnd
+                                         : transfer.sourceOrdinalBegin + transfer.rowCount;
+                for (uint32_t row = begin; row < end; row += 256U) {
+                    const uint32_t take = end - row < 256U ? end - row : 256U;
+                    const uint32_t target = transfer.destinationRow + row - transfer.sourceOrdinalBegin;
+                    CopyGMToGMPerTokenV2(output[static_cast<uint64_t>(target) * k_],
+                                         input[static_cast<uint64_t>(sourceBase + row) * k_], take, k_, ping);
+                    SetFlag<HardEvent::MTE3_S>(EVENT_ID2);
+                    WaitFlag<HardEvent::MTE3_S>(EVENT_ID2);
+                    if (UseDispatchRowReady(ordinal))
+                        AtomicAdd(MakeDispatchRowReady(expertIdx, ordinal).Slot(idx), static_cast<int32_t>(take));
+                }
+            }
+            SetFlag<HardEvent::MTE3_S>(EVENT_ID2);
+            WaitFlag<HardEvent::MTE3_S>(EVENT_ID2);
+            AtomicAdd(bwFlagDispatch_ + expertIdx * INT_CACHELINE, int32_t(1));
+        }
+        WaitFlag<HardEvent::MTE3_MTE2>(EVENT_ID0);
+        WaitFlag<HardEvent::MTE3_MTE2>(EVENT_ID1);
+        return;
+    }
     int64_t widthA = k_;
     int32_t pingpongId = 0;
     SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0);
@@ -1127,6 +1194,31 @@ __aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::ReduceDpPartialBatch(ui
 }
 
 template <typename TopkWeightT>
+__aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::CopyTopkGradBatch(uint64_t packedRow, uint64_t remoteRow,
+                                                                           uint32_t rank, uint32_t rows,
+                                                                           uint32_t partialTiles,
+                                                                           uint32_t partialStride)
+{
+    GlobalTensor<float> partials;
+    partials.SetGlobalBuffer(reinterpret_cast<__gm__ float*>(bwWs_.ptrDpProducts));
+    auto partialBuf = TopkGradPartialBuf_.template Get<float>();
+    auto routeBuf = TopkGradRouteBuf_.template Get<TopkWeightT>();
+    const DataCopyExtParams copy{static_cast<uint16_t>(rows), static_cast<uint32_t>(partialTiles * sizeof(float)), 0U,
+                                 0U, 0U};
+    DataCopyPad(partialBuf, partials[packedRow * partialTiles], copy, DataCopyPadExtParams<float>{false, 0U, 0U, 0U});
+    SyncFunc<HardEvent::MTE2_V>();
+    ReduceDpPartialBatch(rows, partialTiles, partialStride);
+    SyncFunc<HardEvent::V_MTE2>();
+    SyncFunc<HardEvent::V_MTE3>();
+    GlobalTensor<TopkWeightT> output;
+    output.SetGlobalBuffer(reinterpret_cast<__gm__ TopkWeightT*>(
+        GetRankWinAddrWithOffset(rank, params_.peermemInfo.ptrD - params_.peermemInfo.ptrBase)));
+    DataCopyPad(output[remoteRow], routeBuf,
+                DataCopyExtParams{1U, static_cast<uint32_t>(rows * sizeof(TopkWeightT)), 0U, 0U, 0U});
+    SyncFunc<HardEvent::MTE3_V>();
+}
+
+template <typename TopkWeightT>
 __aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::ReduceAndRouteTopkGrad()
 {
     if constexpr (g_coreType == AscendC::AIC) {
@@ -1135,11 +1227,6 @@ __aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::ReduceAndRouteTopkGrad(
     const int32_t f = static_cast<int32_t>(n_ / SWIGLU_N_HALF);
     const int32_t partialTiles = static_cast<int32_t>(
         Ops::Base::CeilDiv(static_cast<uint64_t>(f), static_cast<uint64_t>(BACKWARD_DP_PARTIAL_TILE_N)));
-    AscendC::GlobalTensor<float> partials;
-    partials.SetGlobalBuffer(reinterpret_cast<__gm__ float*>(bwWs_.ptrDpProducts));
-    const uint64_t remoteDOffset = params_.peermemInfo.ptrD - params_.peermemInfo.ptrBase;
-    LocalTensor<TopkWeightT> routeBuf = TopkGradRouteBuf_.template Get<TopkWeightT>();
-    LocalTensor<float> partialBuf = TopkGradPartialBuf_.Get<float>();
     const int32_t partialCapacity = static_cast<int32_t>(BW_TOPK_PARTIAL_UB_BYTES / sizeof(float));
     // Masked arithmetic does not mask Reg::DataCopy's full-register load.
     // Reserve one register minus one element as a UB tail guard.
@@ -1153,6 +1240,46 @@ __aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::ReduceAndRouteTopkGrad(
     const int32_t batchCapacity = rowsByPartialUb < static_cast<int32_t>(BW_TOPK_ROUTE_BATCH_ROWS)
                                       ? rowsByPartialUb
                                       : static_cast<int32_t>(BW_TOPK_ROUTE_BATCH_ROWS);
+    if (params_.peerRowsGroups != 0U) {
+        using namespace MegaMoeBF16Training::Wave;
+        for (uint32_t expert = 0; expert < expertPerRank_; ++expert) {
+            const auto info = GetPeerExpert(params_, expert);
+            if (!info.rows) continue;
+            const PeerCounts<GmPeerPrefix> counts{
+                GmPeerPrefix{reinterpret_cast<__gm__ int32_t*>(params_.workspaceInfo.ptrcumsumMM)}, expertPerRank_,
+                expert, info.rows};
+            for (uint32_t source = 0; source < worldSize_; ++source) {
+                constexpr uint32_t rowsPerBlock = ALIGN_32 / sizeof(TopkWeightT);
+                const uint32_t rows = counts.Get(source);
+                const uint32_t blocks = (rows + rowsPerBlock - 1U) / rowsPerBlock;
+                const uint32_t quotient = blocks / blockAivNum_, extra = blocks % blockAivNum_;
+                const uint32_t ownBegin =
+                    (aivCoreIdx_ * quotient + (aivCoreIdx_ < extra ? aivCoreIdx_ : extra)) * rowsPerBlock;
+                const uint32_t limit = ownBegin + (quotient + (aivCoreIdx_ < extra ? 1U : 0U)) * rowsPerBlock;
+                const uint32_t ownEnd = limit < rows ? limit : rows;
+                const uint32_t remoteBase = preSumBeforeRankWorkSpace_(source * expertPerRank_ + expert);
+                PeerRowCursor<PeerCounts<GmPeerPrefix>> cursor(counts, worldSize_, rankId_, params_.peerRowsGroups,
+                                                               info.rows, info.firstSliceRows, 0U,
+                                                               ownBegin < ownEnd ? info.rows : 0U);
+                MegaMoeImpl::PeerTransfer transfer{};
+                while (cursor.Next(transfer)) {
+                    if (transfer.sourceRank != source) continue;
+                    const uint32_t begin =
+                        ownBegin > transfer.sourceOrdinalBegin ? ownBegin : transfer.sourceOrdinalBegin;
+                    const uint32_t end = ownEnd < transfer.sourceOrdinalBegin + transfer.rowCount
+                                             ? ownEnd
+                                             : transfer.sourceOrdinalBegin + transfer.rowCount;
+                    for (uint32_t row = begin; row < end; row += batchCapacity) {
+                        const uint32_t take =
+                            end - row < static_cast<uint32_t>(batchCapacity) ? end - row : batchCapacity;
+                        CopyTopkGradBatch(info.base + transfer.destinationRow + row - transfer.sourceOrdinalBegin,
+                                          remoteBase + row, source, take, partialTiles, partialStride);
+                    }
+                }
+            }
+        }
+        return;
+    }
     int64_t previousGroupEnd = 0;
     int64_t expertBase = 0;
     for (uint32_t expert = 0; expert < expertPerRank_; ++expert) {
@@ -1192,31 +1319,13 @@ __aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::ReduceAndRouteTopkGrad(
             if (coreRows > 0) {
                 const int64_t dstExpertOffset =
                     static_cast<int64_t>(preSumBeforeRankWorkSpace_(dstRank * expertPerRank_ + expert));
-                AscendC::GlobalTensor<TopkWeightT> remoteD;
-                remoteD.SetGlobalBuffer(
-                    reinterpret_cast<__gm__ TopkWeightT*>(GetRankWinAddrWithOffset(dstRank, remoteDOffset)));
                 for (int64_t batchBegin = 0; batchBegin < coreRows; batchBegin += batchCapacity) {
                     const int32_t batchRows = coreRows - batchBegin > batchCapacity
                                                   ? batchCapacity
                                                   : static_cast<int32_t>(coreRows - batchBegin);
                     const int64_t packedRow = expertBase + rankRowBegin + coreRowBegin + batchBegin;
-                    AscendC::DataCopyExtParams partialCopyParams{static_cast<uint16_t>(batchRows),
-                                                                 static_cast<uint32_t>(partialTiles * sizeof(float)),
-                                                                 0U, 0U, 0U};
-                    AscendC::DataCopyPadExtParams<float> partialPadParams{false, 0U, 0U, 0U};
-                    AscendC::DataCopyPad(partialBuf, partials[static_cast<int64_t>(packedRow) * partialTiles],
-                                         partialCopyParams, partialPadParams);
-                    SyncFunc<AscendC::HardEvent::MTE2_V>();
-                    ReduceDpPartialBatch(static_cast<uint16_t>(batchRows), static_cast<uint16_t>(partialTiles),
-                                         static_cast<uint16_t>(partialStride));
-                    SyncFunc<AscendC::HardEvent::V_MTE2>();
-                    SyncFunc<AscendC::HardEvent::V_MTE3>();
-                    AscendC::DataCopyExtParams copyParams{1U, static_cast<uint32_t>(batchRows * sizeof(TopkWeightT)),
-                                                          0U, 0U, 0U};
-                    AscendC::DataCopyPad(remoteD[dstExpertOffset + coreRowBegin + batchBegin], routeBuf, copyParams);
-
-                    // Retire MTE3 before the next batch refills routeBuf.
-                    SyncFunc<AscendC::HardEvent::MTE3_V>();
+                    CopyTopkGradBatch(packedRow, dstExpertOffset + coreRowBegin + batchBegin, dstRank, batchRows,
+                                      partialTiles, partialStride);
                 }
             }
             rankRowBegin += rankRows;

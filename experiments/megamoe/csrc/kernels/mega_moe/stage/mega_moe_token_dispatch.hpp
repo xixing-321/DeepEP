@@ -422,52 +422,19 @@ __aicore__ inline void DispatchPeerBalancedRows(const TokenDispatchConfig& conte
 #if MEGAMOE_PREFILL_PEER_FAST_PATH
     const PeerRowLimits& limits =
         GetCachedPeerRowLimits(scratch.peerRowLimitsCache, counts, expertIdx, common.worldSize);
-    bool regular = CanUseRegularPeerSlice(limits, common.worldSize, sliceBegin, sliceEnd);
 #else
-    PeerRowLimits limits = GetPeerRowLimits(counts, common.worldSize);
-    bool regular = false;
+    const PeerRowLimits limits = GetPeerRowLimits(counts, common.worldSize);
 #endif
-    PeerRowCut beginCut{}, endCut{};
-    RegularPeerSlice regularSlice{};
-    uint32_t firstOrdinal = 0U;
-    if (regular) {
-        regularSlice = CreateRegularPeerSlice(common.worldSize, sliceBegin, sliceEnd);
-        firstOrdinal =
-            FindRegularPeerOrdinal(regularSlice, common.worldSize, coreRange.localExpertRowBegin - sliceBegin);
-    } else {
-        // 真实 peer 已耗尽：保留原配额算法及余数消耗顺序，不能套用均匀配额假设。
-        beginCut = GetPeerRowCut(counts, common.worldSize, limits, sliceBegin);
-        endCut = GetPeerRowCut(counts, common.worldSize, limits, sliceEnd);
-    }
-    uint32_t destination = sliceBegin + (regular ? regularSlice.Prefix(firstOrdinal) : 0U);
-    for (uint32_t ordinal = firstOrdinal; ordinal < common.worldSize; ++ordinal) {
-        uint32_t peer = GetDispatchPeer(ordinal, common.rankId, common.worldSize, context.ranksPerNode);
-        uint32_t sourceBegin, sourceEnd;
-        if (regular) {
-            // 直接恢复本 peer 的源区间，不再读取无关 peer 的 count 或从 ordinal=0 扫描。
-            sourceBegin = regularSlice.SourceBegin(ordinal);
-            sourceEnd = regularSlice.SourceEnd(ordinal);
-        } else {
-            uint32_t count = counts.Get(peer);
-            sourceBegin = TakePeerRowPrefix(count, beginCut);
-            sourceEnd = TakePeerRowPrefix(count, endCut);
-        }
-        uint32_t destinationEnd = destination + sourceEnd - sourceBegin;
-        uint32_t overlapBegin =
-            destination > coreRange.localExpertRowBegin ? destination : coreRange.localExpertRowBegin;
-        uint32_t overlapEnd =
-            destinationEnd < coreRange.localExpertRowEnd ? destinationEnd : coreRange.localExpertRowEnd;
-        if (overlapBegin < overlapEnd) {
-            uint32_t first = sourceBegin + overlapBegin - destination;
-            DispatchRankTokens<ActivationType, QuantScaleType, TopkWeightsPrefetch>(
-                context, common, params, winRankAddr, scratch, expertIdx,
-                static_cast<int32_t>(coreRange.expertGlobalRowBegin), peer, static_cast<int32_t>(overlapBegin),
-                static_cast<int32_t>(first), static_cast<int32_t>(first + overlapEnd - overlapBegin), batch, progress);
-        }
-        destination = destinationEnd;
-        if (destination >= coreRange.localExpertRowEnd) {
-            break;
-        }
+    PeerTransferCursor<DispatchPeerCounts> peers(counts, limits, sliceBegin, sliceEnd, coreRange.localExpertRowBegin,
+                                                 coreRange.localExpertRowEnd, common.worldSize, common.rankId,
+                                                 context.ranksPerNode);
+    PeerTransfer transfer{};
+    while (peers.Next(transfer)) {
+        DispatchRankTokens<ActivationType, QuantScaleType, TopkWeightsPrefetch>(
+            context, common, params, winRankAddr, scratch, expertIdx,
+            static_cast<int32_t>(coreRange.expertGlobalRowBegin), transfer.sourceRank,
+            static_cast<int32_t>(transfer.destinationRow), static_cast<int32_t>(transfer.sourceOrdinalBegin),
+            static_cast<int32_t>(transfer.sourceOrdinalBegin + transfer.rowCount), batch, progress);
     }
     FlushDispatchRouteBatch<ActivationType, QuantScaleType, TopkWeightsPrefetch>(context, params, winRankAddr, scratch,
                                                                                  batch, progress);
