@@ -47,6 +47,13 @@ struct PeerRowLimits {
 
 // 把各 peer 的路由队列逐轮各取一行，耗尽者跳过；cut 表示此前消费的完整轮及余数。
 // 两个 cut 之差决定 slice 配额，避免独立四舍五入导致行数不守恒或跨 slice 重复。
+struct PeerRowLimitsCache {
+    bool valid = false;
+    uint32_t expert = 0U;
+    uint32_t peers = 0U;
+    PeerRowLimits limits{};
+};
+
 struct PeerRowCut {
     uint32_t rounds;
     uint32_t extraPeers;
@@ -67,6 +74,20 @@ MEGA_MOE_PEER_HOST_DEVICE inline PeerRowLimits GetPeerRowLimits(const PeerCounts
 
 // 只由真实最小行数证明“当前 slice 结束前没有 peer 提前耗尽”，不根据 BS 或均值猜测。
 // 若 minimum=0、发生偏斜耗尽或范围为空，交给原通用路径。
+template <typename PeerCounts>
+MEGA_MOE_PEER_HOST_DEVICE inline const PeerRowLimits& GetCachedPeerRowLimits(PeerRowLimitsCache& cache,
+                                                                             const PeerCounts& counts, uint32_t expert,
+                                                                             uint32_t peers)
+{
+    if (!cache.valid || cache.expert != expert || cache.peers != peers) {
+        cache.limits = GetPeerRowLimits(counts, peers);
+        cache.expert = expert;
+        cache.peers = peers;
+        cache.valid = true;
+    }
+    return cache.limits;
+}
+
 MEGA_MOE_PEER_HOST_DEVICE inline bool CanUseRegularPeerSlice(const PeerRowLimits& limits, uint32_t peers,
                                                              uint32_t begin, uint32_t end)
 {

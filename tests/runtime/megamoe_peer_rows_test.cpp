@@ -9,8 +9,9 @@
 #include <random>
 #include <utility>
 #include <vector>
-#include "experiments/megamoe_train/csrc/kernels/bf16/schedule/peer_row_layout.hpp"
-#include "experiments/megamoe_train/csrc/kernels/bf16/layout/mega_moe_layout.hpp"
+#include "experiments/megamoe/csrc/kernels/mega_moe/common/mega_moe_bf16_peer_row_layout.hpp"
+#include "experiments/megamoe/csrc/kernels/mega_moe/common/mega_moe_bf16_layout.hpp"
+#include "experiments/megamoe/csrc/kernels/mega_moe/common/mega_moe_workspace_backward.hpp"
 
 using namespace MegaMoeBF16Training::Wave;
 using Row = std::pair<uint32_t, uint32_t>;
@@ -31,7 +32,8 @@ int main()
     assert(ScratchFits(7168, 1024, 2));
     assert(!ScratchFits(32768, 8, 4));
     static_assert(MegaMoeBF16Training::BackwardTopkPartialCount(MegaMoeBF16Training::kSaveBf16, 3072) == 1);
-    static_assert(MegaMoeBF16Training::BackwardTopkPartialCount(MegaMoeBF16Training::kSaveNone, 3072) == 12);
+    static_assert(MegaMoeBF16Training::BackwardTopkPartialCount(MegaMoeBF16Training::kSaveNone, 3072) ==
+                  (DEEPEP_MEGAMOE_BF16_BACKWARD_SLICES ? 1U : 12U));
     static_assert(MegaMoeBF16Training::BackwardTopkPartialCount(MegaMoeBF16Training::kSaveMxFp8, 3072) == 12);
     static_assert(MegaMoeBF16Training::TopkGradReductionWidth(24467, 3072, 64) == 3072);
     static_assert(MegaMoeBF16Training::TopkGradReductionWidth(24258, 3072, 64) == 1536);
@@ -67,6 +69,32 @@ int main()
         assert(other.rawUpOffset == bf16.rawUpOffset && other.rawUpOffset % 512U == 0);
         assert(other.rawUpBytes >= capacity * 3072U * sizeof(uint16_t));
         assert(other.totalBytes == other.rawUpOffset + other.rawUpBytes);
+    }
+    for (uint32_t mode : {1U, 2U, 3U}) {
+        for (uint64_t capacity : {1ULL, 127ULL, 128ULL, 129ULL, 24576ULL}) {
+            const MegaMoeBF16Training::BackwardWorkspaceLayout layout(4, capacity, 7168, 6144, 8, 4, 4, mode, 3);
+            assert(layout.doOffset == 0 && layout.controlOffset < layout.totalBytes);
+            assert(layout.dzOffset % 512 == 0 && layout.hpOffset % 512 == 0 && layout.dpOffset % 512 == 0);
+            assert(layout.dhpReadyOffset < layout.dzReadyOffset && layout.dzReadyOffset < layout.dxReadyOffset);
+            if ((DEEPEP_MEGAMOE_BF16_BACKWARD_SLICES || DEEPEP_MEGAMOE_BF16_COMBINE_SLICES) && layout.gmDataGrad) {
+                assert(layout.sliceSlots == (capacity + 127U) / 128U + 4U);
+                assert(layout.totalBytes ==
+                       layout.dxSlicesOffset + (DEEPEP_MEGAMOE_BF16_COMBINE_SLICES ? layout.sliceSlots * 64U : 0U));
+            }
+        }
+    }
+    // Every expert owns disjoint row-counter slots, including empty/tail experts.
+    for (uint32_t shift = 0; shift < 256; ++shift) {
+        uint64_t base = 0;
+        std::vector<uint64_t> slots;
+        for (uint32_t expert = 0; expert < 8; ++expert) {
+            const uint32_t rows = (shift * (expert + 1U)) % 387U;
+            for (uint32_t row = 0; row < rows; row += 128U) slots.push_back(base / 128U + expert + row / 128U);
+            base += rows;
+        }
+        std::sort(slots.begin(), slots.end());
+        assert(std::adjacent_find(slots.begin(), slots.end()) == slots.end());
+        assert(slots.empty() || slots.back() < (base + 127U) / 128U + 8U);
     }
     std::mt19937 rng(20261116);
     uint64_t cases = 0, checkedRows = 0, sourceBands = 0;

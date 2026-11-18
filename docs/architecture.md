@@ -36,8 +36,7 @@ Python Runtime → C++ Session → SHMEM / CANN
 | `csrc/ops/` | Notify、HT 和 LL 的 Host 封装 |
 | `csrc/kernels/` | Device 实现、启动声明和共用布局 |
 | `cmake/`、`build_support.py` | 依赖校验、Host/Device 编译和安装 |
-| `experiments/megamoe/` | MegaMoE Python API、融合 kernel、构建/多机启动脚本和计时工具 |
-| `experiments/megamoe_train/` | MegaMoE 训练算子族；首批 BF16 Host/kernel、autograd、保存状态和独立验证，复用根 Session |
+| `experiments/megamoe/` | 量化推理与BF16前反向的共同接口、融合kernel、构建和计时工具 |
 | `experiments/ep_gmm_fused/` | 两类通信计算融合算子、UDMA 运行时封装及独立测试 |
 | `tests/`、`benchmarks/` | 正确性验证、测试参考及测量工具 |
 
@@ -66,6 +65,11 @@ LL 通过同一组 dispatch/combine 方法进入独立 kernel。fresh dispatch �
 MegaMoE 将 token 分发、专家矩阵乘、激活与量化、第二次矩阵乘和加权归并组合为融合前向流程。其模型权重、计算配置和完整 MoE 性能口径与单独 EP 通信不同，说明集中在 [MegaMoE 文档](../experiments/megamoe/README.md)。
 
 MegaMoE 的 `python/deep_ep_experimental/megamoe/api.py` 提供公开接口，经 `csrc/bindings.cpp`、`forward.cpp` 调用 `csrc/kernels/mega_moe/`；`scripts/` 提供构建和多机入口，`tests/` 检查接口、参考和主机协议。其 `SymmBuffer` 与 ElasticBuffer 分开管理，不能套用 HT/LL 的容量和初始化约束。
+
+BF16经同一Host扩展的BF16 Plan进入前反向，输入字段及通信资源由同一个SymmBuffer管理。
+need_grad决定前乘训练或后乘推理语义；gmm1_save_type决定本次计算图保存或重算Gate/Up。
+各次前向独立持有反向状态，临时workspace由Plan复用。前反向职责与共享基础函数见
+[BF16设计说明](../experiments/megamoe/docs/bf16_design.md)。
 
 ## 通信计算融合算子
 

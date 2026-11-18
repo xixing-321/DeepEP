@@ -53,7 +53,14 @@ def wheel(tmp_path, enabled, payload, ep_gmm_fused=False):
         "test.dist-info/licenses/deepseek-deepep.LICENSE": b"fixture",
     }
     if payload:
-        for name in ("api.py", "benchmark.py", "configs/smoke.json", "libmegamoe_kernel.so", "_C.fake.so"):
+        for name in (
+            "__init__.py",
+            "api.py",
+            "benchmark.py",
+            "configs/smoke.json",
+            "libmegamoe_kernel.so",
+            "_C.fake.so",
+        ):
             entries["deep_ep_experimental/megamoe/" + name] = b"fixture"
         entries["test.dist-info/licenses/cann.LICENSE"] = b"fixture"
     if ep_gmm_fused:
@@ -69,6 +76,15 @@ def wheel(tmp_path, enabled, payload, ep_gmm_fused=False):
         ):
             entries[prefix + name] = b"fixture"
         entries[prefix + "_build_info.json"] = json.dumps({"shmem_revision": "test-sdk"}).encode()
+    runtime = {}
+    for name in ("libshmem.so", "libshmem_utils.so", "aclshmem_bootstrap_config_store.so", "aclshmem_bootstrap_uid.so"):
+        data = name.encode()
+        entries["deep_ep/.libs/" + name] = data
+        runtime[name] = hashlib.sha256(data).hexdigest()
+    info = json.loads(entries["deep_ep/_build_info.json"])
+    info["shmem_runtime"] = runtime
+    entries["deep_ep/_build_info.json"] = json.dumps(info).encode()
+    entries["test.dist-info/licenses/cann.LICENSE"] = b"fixture"
     path = tmp_path / "synthetic.whl"
     with zipfile.ZipFile(path, "w") as archive:
         for name, content in entries.items():
@@ -141,13 +157,14 @@ def test_component_switches_preserve_python_packages(tmp_path):
 @pytest.mark.parametrize("enabled,payload", [(False, True), (True, False)])
 def test_stale_or_missing_beta_rejected(tmp_path, enabled, payload):
     validate = load(ROOT / "scripts/validate_package.py")
-    with pytest.raises(RuntimeError, match="Beta"):
+    with pytest.raises(RuntimeError, match="MegaMoE"):
         validate.inspect_wheel(wheel(tmp_path, enabled, payload))
 
 
 @pytest.mark.parametrize("fault", ["missing", "json", "list", "revision", "header", "checksum"])
-def test_megamoe_build_keeps_strict_sdk_validation(tmp_path, fault):
+def test_megamoe_build_keeps_strict_sdk_validation(tmp_path, fault, monkeypatch):
     build = load(ROOT / "build_support.py")
+    monkeypatch.setattr(build.platform, "system", lambda: "Linux")
     lock = json.loads((ROOT / "dependencies.lock.json").read_text())["shmem"]
     cann, sdk = tmp_path / "cann", tmp_path / "sdk"
     (cann / "include/acl").mkdir(parents=True)

@@ -22,7 +22,10 @@
 #endif
 #include "../mc2_common/mc2_moe_context.hpp"
 
-class AscendTimerDevice;
+template <class Schema>
+class BasicAscendTimerDevice;
+struct MegaMoeTimerSchema;
+using AscendTimerDevice = BasicAscendTimerDevice<MegaMoeTimerSchema>;
 
 namespace MegaMoeImpl {
 

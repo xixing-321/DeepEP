@@ -33,18 +33,13 @@ if ep_gmm_fused:
     package_dir["deep_ep_experimental"] = "experiments/ep_gmm_fused/python/deep_ep_experimental"
     cmdclass["build"] = ConfiguredBuild
     cmdclass["egg_info"] = BuildEggInfo
-if beta_enabled:
+if beta_enabled or train_enabled:
     packages += [name for name in find_packages(where=BETA) if name not in packages]
     package_dir.setdefault("deep_ep_experimental", BETA + "/deep_ep_experimental")
     package_dir["deep_ep_experimental.megamoe"] = BETA + "/deep_ep_experimental/megamoe"
     cmdclass["build"] = VariantBuild
 
 if train_enabled:
-    train_python = "experiments/megamoe_train/python"
-    packages += [name for name in find_packages(where=train_python) if name not in packages]
-    package_dir.setdefault("deep_ep_experimental", train_python + "/deep_ep_experimental")
-    package_dir["deep_ep_experimental.megamoe_train"] = train_python + "/deep_ep_experimental/megamoe_train"
-    cmdclass["build"] = VariantBuild
     cmdclass["egg_info"] = BuildEggInfo
 
 setup(
@@ -61,7 +56,6 @@ setup(
     package_dir=package_dir,
     package_data={
         "deep_ep_experimental.ep_gmm_fused": ["NOTICE.md", "upstream.json"],
-        "deep_ep_experimental.megamoe_train": ["*.so"],
         "deep_ep_experimental.megamoe": ["*.so", "configs/*.json"],
     },
     ext_modules=[Extension("deep_ep._C", sources=[])],

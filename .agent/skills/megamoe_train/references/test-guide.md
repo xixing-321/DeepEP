@@ -6,16 +6,16 @@ Modified by guofanfeng 2026
 # MegaMoE BF16 测试入口
 
 本目录只有**一个**测试入口 `test_mega_moe.py`，精度与性能共用它。用例清单见
-[cases.json](../../../../experiments/megamoe_train/tests/bf16/cases.json)；12 条典型尺寸、24 条类型/保存模式和 6 条 Gather 边界的覆盖理由见
+[cases.json](../../../../experiments/megamoe/tests/bf16/cases.json)；12 条典型尺寸、24 条类型/保存模式和 6 条 Gather 边界的覆盖理由见
 [TEST_SPEC.md](test-spec.md)；模块级构建、接口与保存模式见
-[模块 README](../../../../experiments/megamoe_train/README.md)。
+[模块 README](../../../../experiments/megamoe/README.md#bf16前向与训练)。
 
 ## 前置条件
 
 | 项 | 要求 |
 | --- | --- |
 | 设备 | 单节点 Ascend950；EP = 传入的设备列表长度，物理卡号 |
-| 安装 | 已安装带训练扩展的 wheel（`DEEPEP_BUILD_MEGAMOE_TRAIN=ON`），默认 `python` 能导入 `deep_ep_experimental.megamoe_train` |
+| 安装 | 已安装带训练扩展的 wheel（`DEEPEP_BUILD_MEGAMOE_TRAIN=ON`），默认 `python` 能导入 `deep_ep_experimental.megamoe` |
 | 环境 | `source <CANN>/set_env.sh`；SHMEM 使用 wheel 内附的运行库，不预加载其他 SDK |
 | 端口 | `--shmem-ip-port tcp://IP:port`；Gloo 另用 `port+2`，两者都不得被占用 |
 | 精度 | 需要 ATK 与内部 `atk-private-precision`；`--skip precision` 不需要 |
@@ -31,7 +31,7 @@ Modified by guofanfeng 2026
 ### 精度测试
 
 ```bash
-python -u experiments/megamoe_train/tests/bf16/test_mega_moe.py 0,1,2,3,4,5,6,7 \
+python -u experiments/megamoe/tests/bf16/test_mega_moe.py 0,1,2,3,4,5,6,7 \
   --suite model --case-id flash_m512 --skip performance \
   --shmem-ip-port tcp://127.0.0.1:29862 \
   --output "$PWD/runs/$(date +%Y%m%d-%H%M%S)-precision"
@@ -43,14 +43,13 @@ python -u experiments/megamoe_train/tests/bf16/test_mega_moe.py 0,1,2,3,4,5,6,7 
 
 不加 `--skip` 就是先精度、全部通过后再计时。
 
-`--api module`（默认）检查原 `MegaMoeBF16Train` 调用；`--api functional` 检查输出在首位的
-`bf16_mega_moe_train` 接口，包括预分配 `y` 的自动求导和专家计数累加。两者使用同一 kernel、输入和精度判据。
+测试通过统一的输出在首位bf16_mega_moe接口，检查预分配y的自动求导和专家计数累加。
 测试适配器将累加计数清零后使用，因此报告中的 counts 仍为单次调用计数。
 
 ### 性能测试
 
 ```bash
-python -u experiments/megamoe_train/tests/bf16/test_mega_moe.py 0,1,2,3,4,5,6,7 \
+python -u experiments/megamoe/tests/bf16/test_mega_moe.py 0,1,2,3,4,5,6,7 \
   --suite model --case-id pro_m2048 --skip precision --log quiet \
   --warmup 2 --loops 10 \
   --shmem-ip-port tcp://127.0.0.1:29862 \
@@ -83,7 +82,7 @@ suite 内不接受 shape、TopK 路由权重类型/数值、路由、数据分�
 自定义 shape 示例：
 
 ```bash
-python -u experiments/megamoe_train/tests/bf16/test_mega_moe.py 0,1,2,3,4,5,6,7 \
+python -u experiments/megamoe/tests/bf16/test_mega_moe.py 0,1,2,3,4,5,6,7 \
   --skip precision \
   --seq 4096 --hidden 7168 --ffn 3072 --topk 8 --expert-per-rank 8 \
   --routed-scaling-factor 2.5 --swiglu-limit 10 \
@@ -188,7 +187,7 @@ MFU 差异的关键量。
   "wheel": {"name": "ascend-deepep", "version": "0.1.0.dev5"},
   "libraries": {
     "deep_ep._C":            {"path": "/…/deep_ep/_C…so", "sha256": "…"},
-    "megamoe_train._C":      {"path": "/…/megamoe_train/_C…so", "sha256": "…"},
+    "megamoe._C":      {"path": "/…/megamoe/_C…so", "sha256": "…"},
     "megamoe_train_kernel":  {"path": "/…/libdeepep_megamoe_train_bf16.so", "sha256": "…"}
   }
 }

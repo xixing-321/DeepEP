@@ -67,41 +67,28 @@ def inspect_wheel(path):
             raise RuntimeError("Wheel must include the adopted API's third-party license")
         info = json.loads(archive.read("deep_ep/_build_info.json"))
         beta = info.get("megamoe", {}).get("enabled", False)
-        beta_names = [name for name in names if name.startswith("deep_ep_experimental/megamoe/")]
-        if beta:
-            required = {
-                "deep_ep_experimental/megamoe/api.py",
-                "deep_ep_experimental/megamoe/benchmark.py",
-                "deep_ep_experimental/megamoe/configs/smoke.json",
-                "deep_ep_experimental/megamoe/libmegamoe_kernel.so",
-            }
-            extensions = [
-                n for n in beta_names if n.startswith("deep_ep_experimental/megamoe/_C.") and n.endswith(".so")
-            ]
+        training = info.get("megamoe_train", {}).get("enabled", False)
+        component = "deep_ep_experimental/megamoe/"
+        members = [n for n in names if n.startswith(component)]
+        if any("deep_ep_experimental/megamoe_train/" in n for n in names):
+            raise RuntimeError("Obsolete separate MegaMoE training package")
+        if any(component in n and not n.startswith(component) for n in names):
+            raise RuntimeError("Wheel contains nested MegaMoE staging")
+        if beta or training:
+            required = {component + "api.py", component + "__init__.py"}
+            if beta:
+                required.update(component + n for n in ("benchmark.py", "configs/smoke.json", "libmegamoe_kernel.so"))
+            if training:
+                required.update(component + n for n in ("_bf16.py", "_autograd.py", "libdeepep_megamoe_train_bf16.so"))
+            extensions = [n for n in members if n.startswith(component + "_C.") and n.endswith(".so")]
             if len(extensions) != 1 or not required.issubset(names):
-                raise RuntimeError("Incomplete MegaMoE Beta wheel")
-            if not any(name.endswith("cann.LICENSE") for name in names):
-                raise RuntimeError("Missing CANN license for MegaMoE")
-        elif beta_names:
+                raise RuntimeError("Incomplete MegaMoE unified wheel")
+            if not training and component + "libdeepep_megamoe_train_bf16.so" in names:
+                raise RuntimeError("BF16 device library in a training-OFF wheel")
+            if not beta and component + "libmegamoe_kernel.so" in names:
+                raise RuntimeError("Quantized device library in an inference-OFF wheel")
+        elif members:
             raise RuntimeError("MegaMoE Beta payload in an OFF wheel; use a fresh build directory")
-        training_component = "deep_ep_experimental/megamoe_train/"
-        if any(training_component in name and not name.startswith(training_component) for name in names):
-            raise RuntimeError("Wheel contains nested MegaMoE training staging artifacts")
-        training_names = [name for name in names if name.startswith(training_component)]
-        if info.get("megamoe_train", {}).get("enabled", False):
-            required = {
-                training_component + "__init__.py",
-                training_component + "bf16.py",
-                training_component + "api.py",
-                training_component + "libdeepep_megamoe_train_bf16.so",
-            }
-            extensions = [
-                name for name in training_names if name.startswith(training_component + "_C.") and name.endswith(".so")
-            ]
-            if len(extensions) != 1 or not required.issubset(names):
-                raise RuntimeError("Incomplete MegaMoE training wheel")
-        elif training_names:
-            raise RuntimeError("MegaMoE training payload in an OFF wheel; use a fresh build directory")
         component = "deep_ep_experimental/ep_gmm_fused/"
         if any(component in n and not n.startswith(component) for n in names):
             raise RuntimeError("Wheel contains nested EP_GMM_FUSED staging artifacts")

@@ -3,6 +3,7 @@
 
 #pragma once
 #include <cstdint>
+#include "bf16_kernel_launch.hpp"
 
 // Host 和 Bisheng 共享唯一入口声明；FP8 scale 非空时绕过输入量化。
 extern "C" void mega_moe_kernel_do(uint32_t block_dim, uint32_t ub_bytes, void* stream, bool is_a8w4, uint8_t* context,

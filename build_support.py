@@ -132,11 +132,8 @@ class CheckedInstallLib(install_lib):
         for directory in (self.build_dir, self.install_dir):
             root = Path(directory)
             for component in root.glob("**/deep_ep_experimental/megamoe_train"):
-                if (
-                    not enabled("DEEPEP_BUILD_MEGAMOE_TRAIN")
-                    or component.relative_to(root).as_posix() != "deep_ep_experimental/megamoe_train"
-                ):
-                    raise RuntimeError(f"Stale MegaMoE training staging at {component}; use separate build-lib paths")
+                raise RuntimeError(f"Obsolete MegaMoE training package at {component}; use a clean build-lib path")
+
         return super().install()
 
 
@@ -167,7 +164,6 @@ def source_fingerprint():
         "tests",
         "benchmarks",
         "experiments/megamoe",
-        "experiments/megamoe_train",
         "experiments/ep_gmm_fused",
     ):
         files.extend(
@@ -252,6 +248,17 @@ def build_configuration(environment=None):
         raise RuntimeError("DEEPEP_NPU_ARCH must be Ascend950; other targets are unqualified")
     train = enabled("DEEPEP_BUILD_MEGAMOE_TRAIN", env)
     force_expert_ready = enabled("DEEPEP_BF16_FORCE_EXPERT_READY", env)
+    slice_flags = {}
+    for name in ("DEEPEP_MEGAMOE_BF16_BACKWARD_SLICES", "DEEPEP_MEGAMOE_BF16_COMBINE_SLICES"):
+        value = env.get(name, "OFF")
+        if value not in {"ON", "OFF"}:
+            raise RuntimeError(f"{name} accepts ON or OFF only")
+        if value == "ON" and not train:
+            raise RuntimeError(f"{name} requires DEEPEP_BUILD_MEGAMOE_TRAIN=ON")
+        slice_flags[name] = value == "ON"
+    forward_schedule = env.get("DEEPEP_MEGAMOE_BF16_FORWARD_SCHEDULE", "0")
+    if forward_schedule not in ("0", "1"):
+        raise RuntimeError("DEEPEP_MEGAMOE_BF16_FORWARD_SCHEDULE must be 0 or 1")
     if force_expert_ready and not train:
         raise RuntimeError("DEEPEP_BF16_FORCE_EXPERT_READY requires DEEPEP_BUILD_MEGAMOE_TRAIN=ON")
     beta = env.get("DEEPEP_BUILD_MEGAMOE", "OFF")
@@ -354,8 +361,11 @@ def build_configuration(environment=None):
         "timer": timer == "ON" and train,
         "force_expert_ready": force_expert_ready,
         "source_commit": "b8cff14854d12aef77b6ae54b5890123759b4d28",
-        "gmm1_schedule": "expert-ready" if force_expert_ready else "adaptive-auto",
+        "gmm1_schedule": "expert-ready" if force_expert_ready else "wave-slice-ready",
         "swiglu_decouple": "auto",
+        "backward_slices": slice_flags["DEEPEP_MEGAMOE_BF16_BACKWARD_SLICES"],
+        "combine_slices": slice_flags["DEEPEP_MEGAMOE_BF16_COMBINE_SLICES"],
+        "forward_schedule": forward_schedule,
     }
     result["megamoe"] = {"enabled": beta == "ON", "timer": timer == "ON"}
     if beta == "ON" or train:
@@ -545,6 +555,9 @@ class CMakeBuild(build_ext):
             f"-DDEEPEP_BUILD_MEGAMOE={'ON' if megamoe.get('enabled', False) else 'OFF'}",
             f"-DDEEPEP_MEGAMOE_TIMER={'ON' if megamoe.get('timer', False) else 'OFF'}",
             f"-DCATLASS_ROOT={configuration.get('CATLASS_ROOT', '')}",
+            f"-DDEEPEP_MEGAMOE_BF16_COMBINE_SLICES={'ON' if configuration.get('megamoe_train', {}).get('combine_slices', False) else 'OFF'}",
+            f"-DDEEPEP_MEGAMOE_BF16_BACKWARD_SLICES={'ON' if configuration.get('megamoe_train', {}).get('backward_slices', False) else 'OFF'}",
+            f"-DDEEPEP_MEGAMOE_BF16_FORWARD_SCHEDULE={configuration.get('megamoe_train', {}).get('forward_schedule', '0')}",
             f"-DDEEPEP_BUILD_MEGAMOE_TRAIN={'ON' if configuration.get('megamoe_train', {}).get('enabled', False) else 'OFF'}",
             f"-DDEEPEP_BF16_FORCE_EXPERT_READY={'ON' if configuration.get('megamoe_train', {}).get('force_expert_ready', False) else 'OFF'}",
             f"-DDEEPEP_BUILD_EP_GMM_FUSED={'ON' if ep_gmm_fused else 'OFF'}",

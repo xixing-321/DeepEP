@@ -60,8 +60,7 @@ DeepEP/
 │   ├── ops/                 # Host validation and kernel launch
 │   └── kernels/             # Ascend C communication kernels
 ├── experiments/
-│   ├── megamoe/             # MegaMoE fused inference
-│   ├── megamoe_train/       # MegaMoE BF16 training: fused forward and autograd backward
+│   ├── megamoe/             # MegaMoE fused inference and BF16 training
 │   └── ep_gmm_fused/        # Fused communication and grouped matmul
 ├── cmake/                   # Build and installation
 ├── third-party/             # Dependencies
@@ -73,7 +72,7 @@ DeepEP/
 └── figures/                 # Architecture and performance figures
 ```
 
-See the [architecture guide](docs/architecture.md) for module responsibilities, and the [MegaMoE BF16 training README (Chinese)](experiments/megamoe_train/README.md) for training interfaces and usage.
+See the [architecture guide](docs/architecture.md) for module responsibilities, and the [MegaMoE BF16 guide (Chinese)](experiments/megamoe/README.md#bf16前向与训练) for training interfaces and usage.
 
 ## Quick start
 
@@ -89,7 +88,7 @@ See the [architecture guide](docs/architecture.md) for module responsibilities, 
 | Framework | PyTorch and `torch_npu` |
 | HDK and Firmware | Huawei's Q3 commercial HDK with a planned release date of October 15 2026 |
 | Communication | SHMEM pinned in [dependencies.lock.json](dependencies.lock.json); URMA runtime |
-| MegaMoE | CATLASS; inference dependencies in the [MegaMoE guide](experiments/megamoe/README.md), training dependencies in the [training module](experiments/megamoe_train/README.md) |
+| MegaMoE | CATLASS; see the [MegaMoE guide](experiments/megamoe/README.md) for inference and training dependencies |
 
 ### Install SHMEM dependency
 
@@ -111,7 +110,7 @@ python -m pip install -r requirements-dev.txt
 python -m pytest tests/elastic/test_dispatch.py tests/elastic/test_combine.py -q
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines and the [test guide](tests/README.md) for NPU test commands; the training component's precision and performance entry is the [training test guide](experiments/megamoe_train/README.md#测试).
+See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines and the [test guide](tests/README.md) for NPU test commands; the training component's precision and performance entry is the [training test guide](experiments/megamoe/README.md#bf16测试).
 
 ### Installation
 
@@ -137,7 +136,7 @@ The script prepares dependencies and builds and installs a wheel with MegaMoE an
 
 ### Install MegaMoE Train
 
-The training component is built from the same tree with `DEEPEP_BUILD_MEGAMOE_TRAIN=ON` (OFF by default); build commands, artifact constraints and a first run are in the [training module README](experiments/megamoe_train/README.md#构建与安装).
+Build BF16 with `DEEPEP_BUILD_MEGAMOE_TRAIN=ON`. Set `DEEPEP_BUILD_MEGAMOE=ON` as well to include quantized inference in the same wheel. See the [BF16 build and installation guide](experiments/megamoe/README.md#bf16构建与安装).
 
 ## Interfaces and examples
 
@@ -147,7 +146,7 @@ The training component is built from the same tree with `DEEPEP_BUILD_MEGAMOE_TR
 | --- | --- |
 | DeepEP prefill / decode | `deep_ep.ElasticBuffer.dispatch()` / `combine()` |
 | MegaMoE prefill / decode (experimental) | `deep_ep_experimental.megamoe.fp8_fp4_mega_moe()` |
-| MegaMoE train (experimental) | `deep_ep_experimental.megamoe_train.MegaMoeBF16Train` |
+| MegaMoE train (experimental) | `deep_ep_experimental.megamoe.bf16_mega_moe()` |
 
 ### Buffer initialization
 
@@ -301,21 +300,28 @@ Tensor layouts, event synchronization, and buffer lifecycle are described in the
 
 ### MegaMoE Train example
 
-Construct the operator with the caller's existing EP process group: the forward returns `y` and `counts`, `backward()` yields gradients for `x`, `topk_weights`, `w1` and `w2`, and one collective `close()` releases the window. Set the current NPU and `DEEPEP_SHMEM_ENDPOINT` before construction.
+Construct a `SymmBuffer` with the existing EP process group. Set the current NPU and `DEEPEP_SHMEM_ENDPOINT` before construction. Retain the original input tensors with gradients enabled. `bf16_mega_moe` writes directly to `y`, and PyTorch propagates gradients to `x`, `topk_weights`, `w1` and `w2`.
 
 ```python
-from deep_ep_experimental.megamoe_train import MegaMoeBF16Train
+import torch
+from deep_ep_experimental.megamoe import SymmBuffer, bf16_mega_moe
 
-op = MegaMoeBF16Train(ep_group, local_mem_size=1 << 30)  # window bytes, identical on every rank
-y, counts = op(
-    x, topk_ids, topk_weights, w1, w2, max_recv_tokens,
-    swiglu_limit=0.0, save_gmm1_output="bf16",
+buffer = SymmBuffer(
+    ep_group,
+    num_experts=32, num_max_tokens_per_rank=4096, num_topk=6,
+    hidden=7168, intermediate_hidden=3072, mma_type="bf16xbf16",
+    need_grad=True, gmm1_save_type="bf16", max_recv_tokens=27648,
 )
-(y * grad_y).sum().backward()
-op.close()  # collective, after the last backward
+buffer.x = x
+buffer.topk_idx = topk_idx
+buffer.topk_weights = topk_weights
+y = torch.empty_like(x, requires_grad=False)
+bf16_mega_moe(y, w1, w2, buffer)
+y.backward(grad_y)
+buffer.destroy()  # Collective, after the last backward.
 ```
 
-Public interfaces, parameter descriptions, a usage example and capacity planning are in the [training component README (Chinese)](experiments/megamoe_train/README.md).
+See the [BF16 guide](experiments/megamoe/README.md#bf16前向与训练) for the tensor layouts, supported save modes and capacity requirements.
 
 ### Environment variables
 
@@ -342,7 +348,7 @@ Combines dispatch, expert computation, activation/quantization, and combine into
 
 ### MegaMoE BF16 training
 
-BF16 fused forward and autograd backward for EP MoE training on Ascend950, covering dispatch, expert computation, activation and combine. See [experiments/megamoe_train/](experiments/megamoe_train/README.md) for interfaces, build and qualification boundaries.
+BF16 fused forward and autograd backward for EP MoE training on Ascend950, covering dispatch, expert computation, activation and combine. See [the BF16 guide](experiments/megamoe/README.md#bf16前向与训练) for interfaces, build and qualification boundaries.
 
 ## Acknowledgement
 

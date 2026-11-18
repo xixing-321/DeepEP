@@ -74,7 +74,7 @@ buffer = SymmBuffer(
 
 约束：EP=2～128，E 可整除 EP 且每卡最多 128 个路由专家；S=0～8；B=1～65536；
 H=1024～8192 且为64的倍数，I=256～4096 且为128的倍数，1≤K≤min(32,E)。
-各 rank 必须同序、同 B 调用；仅推理，不支持反向、空/不等长 B 或图捕获。
+各 rank 必须同序、同 B 调用；上述量化路径仅推理，不支持反向、空/不等长 B 或图捕获。
 `mma_type="fp8xfp8"` 是保留入口，不支持共享专家/timer；**下文 benchmark 固定测试 W4A8，不提供权重 dtype 开关**。
 
 兼容入口 `mega_moe(x, ids, weights, w1, w2, buffer, ...)` 返回 `(y, per_call_counts)`。
@@ -264,3 +264,98 @@ CPU 检查不启动设备 kernel，也不作为设备验证结果。Ascend950 �
 - BF16/FP8 输入、不同路由、共享专家、容量边界和多次调用的精度验证。
 - 多流生命周期、BS 切换、初始化/销毁和多机长时间运行验证。
 - 各声明 EP 规模的设备测试及同输入、同软件版本、同计时范围的性能对比。
+
+## BF16前向与训练
+
+BF16与W4A8/W8A8共用 `deep_ep_experimental.megamoe` 包及 `SymmBuffer`。
+BF16前向采用输出在首位的接口，原地写入y并返回None：
+
+```python
+bf16_mega_moe(
+    y, l1_weights, l2_weights, sym_buffer,
+    shared_l1_weights=None, shared_l2_weights=None,
+    cumulative_local_expert_recv_stats=None,
+    activation="swiglu", activation_clamp=None, fast_math=True,
+)
+```
+
+可选的 `cumulative_local_expert_recv_stats` 为每个本地专家的INT32累加计数。
+BF16支持routed experts，暂不支持shared experts、其他激活或 `fast_math=False`。
+
+### BF16构建与安装
+
+沿用根仓依赖和wheel构建流程。`DEEPEP_BUILD_MEGAMOE_TRAIN=ON` 构建BF16，
+`DEEPEP_BUILD_MEGAMOE=ON` 构建量化推理。两项可以同时开启，使用一个MegaMoE Host扩展和根SHMEM依赖。
+
+```bash
+export DEEPEP_NPU_ARCH=Ascend950
+export DEEPEP_BUILD_MEGAMOE_TRAIN=ON
+python -m build --wheel --no-isolation
+python -m pip install --force-reinstall --no-deps dist/*.whl
+```
+
+### BF16使用示例
+
+各EP rank先设置当前NPU、相同SHMEM endpoint并初始化ep_group。以下为EP8、每卡4专家：
+
+```python
+import torch
+from deep_ep_experimental.megamoe import SymmBuffer, bf16_mega_moe
+
+buffer = SymmBuffer(
+    ep_group, num_experts=32, num_max_tokens_per_rank=4096,
+    num_topk=6, hidden=7168, intermediate_hidden=3072,
+    mma_type="bf16xbf16", need_grad=True,
+    gmm1_save_type="bf16", max_recv_tokens=27648,
+)
+buffer.x = x
+buffer.topk_idx = topk_idx
+buffer.topk_weights = topk_weights
+buffer.validate_inputs(x.shape[0])  # 预检，在计时区间外执行
+buffer.prepare(x.shape[0])         # 可选：提前准备临时workspace
+
+y = torch.empty_like(x, requires_grad=False)
+bf16_mega_moe(y, w1, w2, buffer)
+y.backward(grad_y)
+buffer.destroy()                  # 所有反向完成后，全体rank同序释放
+```
+
+x、p、w1、w2保留原Tensor引用，可独立设置requires_grad。
+x和grad_y为BF16 [M,H]；topk_idx为连续INT32 [M,TopK]。
+p为连续BF16或FP32 [M,TopK]，其梯度沿用相同dtype。
+权重支持 [E_local,2F,H]/[E_local,H,F] 或 [E_local,H,2F]/[E_local,F,H]，两者保持配套。
+y须为独立、连续且预先不要求梯度的BF16 Tensor，不与输入重叠。
+
+BF16支持EP=2～1024、每卡1～32专家、总专家数不超过2048、M=1～16384、TopK≤32且不超过总专家数。
+H/F为256的倍数；实际shape还须满足Dispatch及激活UB预算。当前设备验收范围为单节点。
+max_recv_tokens是本rank接收route行数的显式上限，按路由峰值设置，不按源token数直接替代。
+
+### BF16语义与状态
+
+| 设置 | 乘权位置 | 反向 |
+| --- | --- | --- |
+| need_grad=True | Hp=BF16(SiLU_FP32(Gate)×Up×FP32(p))，随后GMM2 | 按实际梯度需求建立图 |
+| need_grad=False | 不乘权的BF16 H进入GMM2，源端在FP32逐route乘p后归并 | 仅推理，输入要求梯度时明确报错 |
+
+`torch.no_grad()` 不改变need_grad=True的前乘语义，只跳过构图及Gate/Up保存。
+gmm1_save_type取bf16、mxfp8、none，默认bf16，分别保存原始Gate/Up、量化保存、反向重算。
+MXFP8沿用每32列量化与clipping掩码；none在反向重算GMM1。
+activation_clamp为None或0时不截断；正值采用Gate上界及Up双侧截断。
+dP乘积与归约为FP32，最后转换为p的dtype；GMM的Hp、dZ保持BF16。
+
+临时workspace由Host Plan持有，相同shape/type/保存配置复用。
+每次前向的counts、dispatch X/p和保存状态由对应autograd context持有，支持多前向后逆序反向。
+跨rank使用相同调用顺序、p dtype及配置。debug_collectives=True可开启跨rank dtype/阶段诊断，默认关闭。
+
+前向采用同一实现，由内部编译定义 `DEEPEP_MEGAMOE_BF16_FORWARD_SCHEDULE` 选择0交错或1分阶段，默认0。
+BF16主函数和buffer不暴露调度及Timer参数。Timer由 `DEEPEP_MEGAMOE_TIMER=ON` 编译，
+通过 `deep_ep_experimental.megamoe.timer.bf16.capture.TimerCapture` 采集，独立于常规性能测量。
+
+### BF16测试
+
+```bash
+python experiments/megamoe/tests/bf16/test_mega_moe.py 0,1,2,3,4,5,6,7 --seq 4096 --hidden 7168 --ffn 3072 --topk 6 --expert-per-rank 4 --topk-weight-dtype fp32 --save-gmm1-output bf16 --swiglu-limit 0
+```
+
+CPU FP64真值、小算子参考、输入生成与评价口径保留在同一测试入口。
+运行 `--help` 查看精度、性能及Timer选项。源码职责见 [BF16设计说明](docs/bf16_design.md)。

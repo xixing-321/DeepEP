@@ -31,7 +31,7 @@ MegaMoE 的构建和多机测试入口位于 `experiments/megamoe/scripts/`，
 命令、依赖和环境配置见 [MegaMoE 使用说明](../experiments/megamoe/README.md#2-编译安装)。
 Ascend950 BF16 训练使用 `DEEPEP_BUILD_MEGAMOE_TRAIN=ON`，默认关闭；需根仓锁定的
 CATLASS/SHMEM、兼容的 PyTorch/torch_npu，并通过 wheel 安装，见
-[MegaMoE 训练说明](../experiments/megamoe_train/README.md)。它与推理开关独立。
+[MegaMoE 训练说明](../experiments/megamoe/README.md#bf16前向与训练)。它与推理开关独立。
 EpGmmFused 通过 `DEEPEP_BUILD_EP_GMM_FUSED=ON` 构建 AllToAllV → GMM 和 GMM → AllToAllV，
 需要单独准备 CatCCOS、其 CATLASS 依赖及 SHMEM SDK，见 [EpGmmFused 使用说明](../experiments/ep_gmm_fused/README.md#构建)。
 基础包使用下面的通用构建流程，这些可选组件默认均关闭。

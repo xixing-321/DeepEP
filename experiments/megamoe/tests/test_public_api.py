@@ -138,7 +138,7 @@ def backend(monkeypatch):
     monkeypatch.setattr(api, "require_native", lambda _: SimpleNamespace(megamoe_workspace_address=lambda _: 4096))
 
     class Runtime:
-        def __init__(self, group, capacity, timeout):
+        def __init__(self, group, capacity, timeout, **options):
             self.device, self.stream, self.native = 0, stream, SimpleNamespace(capacity=capacity)
             self.closed = False
 

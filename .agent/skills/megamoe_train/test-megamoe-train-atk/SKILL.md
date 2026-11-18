@@ -11,10 +11,10 @@ description: 在容器默认 Python 中准备 ATK 与内部 CV 双标杆比较�
 
 开始前读取当前分支的以下文件，命令均从仓库根目录执行：
 
-- [训练模块 README](../../../../experiments/megamoe_train/README.md)：运行环境、测试模式与报告。
+- [训练模块 README](../../../../experiments/megamoe/README.md#bf16前向与训练)：运行环境、测试模式与报告。
 - [测试入口说明](../references/test-guide.md)：运行方式、输出结构与已知问题。
-- [测试规范](../references/test-spec.md)及[用例清单](../../../../experiments/megamoe_train/tests/bf16/cases.json)：覆盖理由、shape、数据分布和 seed。
-- [测试入口](../../../../experiments/megamoe_train/tests/bf16/test_mega_moe.py)及[ATK 适配器](../../../../experiments/megamoe_train/tests/bf16/atk_compare.py)：实际参数、比较器身份和门限。
+- [测试规范](../references/test-spec.md)及[用例清单](../../../../experiments/megamoe/tests/bf16/cases.json)：覆盖理由、shape、数据分布和 seed。
+- [测试入口](../../../../experiments/megamoe/tests/bf16/test_mega_moe.py)及[ATK 适配器](../../../../experiments/megamoe/tests/bf16/atk_compare.py)：实际参数、比较器身份和门限。
 
 不依赖 `moe-op-benchmark`，不另建测试框架，不调用 `atk task` 或 ATK 用例生成器。当前 ATK 只比较仓库生成的实际值、标杆和真值，不自动泛化 shape 或输入数值。
 
@@ -51,7 +51,7 @@ python - <<'PY'
 from pathlib import Path
 import sys
 
-sys.path.insert(0, str(Path("experiments/megamoe_train/tests/bf16").resolve()))
+sys.path.insert(0, str(Path("experiments/megamoe/tests/bf16").resolve()))
 from atk_compare import require_atk
 
 _, identity = require_atk()
@@ -70,7 +70,7 @@ PY
 
 ```bash
 : "${MEGAMOE_TEST_DEVICES:?填写本轮用户指定的物理设备列表}"
-python experiments/megamoe_train/tests/bf16/test_mega_moe.py "$MEGAMOE_TEST_DEVICES" \
+python experiments/megamoe/tests/bf16/test_mega_moe.py "$MEGAMOE_TEST_DEVICES" \
   --suite priority --list-cases
 ```
 
@@ -86,7 +86,7 @@ python experiments/megamoe_train/tests/bf16/test_mega_moe.py "$MEGAMOE_TEST_DEVI
 : "${MEGAMOE_TEST_DEVICES:?填写本轮用户指定的物理设备列表}"
 : "${MEGAMOE_TEST_ENDPOINT:?填写本轮未占用的 SHMEM TCP 端点}"
 suite=priority
-entry=experiments/megamoe_train/tests/bf16/test_mega_moe.py
+entry=experiments/megamoe/tests/bf16/test_mega_moe.py
 mkdir -p "$PWD/atk-runs"
 run_dir="$PWD/atk-runs/$(date +%Y%m%d-%H%M%S)-$$"
 

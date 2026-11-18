@@ -1,0 +1,268 @@
+# Copyright (c) 2026, Lu Lu
+# Modified by xixing 2026
+# Modified by guofanfeng 2026
+
+"""Unified BF16 bridge: real autograd with a CPU native Plan double."""
+
+import contextlib
+import importlib
+import inspect
+import threading
+from types import SimpleNamespace
+import pytest
+
+torch = pytest.importorskip("torch")
+api = importlib.import_module("deep_ep_experimental.megamoe.api")
+bf16 = importlib.import_module("deep_ep_experimental.megamoe._bf16")
+
+
+@pytest.fixture
+def buffer(monkeypatch):
+    calls, plans = [], []
+    stream = SimpleNamespace(wait_stream=lambda other: None)
+    monkeypatch.setattr(torch.Tensor, "record_stream", lambda *a: None)
+    monkeypatch.setattr(
+        bf16,
+        "npu_api",
+        lambda: SimpleNamespace(current_stream=lambda *a: stream, stream=lambda *a: contextlib.nullcontext()),
+    )
+    auto = importlib.import_module("deep_ep_experimental.megamoe._autograd")
+    monkeypatch.setattr(auto, "npu_api", bf16.npu_api)
+
+    class Plan:
+        def __init__(self, *args):
+            self.before = args[-1]
+            plans.append(self)
+
+        def prepare(self, *args):
+            self.spec = args
+
+        def forward_out(self, out, x, ids, p, w1, w2, capacity, limit, mode):
+            calls.append((p.dtype, mode, self.before, limit))
+            out.copy_(x)
+            return SimpleNamespace(
+                y=out,
+                counts=torch.full((2,), 7, dtype=torch.int32),
+                saved_state=torch.zeros(1, dtype=torch.uint8),
+                dispatch_output=torch.zeros(1, dtype=torch.uint8),
+            )
+
+        def backward(self, dy, p, w1, w2, counts, saved, dispatch, capacity, limit, mode):
+            assert mode == self.spec[-2]
+            return SimpleNamespace(
+                dx=dy, dtopk_weights=torch.full_like(p, 2), dw1=torch.full_like(w1, 3), dw2=torch.full_like(w2, 4)
+            )
+
+        def forward_with_timer(self, x, ids, p, w1, w2, capacity, limit, mode, out):
+            result = self.forward_out(out, x, ids, p, w1, w2, capacity, limit, mode)
+            result.timer = torch.zeros(1, dtype=torch.int64)
+            return result
+
+        def backward_with_timer(self, *args):
+            result = self.backward(*args)
+            result.timer = torch.ones(1, dtype=torch.int64)
+            return result
+
+    monkeypatch.setattr(api, "_extension", lambda: SimpleNamespace(BF16Plan=Plan))
+    monkeypatch.setattr(
+        bf16, "require_native", lambda _: SimpleNamespace(megamoe_train_workspace_address=lambda _: 4096)
+    )
+    b = api.SymmBuffer.__new__(api.SymmBuffer)
+    b._device = torch.device("cpu")
+    b._lock = threading.Lock()
+    b.group = SimpleNamespace(size=lambda: 2)
+    b.num_experts = 4
+    b.num_max_tokens_per_rank = 3
+    b.num_topk = 2
+    b.hidden = 8
+    b.intermediate_hidden = 4
+    b.max_recv_tokens = 32
+    b.need_grad = True
+    b.gmm1_save_type = "bf16"
+    b.mma_type = "bf16xbf16"
+    b._plan = b._plan_key = b._plan_bs = None
+    b._runtime = SimpleNamespace(
+        closed=True,
+        ensure_alive=lambda: None,
+        validate_topk_weight_type=lambda *a: None,
+        native=SimpleNamespace(capacity=2 << 20),
+        rank=0,
+        world_size=2,
+        device=0,
+        stream=stream,
+    )
+    return b, calls, plans
+
+
+def inputs(b, dtype=torch.float32, grad=True):
+    x = torch.ones(3, 8, dtype=torch.bfloat16, requires_grad=grad)
+    p = torch.full((3, 2), 0.5, dtype=dtype, requires_grad=grad)
+    b.x = x
+    b.topk_idx = torch.zeros(3, 2, dtype=torch.int32)
+    b.topk_weights = p
+    w1 = torch.ones(2, 8, 8, dtype=torch.bfloat16, requires_grad=grad)
+    w2 = torch.ones(2, 8, 4, dtype=torch.bfloat16, requires_grad=grad)
+    return x, p, w1, w2
+
+
+def call(b, w1, w2, **kwargs):
+    y = torch.empty(3, 8, dtype=torch.bfloat16)
+    assert api.bf16_mega_moe(y, w1, w2, b, **kwargs) is None
+    return y
+
+
+def test_public_signature_and_no_legacy_namespace():
+    assert list(inspect.signature(api.bf16_mega_moe).parameters) == [
+        "y",
+        "l1_weights",
+        "l2_weights",
+        "sym_buffer",
+        "shared_l1_weights",
+        "shared_l2_weights",
+        "cumulative_local_expert_recv_stats",
+        "activation",
+        "activation_clamp",
+        "fast_math",
+    ]
+    package = importlib.import_module("deep_ep_experimental.megamoe")
+    assert package.bf16_mega_moe is api.bf16_mega_moe
+
+
+@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float32])
+@pytest.mark.parametrize("mode", ["bf16", "none", "mxfp8"])
+def test_original_tensor_gradients_inplace_output_counts_and_save_type(buffer, dtype, mode):
+    b, calls, plans = buffer
+    b.gmm1_save_type = mode
+    x, p, w1, w2 = inputs(b, dtype)
+    stats = torch.zeros(2, dtype=torch.int32)
+    y = call(b, w1, w2, cumulative_local_expert_recv_stats=stats, activation_clamp=0.25)
+    y.sum().backward()
+    assert calls == [(dtype, mode, True, 0.25)] and stats.tolist() == [7, 7]
+    assert torch.equal(x.grad, torch.ones_like(x)) and p.grad.dtype == dtype
+    assert torch.equal(p.grad, torch.full_like(p, 2))
+    assert torch.equal(w1.grad, torch.full_like(w1, 3)) and torch.equal(w2.grad, torch.full_like(w2, 4))
+
+
+def test_queued_graphs_snapshot_plan_dtype_and_save_type(buffer):
+    b, calls, plans = buffer
+    pending = []
+    for dtype, mode in [(torch.bfloat16, "bf16"), (torch.float32, "none"), (torch.float32, "mxfp8")]:
+        b.gmm1_save_type = mode
+        x, p, w1, w2 = inputs(b, dtype)
+        pending.append((call(b, w1, w2), x, p, w1, w2))
+    assert len(plans) == 3
+    for y, x, p, w1, w2 in reversed(pending):
+        y.sum().backward()
+        assert p.grad.dtype == p.dtype and torch.equal(x.grad, torch.ones_like(x))
+
+
+def test_prepared_plan_is_reused_and_no_grad_keeps_preweight_semantics(buffer):
+    b, calls, plans = buffer
+    x, p, w1, w2 = inputs(b)
+    b.prepare = lambda bs: b._prepare(bs)
+    b.prepare(3)
+    y = call(b, w1, w2)
+    y.sum().backward()
+    assert len(plans) == 1
+    with torch.no_grad():
+        y = call(b, w1, w2)
+    assert not y.requires_grad and calls[-1][1:3] == ("none", True)
+
+
+def test_inference_is_postweighted_and_rejects_requested_gradient(buffer):
+    b, calls, _ = buffer
+    b.need_grad = False
+    x, p, w1, w2 = inputs(b, grad=False)
+    y = call(b, w1, w2)
+    assert calls[-1][1:3] == ("none", False) and not y.requires_grad
+    x.requires_grad_()
+    with pytest.raises(ValueError, match="need_grad=True"):
+        call(b, w1, w2)
+
+
+@pytest.mark.parametrize("kind", ["alias", "shape", "dtype", "strided", "grad"])
+def test_invalid_output_rejected_before_launch(buffer, kind):
+    b, calls, _ = buffer
+    x, p, w1, w2 = inputs(b)
+    y = {
+        "alias": x.detach(),
+        "shape": torch.empty(2, 7, dtype=x.dtype),
+        "dtype": torch.empty(3, 8),
+        "strided": torch.empty(8, 3, dtype=x.dtype).T,
+        "grad": torch.empty(3, 8, dtype=x.dtype, requires_grad=True),
+    }[kind]
+    with pytest.raises(ValueError):
+        api.bf16_mega_moe(y, w1, w2, b)
+    assert not calls
+
+
+@pytest.mark.parametrize(
+    "kwargs,error",
+    [
+        ({"shared_l1_weights": torch.ones(1)}, NotImplementedError),
+        ({"shared_l2_weights": torch.ones(1)}, NotImplementedError),
+        ({"activation": "relu"}, NotImplementedError),
+        ({"fast_math": False}, NotImplementedError),
+        ({"activation_clamp": float("nan")}, ValueError),
+        ({"activation_clamp": -1}, ValueError),
+    ],
+)
+def test_invalid_options_rejected(buffer, kwargs, error):
+    b, calls, _ = buffer
+    x, p, w1, w2 = inputs(b)
+    with pytest.raises(error):
+        call(b, w1, w2, **kwargs)
+    assert not calls
+
+
+def test_capture_state_belongs_to_its_graph(buffer, monkeypatch):
+    b, calls, _ = buffer
+    x, p, w1, w2 = inputs(b)
+    package = importlib.import_module("deep_ep_experimental.megamoe")
+    monkeypatch.setattr(package, "_C", SimpleNamespace(timer_enabled=True), raising=False)
+    from deep_ep_experimental.megamoe.timer.bf16.capture import TimerCapture
+
+    with TimerCapture(b) as capture:
+        y = call(b, w1, w2)
+    assert b._timer_capture is None
+    y.sum().backward()
+    assert capture.forward is not None and capture.backward is not None
+
+
+def test_active_batch_within_capacity_backpropagates_to_original_rows(buffer):
+    b, calls, _ = buffer
+    x, p, w1, w2 = inputs(b)
+    y = torch.empty(2, 8, dtype=torch.bfloat16)
+    api.bf16_mega_moe(y, w1, w2, b)
+    y.sum().backward()
+    assert torch.equal(x.grad[:2], torch.ones_like(x[:2]))
+    assert torch.count_nonzero(x.grad[2:]) == 0
+    assert torch.equal(p.grad[:2], torch.full_like(p[:2], 2))
+    assert torch.count_nonzero(p.grad[2:]) == 0
+
+
+@pytest.mark.parametrize("chosen", range(4))
+def test_only_requested_leaf_receives_gradient(buffer, chosen):
+    b, _, _ = buffer
+    values = inputs(b, grad=False)
+    values[chosen].requires_grad_()
+    call(b, values[2], values[3]).sum().backward()
+    for i, value in enumerate(values):
+        assert (value.grad is not None) == (i == chosen)
+
+
+def test_fp32_router_gradient_stays_connected_to_original_logits(buffer):
+    b, _, _ = buffer
+    _, _, w1, w2 = inputs(b, grad=False)
+    logits = (torch.arange(12, dtype=torch.float32).reshape(3, 4) / 4).requires_grad_()
+    p, ids = logits.softmax(dim=-1).topk(2, dim=-1)
+    p.retain_grad()
+    b.topk_idx = ids.to(torch.int32)
+    b.topk_weights = p
+    call(b, w1, w2).sum().backward()
+
+    reference = logits.detach().clone().requires_grad_()
+    (2 * reference.softmax(dim=-1).topk(2, dim=-1).values.sum()).backward()
+    assert torch.equal(p.grad, torch.full_like(p, 2))
+    assert torch.count_nonzero(logits.grad) > 0
+    assert torch.equal(logits.grad, reference.grad)

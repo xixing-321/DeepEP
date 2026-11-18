@@ -12,7 +12,7 @@ description: 为首次获取 DeepEP 仓库或需要重编译训练算子的用�
 开始前读取当前 checkout 的以下文件，按当前分支内容执行：
 
 - [根 README](../../../../README.md)：基础环境要求与安装方式。
-- [训练模块 README](../../../../experiments/megamoe_train/README.md)：训练开关、依赖与 wheel 安装流程。
+- [训练模块 README](../../../../experiments/megamoe/README.md#bf16前向与训练)：训练开关、依赖与 wheel 安装流程。
 - [requirements-build.txt](../../../../requirements-build.txt)：Python 构建工具的固定版本。
 - [dependencies.lock.json](../../../../dependencies.lock.json)：CANN、SHMEM 和 CATLASS 的版本约束。
 
@@ -111,7 +111,7 @@ python -m build --wheel --no-isolation
 python -m pip install --force-reinstall --no-deps dist/*.whl
 ```
 
-安装到当前 Python 的包名是 `ascend-deepep`，训练模块是 `deep_ep_experimental.megamoe_train`。同版本源码重编后也需要重新安装；`pip list` 中版本号相同不代表仍在使用旧内核。训练组件通过 wheel 安装，不使用 editable/inplace 安装。
+安装到当前 Python 的包名是 `ascend-deepep`，训练模块是 `deep_ep_experimental.megamoe`。同版本源码重编后也需要重新安装；`pip list` 中版本号相同不代表仍在使用旧内核。训练组件通过 wheel 安装，不使用 editable/inplace 安装。
 
 ATK 和内部精度插件不参与算子编译，不作为构建依赖安装。需要精度测试时使用 [ATK 测试 skill](../test-megamoe-train-atk/SKILL.md)，在同一个 Python 中准备测试依赖并运行。
 
@@ -171,18 +171,18 @@ import deep_ep
 from deep_ep._native import require_native
 
 core_native = require_native("MegaMoE training installation check")
-from deep_ep_experimental.megamoe_train import MegaMoeBF16Train, SymmBuffer, bf16_mega_moe_train
-from deep_ep_experimental.megamoe_train import _C as train_native
+from deep_ep_experimental.megamoe import SymmBuffer, bf16_mega_moe
+from deep_ep_experimental.megamoe import _C as train_native
 
 info = json.loads((Path(deep_ep.__file__).parent / "_build_info.json").read_text())
 assert info["megamoe_train"]["enabled"]
 print("Python:", sys.executable)
 print("Core extension:", core_native.__file__)
 print("Training extension:", train_native.__file__)
-print("Training API:", MegaMoeBF16Train.__name__)
-assert SymmBuffer is MegaMoeBF16Train
-assert callable(bf16_mega_moe_train)
-assert hasattr(train_native.BF16, "forward_out")
+print("BF16 API:", bf16_mega_moe.__name__)
+assert train_native.bf16_enabled
+assert callable(bf16_mega_moe)
+assert hasattr(train_native.BF16Plan, "forward_out")
 print("PASS: installed training extensions load")
 PY
 )

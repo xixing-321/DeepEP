@@ -356,6 +356,7 @@ def test_combined_elastic_megamoe_wheel_requires_both_payloads(tmp_path, missing
         "deep_ep/_C.fake.so",
         "deep_ep/libdeepep_kernels.so",
         "deep_ep/deepseek-deepep.LICENSE",
+        "deep_ep_experimental/megamoe/__init__.py",
         "deep_ep_experimental/megamoe/api.py",
         "deep_ep_experimental/megamoe/benchmark.py",
         "deep_ep_experimental/megamoe/configs/smoke.json",
@@ -741,3 +742,16 @@ def test_host_compiler_cann_path_and_missing(build, tmp_path):
     compiler.write_text('#!/bin/sh\necho "bisheng"\n')
     compiler.chmod(0o755)
     assert build.find_host_compiler(env)[0] == str(compiler)
+
+
+@pytest.mark.parametrize("flag", ["DEEPEP_MEGAMOE_BF16_BACKWARD_SLICES", "DEEPEP_MEGAMOE_BF16_COMBINE_SLICES"])
+@pytest.mark.parametrize("value", ["1", "on", "invalid"])
+def test_bf16_slice_switch_rejects_ambiguous_values(build, flag, value):
+    with pytest.raises(RuntimeError, match=f"{flag} accepts ON or OFF only"):
+        build.build_configuration({"DEEPEP_NPU_ARCH": "Ascend950", "DEEPEP_BUILD_MEGAMOE_TRAIN": "ON", flag: value})
+
+
+@pytest.mark.parametrize("flag", ["DEEPEP_MEGAMOE_BF16_BACKWARD_SLICES", "DEEPEP_MEGAMOE_BF16_COMBINE_SLICES"])
+def test_bf16_slice_switch_requires_bf16_component(build, flag):
+    with pytest.raises(RuntimeError, match=f"{flag} requires DEEPEP_BUILD_MEGAMOE_TRAIN=ON"):
+        build.build_configuration({"DEEPEP_NPU_ARCH": "Ascend950", flag: "ON"})

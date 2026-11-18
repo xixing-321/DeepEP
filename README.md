@@ -50,8 +50,7 @@ DeepEP/
 │   ├── ops/                 # Host 校验与算子启动
 │   └── kernels/             # Ascend C 通信算子
 ├── experiments/
-│   ├── megamoe/             # MegaMoE 融合推理
-│   ├── megamoe_train/       # MegaMoE BF16 训练：融合前向与 autograd 反向
+│   ├── megamoe/             # MegaMoE量化推理、BF16前向与autograd反向
 │   └── ep_gmm_fused/        # 通信与矩阵乘融合算子
 ├── cmake/                   # 构建与安装
 ├── third-party/             # 依赖组件
@@ -63,7 +62,7 @@ DeepEP/
 └── figures/                 # 架构与性能图
 ```
 
-模块职责见[架构文档](docs/architecture.md)；训练组件的接口与使用方式见[MegaMoE BF16 训练说明](experiments/megamoe_train/README.md)。
+模块职责见[架构文档](docs/architecture.md)；训练组件的接口与使用方式见[MegaMoE BF16 训练说明](experiments/megamoe/README.md#bf16前向与训练)。
 
 ## 快速开始
 
@@ -79,7 +78,7 @@ DeepEP/
 | 驱动和固件 | 请配套使用华为发布的Q3 HDK版本，此版本包含达成极致性能所需的配置，该版本计划于10.15发布 |
 | 框架 | PyTorch 与 `torch_npu` |
 | 通信 | [dependencies.lock.json](dependencies.lock.json) 固定版本的 SHMEM；URMA 运行时 |
-| MegaMoE | CATLASS；推理依赖见 [MegaMoE 文档](experiments/megamoe/README.md)，训练依赖见[训练模块](experiments/megamoe_train/README.md) |
+| MegaMoE | CATLASS；推理依赖见 [MegaMoE 文档](experiments/megamoe/README.md)，训练依赖见[训练模块](experiments/megamoe/README.md#bf16前向与训练) |
 
 ### 安装 SHMEM 依赖
 
@@ -100,7 +99,7 @@ python -m pip install -r requirements-dev.txt
 python -m pytest tests/elastic/test_dispatch.py tests/elastic/test_combine.py -q
 ```
 
-贡献要求见 [CONTRIBUTING.md](CONTRIBUTING.md)，NPU 测试命令见[测试说明](tests/README.md)；训练组件的精度与性能入口见[训练测试说明](experiments/megamoe_train/README.md#测试)。
+贡献要求见 [CONTRIBUTING.md](CONTRIBUTING.md)，NPU 测试命令见[测试说明](tests/README.md)；训练组件的精度与性能入口见[训练测试说明](experiments/megamoe/README.md#bf16测试)。
 
 ### 安装
 
@@ -126,7 +125,7 @@ bash experiments/megamoe/scripts/build.sh
 
 ### 安装 MegaMoE Train
 
-训练组件与推理组件同源构建，构建时开启 `DEEPEP_BUILD_MEGAMOE_TRAIN=ON`（默认关闭）；构建命令、产物约束与首跑示例见[训练模块 README](experiments/megamoe_train/README.md#构建与安装)。
+训练组件与推理组件同源构建，构建时开启 `DEEPEP_BUILD_MEGAMOE_TRAIN=ON`（默认关闭）；构建命令、产物约束与首跑示例见[训练模块 README](experiments/megamoe/README.md#bf16构建与安装)。
 
 ## 接口与示例
 
@@ -136,7 +135,7 @@ bash experiments/megamoe/scripts/build.sh
 | --- | --- |
 | DeepEP Prefill / Decode | `deep_ep.ElasticBuffer.dispatch()` / `combine()` |
 | MegaMoE Prefill / Decode（实验性） | `deep_ep_experimental.megamoe.fp8_fp4_mega_moe()` |
-| MegaMoE Train（实验性） | `deep_ep_experimental.megamoe_train.MegaMoeBF16Train` |
+| MegaMoE Train（实验性） | `deep_ep_experimental.megamoe.bf16_mega_moe` |
 
 ### Buffer 初始化
 
@@ -290,21 +289,24 @@ Tensor 布局、事件同步及 Buffer 生命周期见 [API 文档](docs/api.md)
 
 ### MegaMoE Train 示例
 
-用调用方已有的 EP 进程组构造算子：前向返回 `y` 与 `counts`，`backward()` 得到 `x`、`topk_weights`、`w1`、`w2` 的梯度，最后一次集体 `close()` 释放窗口。构造前需设置当前 NPU 与 `DEEPEP_SHMEM_ENDPOINT`。
+BF16与量化推理使用同一个SymmBuffer。need_grad=True启用前乘权训练语义，原地写入y并接入autograd：
 
 ```python
-from deep_ep_experimental.megamoe_train import MegaMoeBF16Train
+from deep_ep_experimental.megamoe import SymmBuffer, bf16_mega_moe
 
-op = MegaMoeBF16Train(ep_group, local_mem_size=1 << 30)  # 窗口字节数，各 rank 相同
-y, counts = op(
-    x, topk_ids, topk_weights, w1, w2, max_recv_tokens,
-    swiglu_limit=0.0, save_gmm1_output="bf16",
+buffer = SymmBuffer(
+    ep_group, 32, 4096, 6, 7168, 3072, mma_type="bf16xbf16",
+    need_grad=True, gmm1_save_type="bf16", max_recv_tokens=27648,
 )
-(y * grad_y).sum().backward()
-op.close()  # 集体释放，须在所有 backward 之后
+buffer.x, buffer.topk_idx, buffer.topk_weights = x, topk_ids, topk_weights
+y = torch.empty_like(x, requires_grad=False)
+bf16_mega_moe(y, w1, w2, buffer)
+y.backward(grad_y)
+buffer.destroy()
 ```
 
-对外接口、参数说明、使用示例与容量规划见[训练组件 README](experiments/megamoe_train/README.md)。
+构造前设置当前NPU、SHMEM endpoint与EP进程组。
+输入、保存类型和容量约束见 [BF16使用说明](experiments/megamoe/README.md#bf16前向与训练)。
 
 ### 环境变量
 
@@ -331,7 +333,7 @@ op.close()  # 集体释放，须在所有 backward 之后
 
 ### MegaMoE BF16 训练
 
-Ascend950 上的 BF16 融合前反向，覆盖 EP MoE 训练的 dispatch、专家计算、激活与 combine。接口、构建与验收边界见 [experiments/megamoe_train/](experiments/megamoe_train/README.md)。
+Ascend950 上的 BF16 融合前反向，覆盖 EP MoE 训练的 dispatch、专家计算、激活与 combine。接口、构建与验收边界见 [experiments/megamoe/](experiments/megamoe/README.md#bf16前向与训练)。
 
 ## 致谢
 

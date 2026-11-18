@@ -1,6 +1,7 @@
 // Copyright (c) 2026, Lu Lu
 // Modified by SimpleBright_Man 2026
 
+#include "csrc/kernels/common/mega_moe_wave_math.hpp"
 #include "forward.hpp"
 #include "kernel_launch.hpp"
 
@@ -267,14 +268,12 @@ MegaMoeTilingData MakeTiling(int64_t bs, int64_t h, int64_t hidden_dim, int64_t 
     if (is_a8w4 && t.bs <= MegaMoeImpl::W4A8_SMALL_BATCH_MAX_TOKENS) {
         const uint64_t gmm1_tasks_per_m_group =
             CeilDiv<uint64_t>(t.hiddenDim / MegaMoeImpl::ACTIVATION_N_HALF, MegaMoeImpl::GMM1_FUSED_TILE_N);
-        t.mGroupsPerWave =
-            static_cast<uint32_t>(CeilDiv<uint64_t>(static_cast<uint64_t>(p.aic) * 2U, gmm1_tasks_per_m_group));
+        t.mGroupsPerWave = MegaMoeImpl::WaveGroups(p.aic, gmm1_tasks_per_m_group, 1U, 2U, false);
     } else {
         // 大 batch 和 A8W8 的预算包括 GMM2 的最低任务量约束。
         const uint64_t gmm1_tiles = CeilDiv<uint64_t>(t.hiddenDim, 256U);
         const uint64_t gmm2_tiles = CeilDiv<uint64_t>(t.h, 256U);
-        t.mGroupsPerWave = static_cast<uint32_t>(std::max(
-            CeilDiv<uint64_t>(static_cast<uint64_t>(p.aic) * 4U, gmm1_tiles), CeilDiv<uint64_t>(p.aic, gmm2_tiles)));
+        t.mGroupsPerWave = MegaMoeImpl::WaveGroups(p.aic, gmm1_tiles, gmm2_tiles, 4U);
     }
     t.isPerExpertWeightTensor = false;
     t.dispatchBufferConfig = DispatchConfig(t, p.ub);

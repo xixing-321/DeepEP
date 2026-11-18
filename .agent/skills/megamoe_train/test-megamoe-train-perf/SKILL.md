@@ -12,9 +12,9 @@ description: 在已授权的 Ascend950 机器上，用仓库单入口跑 MegaMoE
 开始前读取当前分支的以下文件，命令均从仓库根目录执行：
 
 - [测试入口说明](../references/test-guide.md)：前置条件、运行方式、输出结构与已知问题。
-- [测试入口](../../../../experiments/megamoe_train/tests/bf16/test_mega_moe.py)：实际参数、三口径实现、baseline 与指标公式。
-- [测试规范](../references/test-spec.md)及[用例清单](../../../../experiments/megamoe_train/tests/bf16/cases.json)：12 条典型尺寸、覆盖理由和已知限制。
-- [训练模块 README](../../../../experiments/megamoe_train/README.md)：构建、保存模式与数值边界。
+- [测试入口](../../../../experiments/megamoe/tests/bf16/test_mega_moe.py)：实际参数、三口径实现、baseline 与指标公式。
+- [测试规范](../references/test-spec.md)及[用例清单](../../../../experiments/megamoe/tests/bf16/cases.json)：12 条典型尺寸、覆盖理由和已知限制。
+- [训练模块 README](../../../../experiments/megamoe/README.md#bf16前向与训练)：构建、保存模式与数值边界。
 
 只有用户明确指定并允许的主机、容器、物理卡和 shape 范围才能用于设备运行。运行前检查指定卡的
 进程、显存和利用率，忙卡不启动，不换卡、不停止其他任务；共享机器上不清理他人进程或容器。
@@ -28,7 +28,7 @@ description: 在已授权的 Ascend950 机器上，用仓库单入口跑 MegaMoE
 
 ```bash
 source /path/to/cann/set_env.sh
-python -c "import torch, torch_npu, deep_ep_experimental.megamoe_train"
+python -c "import torch, torch_npu, deep_ep_experimental.megamoe"
 ```
 
 完整 wheel 自带 SHMEM 运行库，根加载器校验哈希后加载包内文件；性能运行不需要外部 SDK 或其动态库路径。进程已加载另一套 SHMEM 时，重启自己的作业，不替换运行库或绕过校验。
@@ -48,7 +48,7 @@ EP 等于位置参数里设备列表的长度；`M` 是每 rank token 数，EP �
 
 ```bash
 : "${MEGAMOE_TEST_DEVICES:?填写本轮用户指定的物理设备列表}"
-python experiments/megamoe_train/tests/bf16/test_mega_moe.py "$MEGAMOE_TEST_DEVICES" \
+python experiments/megamoe/tests/bf16/test_mega_moe.py "$MEGAMOE_TEST_DEVICES" \
   --suite priority --list-cases
 ```
 
@@ -65,7 +65,7 @@ ready 分支门槛（均衡路由下每专家行数 `M×tk/E_local`），只测 
 : "${MEGAMOE_TEST_ENDPOINT:?填写本轮未占用的 SHMEM TCP 端点}"
 run_dir="$PWD/perf-runs/$(date +%Y%m%d-%H%M%S)-$$"
 
-python -u experiments/megamoe_train/tests/bf16/test_mega_moe.py "$MEGAMOE_TEST_DEVICES" \
+python -u experiments/megamoe/tests/bf16/test_mega_moe.py "$MEGAMOE_TEST_DEVICES" \
   --skip precision --suite priority --log quiet \
   --warmup 2 --loops 10 \
   --shmem-ip-port "$MEGAMOE_TEST_ENDPOINT" \
