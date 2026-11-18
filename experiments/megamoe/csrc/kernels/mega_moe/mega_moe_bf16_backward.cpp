@@ -8,7 +8,7 @@
 #include "common/mega_moe_quant_constants.hpp"
 #include "common/mega_moe_bf16_tiling.hpp"
 #include "mega_moe_bf16_backward.hpp"
-#include "kernel_launch.hpp"
+#include "launch/kernel_launch.hpp"
 
 using namespace AscendC;
 using namespace MegaMoeImpl;

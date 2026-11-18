@@ -1,7 +1,7 @@
 // Copyright (c) 2026, Lu Lu
 // Modified by xixing 2026
 
-#include "bf16_host_utils.hpp"
+#include "plan/bf16_support.hpp"
 
 namespace deepep::megamoe::bf16::ops {
 

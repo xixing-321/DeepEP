@@ -61,19 +61,13 @@ PYBIND11_MODULE(_C, module)
         .def_property_readonly("peer_table", &deepep::Session::peer_table);
 #ifdef DEEPEP_BUILD_MEGAMOE
     module.def(
-        "create_megamoe_train_runtime",
-        [](int rank, int size, uint64_t bytes, const std::string& endpoint, unsigned timeout) {
-            return std::make_unique<deepep::Session>(rank, size, bytes, endpoint, timeout, false, false, false, false,
-                                                     false, true);
-        },
-        py::call_guard<py::gil_scoped_release>());
-    module.def("megamoe_train_workspace_address", &deepep::Session::workspace_address);
-    module.def(
         "create_megamoe_runtime",
-        [](int rank, int size, uint64_t bytes, const std::string& endpoint, unsigned timeout) {
-            return std::make_unique<deepep::Session>(rank, size, bytes, endpoint, timeout, false, true);
+        [](int rank, int size, uint64_t bytes, const std::string& endpoint, unsigned timeout, bool bf16) {
+            return std::make_unique<deepep::Session>(rank, size, bytes, endpoint, timeout, false, !bf16, false, false,
+                                                     false, bf16);
         },
-        py::call_guard<py::gil_scoped_release>());
+        py::arg("rank"), py::arg("size"), py::arg("bytes"), py::arg("endpoint"), py::arg("timeout"), py::kw_only(),
+        py::arg("bf16") = false, py::call_guard<py::gil_scoped_release>());
     module.def("megamoe_workspace_address", &deepep::Session::workspace_address);
 #endif
 #ifdef DEEPEP_BUILD_EP_GMM_FUSED

@@ -2,7 +2,7 @@
 // Modified by guofanfeng 2026
 // Modified by xixing 2026
 
-#include "bf16_launcher.hpp"
+#include "launch/bf16.hpp"
 
 #include <acl/acl.h>
 #include <array>
@@ -10,7 +10,7 @@
 #include "shmem.h"
 #include "torch_npu/csrc/core/npu/NPUStream.h"
 
-#include "kernel_launch.hpp"
+#include "launch/kernel_launch.hpp"
 #include "kernels/mega_moe/common/mega_moe_bf16_tiling.hpp"
 
 namespace {

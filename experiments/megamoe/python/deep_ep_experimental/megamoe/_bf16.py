@@ -63,7 +63,7 @@ def prepare(b, bs, limit, save_type):
     )
     if b._plan_key != key:
         native = require_native("BF16 MegaMoE")
-        address = native.megamoe_train_workspace_address(b._runtime.native)
+        address = native.megamoe_workspace_address(b._runtime.native)
         plan = _extension().BF16Plan(
             address, b._runtime.native.capacity, b._runtime.rank, b._runtime.world_size, b.x[:bs], b.need_grad
         )

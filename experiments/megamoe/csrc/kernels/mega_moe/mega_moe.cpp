@@ -6,7 +6,7 @@
 #include "version/asc_devkit_version.h"
 #endif
 #include "basic_api/kernel_basic_intf.h"
-#include "kernel_launch.hpp"
+#include "launch/kernel_launch.hpp"
 #include "mega_moe_tiling.hpp"
 #include "common/mega_moe_constants.hpp"
 #if defined(__NPU_DEVICE__)

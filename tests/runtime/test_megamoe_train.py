@@ -18,7 +18,7 @@ def test_training_owner_rejects_second_owner_and_releases(monkeypatch):
     session = SimpleNamespace(close=lambda: calls.append("close"), barrier=lambda: calls.append("barrier"))
     native = SimpleNamespace(
         Runtime=lambda *args: pytest.fail("selected core factory"),
-        create_megamoe_train_runtime=lambda *args: calls.append(args) or session,
+        create_megamoe_runtime=lambda *args, bf16: calls.append((*args, bf16)) or session,
         runtime_busy=lambda: False,
     )
     npu = SimpleNamespace(
@@ -30,7 +30,7 @@ def test_training_owner_rejects_second_owner_and_releases(monkeypatch):
     monkeypatch.setattr(_runtime, "_OWNER", None)
     monkeypatch.setenv("DEEPEP_SHMEM_ENDPOINT", "tcp://127.0.0.1:29862")
     runtime = TrainingRuntime(None, 3 << 30, rank=767, world_size=768)
-    assert calls == [(767, 768, 3 << 30, "tcp://127.0.0.1:29862", 120)]
+    assert calls == [(767, 768, 3 << 30, "tcp://127.0.0.1:29862", 120, True)]
     assert _runtime._OWNER is runtime
     with pytest.raises(RuntimeError, match="already owns"):
         TrainingRuntime(None, 2 << 20, rank=0, world_size=2)
@@ -179,7 +179,7 @@ def test_training_bootstrap_agrees_on_debug_before_creating_native_owner(monkeyp
     created = []
     native = SimpleNamespace(
         Runtime=lambda *args: pytest.fail("selected core factory"),
-        create_megamoe_train_runtime=lambda *args: created.append(args) or SimpleNamespace(close=lambda: None),
+        create_megamoe_runtime=lambda *args, bf16: created.append((*args, bf16)) or SimpleNamespace(close=lambda: None),
         runtime_busy=lambda: False,
     )
     monkeypatch.setattr(_runtime, "StoreGroup", Group)

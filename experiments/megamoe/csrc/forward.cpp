@@ -2,8 +2,8 @@
 // Modified by SimpleBright_Man 2026
 
 #include "csrc/kernels/common/mega_moe_wave_math.hpp"
-#include "forward.hpp"
-#include "kernel_launch.hpp"
+#include "plan/quantized.hpp"
+#include "launch/kernel_launch.hpp"
 
 #include <algorithm>
 #include <cstdint>

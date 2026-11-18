@@ -64,9 +64,7 @@ def buffer(monkeypatch):
             return result
 
     monkeypatch.setattr(api, "_extension", lambda: SimpleNamespace(BF16Plan=Plan))
-    monkeypatch.setattr(
-        bf16, "require_native", lambda _: SimpleNamespace(megamoe_train_workspace_address=lambda _: 4096)
-    )
+    monkeypatch.setattr(bf16, "require_native", lambda _: SimpleNamespace(megamoe_workspace_address=lambda _: 4096))
     b = api.SymmBuffer.__new__(api.SymmBuffer)
     b._device = torch.device("cpu")
     b._lock = threading.Lock()

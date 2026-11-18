@@ -7,7 +7,9 @@
 | Python | api.py | 共同buffer、输入字段与公开接口 |
 | BF16调用 | _bf16.py、_autograd.py | 校验、Plan缓存及每次调用独立的反向状态 |
 | Host | csrc/forward_bf16.cpp、backward.cpp | 前反向校验、分配和启动 |
-| Plan | csrc/bf16_plan.hpp、bf16_tiling* | 借用根通信窗口，准备临时workspace |
+| Plan | csrc/plan/ | 借用根通信窗口，准备临时 workspace |
+| Tiling | csrc/tiling/ | 计算 BF16 Host tiling 和缓冲区大小 |
+| Launch | csrc/launch/ | 设备入口声明和 Host 启动封装 |
 | 前向 | mega_moe_bf16.hpp | 同一实现组织交错及分阶段流程 |
 | 反向 | mega_moe_bf16_backward.hpp | dY分发、dHp、激活梯度、dX回传及dW |
 | stage | 路由、peer映射、通信、Unpermute及ready | 数据移动和完成条件 |

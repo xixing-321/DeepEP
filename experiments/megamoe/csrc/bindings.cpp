@@ -2,8 +2,8 @@
 // Modified by SimpleBright_Man 2026
 
 #include <torch/extension.h>
-#include "bf16_plan.hpp"
-#include "forward.hpp"
+#include "plan/bf16.hpp"
+#include "plan/quantized.hpp"
 #include "shmem.h"
 #include "kernels/mega_moe/common/ascend_timer_v2.hpp"
 #include "kernels/mega_moe/common/mega_moe_constants.hpp"

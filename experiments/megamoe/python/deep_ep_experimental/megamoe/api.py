@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 @lru_cache(maxsize=1)
 def _extension():
     core = require_native("MegaMoE")
-    if not (hasattr(core, "create_megamoe_runtime") or hasattr(core, "create_megamoe_train_runtime")):
+    if not hasattr(core, "create_megamoe_runtime"):
         raise RuntimeError("Install a wheel with the MegaMoE inference or BF16 component enabled")
     try:
         extension = importlib.import_module(__package__ + "._C")

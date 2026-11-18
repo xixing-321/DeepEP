@@ -4,8 +4,8 @@
 
 #pragma once
 
-#include "bf16_plan.hpp"
-#include "bf16_tiling.hpp"
+#include "plan/bf16.hpp"
+#include "tiling/bf16.hpp"
 
 #include <acl/acl.h>
 #include <ATen/MemoryOverlap.h>
@@ -20,7 +20,7 @@
 #include "shmem.h"
 
 #include "check.hpp"
-#include "bf16_launcher.hpp"
+#include "launch/bf16.hpp"
 #include "kernels/mega_moe/timer/ascend_timer.hpp"
 #include <vector>
 #include "kernels/mega_moe/common/mega_moe_bf16_tiling.hpp"

@@ -8,6 +8,7 @@ import os
 import threading
 import warnings
 from contextlib import nullcontext
+from functools import partial
 from pathlib import Path
 from uuid import UUID
 
@@ -134,16 +135,13 @@ class Runtime:
         else:
             rank, size = rank_and_world(group, rank, world_size)
         factory = native.Runtime
-        if self._megamoe_train:
-            integer("world_size", size, 2, 1024)
-            factory = getattr(native, "create_megamoe_train_runtime", None)
-            if factory is None:
-                raise RuntimeError("Rebuild with DEEPEP_BUILD_MEGAMOE=ON")
-        elif self._megamoe:
-            integer("world_size", size, 2, 128)
+        if self._megamoe or self._megamoe_train:
+            integer("world_size", size, 2, 1024 if self._megamoe_train else 128)
             factory = getattr(native, "create_megamoe_runtime", None)
             if factory is None:
                 raise RuntimeError("Rebuild with DEEPEP_BUILD_MEGAMOE=ON")
+            if self._megamoe_train:
+                factory = partial(factory, bf16=True)
         else:
             from .buffers._elastic_layout import WORLD_SIZES
 
