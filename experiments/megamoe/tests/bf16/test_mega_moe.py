@@ -1316,7 +1316,7 @@ def measure(op, tensors, capacity, args, mode):
         for leaf in leaves:
             leaf.grad = None
 
-    def megamoe_forward():
+    def megamoe_forward(collect_counts=False):
         reset()
         y, counts = fused_forward(
             op,
@@ -1329,12 +1329,12 @@ def measure(op, tensors, capacity, args, mode):
             save_gmm1_output=args.save_gmm1_output,
             swiglu_limit=args.swiglu_limit,
             api=args.api,
-            collect_counts=False,
+            collect_counts=collect_counts,
         )
         return y, counts
 
-    def megamoe_complete():
-        y, counts = megamoe_forward()
+    def megamoe_complete(collect_counts=False):
+        y, counts = megamoe_forward(collect_counts)
         y.backward(dy)
         return y, counts
 
@@ -1347,7 +1347,7 @@ def measure(op, tensors, capacity, args, mode):
     ):
         megamoe[f"{name}_ms"] = event_stats(bench_scope(body, prepare, args))
         stage(f"{name} scope done")
-    y, counts = megamoe_complete()
+    y, counts = megamoe_complete(collect_counts=True)
     if not all(bool(torch.isfinite(value).all().item()) for value in (y, x.grad, p.grad, w1.grad, w2.grad)):
         raise RuntimeError("Non-finite output or gradient after timing")
     stage("megamoe_bf16 valid")
