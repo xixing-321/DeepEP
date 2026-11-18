@@ -21,7 +21,7 @@ public:
     __aicore__ inline void Process();
 
 private:
-    __aicore__ inline void CopyIn();
+    __aicore__ inline void CopyInput();
     __aicore__ inline void SortCompute();
     __aicore__ inline void ExpertCountCompute();
     __aicore__ inline void CopyOut();
@@ -30,7 +30,7 @@ private:
     int64_t sortNum;
 };
 
-__aicore__ inline void MoeSortOneCore::CopyIn()
+__aicore__ inline void MoeSortOneCore::CopyInput()
 {
     LocalTensor<int32_t> inLocal = sortDataCopyInQueue.AllocTensor<int32_t>();
     DataCopyExtParams dataCopyParams{static_cast<uint16_t>(1),
@@ -141,7 +141,7 @@ __aicore__ inline void MoeSortOneCore::Init(GM_ADDR expertIdx, GM_ADDR expandedR
 __aicore__ inline void MoeSortOneCore::Process()
 {
     if (GetBlockIdx() < 1) {
-        CopyIn();
+        CopyInput();
         SortCompute();
         CopyOut();
     }

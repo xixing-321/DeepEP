@@ -25,7 +25,7 @@ public:
     __aicore__ inline void SetBuffer(LocalTensor<float>& tempBuffer);
 
 private:
-    __aicore__ inline void CopyIn();
+    __aicore__ inline void CopyInput();
     __aicore__ inline void UpdateMrgParam();
     __aicore__ inline void MrgsortCompute();
     __aicore__ inline void UpdateSortInfo();
@@ -110,7 +110,7 @@ __aicore__ inline void MoeMrgsortOut::UpdateMrgParam()
     }
 }
 
-__aicore__ inline void MoeMrgsortOut::CopyIn()
+__aicore__ inline void MoeMrgsortOut::CopyInput()
 {
     this->remainListNum = 0;
     SetFlag<HardEvent::MTE3_MTE2>(EVENT_ID7);
@@ -202,7 +202,7 @@ __aicore__ inline void MoeMrgsortOut::Init(MoeMrgsortParam* param, TPipe* tPipe)
 __aicore__ inline void MoeMrgsortOut::Process()
 {
     for (; allRemainElements > 0;) {
-        CopyIn();
+        CopyInput();
         UpdateMrgParam();
         MrgsortCompute();
         UpdateSortInfo();

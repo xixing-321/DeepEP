@@ -76,10 +76,12 @@ int main()
             assert(layout.doOffset == 0 && layout.controlOffset < layout.totalBytes);
             assert(layout.dzOffset % 512 == 0 && layout.hpOffset % 512 == 0 && layout.dpOffset % 512 == 0);
             assert(layout.dhpReadyOffset < layout.dzReadyOffset && layout.dzReadyOffset < layout.dxReadyOffset);
-            if ((DEEPEP_MEGAMOE_BF16_BACKWARD_SLICES || DEEPEP_MEGAMOE_BF16_COMBINE_SLICES) && layout.gmDataGrad) {
+            if ((DEEPEP_MEGAMOE_BF16_BACKWARD_SLICES || DEEPEP_MEGAMOE_BF16_BACKWARD_COMBINE_SLICES) &&
+                layout.gmDataGrad) {
                 assert(layout.sliceSlots == (capacity + 127U) / 128U + 4U);
                 assert(layout.totalBytes ==
-                       layout.dxSlicesOffset + (DEEPEP_MEGAMOE_BF16_COMBINE_SLICES ? layout.sliceSlots * 64U : 0U));
+                       layout.dxSlicesOffset +
+                           (DEEPEP_MEGAMOE_BF16_BACKWARD_COMBINE_SLICES ? layout.sliceSlots * 64U : 0U));
             }
         }
     }

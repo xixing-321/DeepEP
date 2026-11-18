@@ -49,7 +49,7 @@ uint64_t ForwardTransientWorkspaceBytes(const MegaMoeBf16TilingData& tiling)
 {
     using namespace MegaMoeBF16Training;
     const ForwardTransientWorkspaceLayout transient(tiling.n, tiling.expertPerRank, tiling.maxOutputSize);
-    const auto saved = ResolveSavedGateUpMode(tiling.savedGateUpMode, tiling.swigluLimit);
+    const auto saved = tiling.savedGateUpMode;
     const Wave::ForwardWorkspaceLayout layout(transient.totalBytes, tiling.maxOutputSize, tiling.expertPerRank,
                                               tiling.k, tiling.n / 2U, saved == kSaveBf16);
     const uint64_t bytes = layout.totalBytes;
@@ -157,7 +157,7 @@ torch::Tensor AllocateBackwardWorkspace(const MegaMoeBF16BackwardWorkspaceLayout
 
 torch::Tensor AllocateTrainingTimer(const torch::Tensor& like, const torch::Tensor& weights,
                                     const torch::Tensor& weight1, const torch::Tensor& weight2, int64_t maxRecv,
-                                    int phase, double limit, const std::string& mode)
+                                    int phase, const std::string& mode)
 {
 #ifndef DEEPEP_MEGAMOE_TIMER
     TORCH_CHECK(false, "Rebuild with DEEPEP_MEGAMOE_TIMER=ON before capturing training timers");
@@ -178,9 +178,8 @@ torch::Tensor AllocateTrainingTimer(const torch::Tensor& like, const torch::Tens
     const Layout layout{static_cast<int>(groups * 3), capacity};
     TORCH_CHECK(layout.Elements() * 8 <= 256LL * 1024 * 1024, "training Timer exceeds 256 MiB per phase");
     auto timer = torch::zeros({layout.Elements()}, like.options().dtype(torch::kInt64));
-    const int64_t saved = mode == "none" ? 0 : (mode == "bf16" || (mode == "auto" && limit > 0) ? 1 : 2);
-    const int64_t flags = saved | (MegaMoeBF16SwigluDecoupled(h, saved) ? 256 : 0) |
-                          (DEEPEP_BF16_FORCE_EXPERT_READY ? 512 : 0) | (w.transW ? 1024 : 0);
+    const int64_t saved = mode == "none" ? 0 : (mode == "bf16" ? 1 : 2);
+    const int64_t flags = saved | (MegaMoeBF16SwigluDecoupled(h, saved) ? 256 : 0) | (w.transW ? 1024 : 0);
     std::vector<int64_t> values{kMagic,
                                 kVersion,
                                 groups * 3,

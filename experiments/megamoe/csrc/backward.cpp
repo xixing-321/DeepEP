@@ -69,17 +69,16 @@ BackwardResult MegaMoeBF16Backward(torch::Tensor context, torch::Tensor gradY, t
     TORCH_CHECK(peerBytes <= symmetricBufferBytes, "MegaMoe BF16 backward local_mem_size is too small: need ",
                 peerBytes, " bytes, got ", symmetricBufferBytes);
 
-    const std::size_t ubTileBytes = 3ULL * 128ULL * 256ULL * 2ULL;
-    // MXFP8 backward decodes 16 rows at a time after the three persistent
-    // BF16 work tiles: one FP8 data chunk, compact/padded E8M0 scales,
-    // expanded BF16/FP32 scales, a temporary FP32 decoded chunk and three
-    // optional clipping-mask chunks.
+    constexpr std::size_t kTileRows = 128ULL;
+    constexpr std::size_t kTileColumns = 256ULL;
+    const std::size_t ubTileBytes = 3ULL * kTileRows * kTileColumns * sizeof(uint16_t);
+    // MXFP8 decoding uses a data chunk, compact E8M0 scales, two expanded
+    // scale registers stored in UB and three full-tile clipping masks.
     constexpr std::size_t kMxDecodeRows = 16ULL;
-    constexpr std::size_t kMxTileColumns = 256ULL;
-    const std::size_t ubMxFp8TileBytes =
-        ubTileBytes + kMxDecodeRows * kMxTileColumns + kMxDecodeRows * 32ULL +
-        kMxDecodeRows * (kMxTileColumns / 32ULL) * (2ULL * sizeof(uint16_t) + 4ULL * sizeof(float)) +
-        kMxDecodeRows * kMxTileColumns * sizeof(float) + 3ULL * kMxDecodeRows * 32ULL;
+    constexpr std::size_t kMxScaleRowBytes = 32ULL;
+    constexpr std::size_t kMxScaleExpansionBytes = 2ULL * 512ULL;
+    const std::size_t ubMxFp8TileBytes = ubTileBytes + kMxDecodeRows * (kTileColumns + kMxScaleRowBytes) +
+                                         kMxScaleExpansionBytes + 3ULL * kTileRows * kMxScaleRowBytes;
     const std::size_t ubRestoreBytes = Bf16Align(static_cast<std::size_t>(worldSize) * expertPerRank, 128ULL) * 4ULL;
     const std::size_t dispatchElements =
         Bf16Align(static_cast<std::size_t>(tiling.dispatchRows) * static_cast<std::size_t>(k), 32ULL);
@@ -87,16 +86,17 @@ BackwardResult MegaMoeBF16Backward(torch::Tensor context, torch::Tensor gradY, t
                                          Bf16Align(2ULL * static_cast<std::size_t>(k) * sizeof(uint16_t), 32ULL) +
                                          ubRestoreBytes;
     const std::size_t ubUnpermuteBytes = 3ULL * Bf16Align(6ULL * static_cast<std::size_t>(k), 32ULL);
-    const std::size_t dpPartialTiles = MegaMoeBF16Training::BackwardTopkPartialCount(
-        MegaMoeBF16Training::ResolveSavedGateUpMode(tiling.savedGateUpMode, tiling.swigluLimit), n / 2);
+    const std::size_t dpPartialTiles = MegaMoeBF16Training::BackwardTopkPartialCount(tiling.savedGateUpMode, n / 2);
     const std::size_t alignedDpPartialTiles = Bf16Align(dpPartialTiles * sizeof(float), 32ULL) / sizeof(float);
     TORCH_CHECK((alignedDpPartialTiles + kA5Fp32PerVectorRegister - 1) * sizeof(float) <= kBackwardTopkPartialUbBytes,
                 "MegaMoe BF16 backward n=", n, " exceeds the P6 partial-reduction UB capacity");
-    const std::size_t ubTopkBytes = kBackwardTopkPartialUbBytes + Bf16Align(1024ULL * topkWeightBytes, 32ULL);
+    const std::size_t ubTopkBytes =
+        kBackwardTopkPartialUbBytes + Bf16Align(1024ULL * topkWeightBytes, 32ULL) +
+        Bf16Align(static_cast<std::size_t>(worldSize) * expertPerRank * sizeof(int32_t), 32ULL);
     const std::size_t ubResetBytes = MegaMoeBF16Training::ForwardDispatchUbLayout::kCountResetChunkBytes;
     // These phases own UB at different times. Include the post-P6 count
-    // reset and the P6 route buffer, not just the P0 and SwiGLU allocations.
-    const uint32_t savedMode = MegaMoeBF16Training::ResolveSavedGateUpMode(tiling.savedGateUpMode, tiling.swigluLimit);
+    // reset and the P6 route and prefix buffers in the UB budget.
+    const uint32_t savedMode = tiling.savedGateUpMode;
     const std::size_t p1UbBytes = savedMode == MegaMoeBF16Training::kSaveMxFp8 ? ubMxFp8TileBytes : ubTileBytes;
     const std::size_t ubFootprint =
         std::max({p1UbBytes, ubP0ScratchBytes, ubUnpermuteBytes, ubTopkBytes, ubResetBytes});
@@ -109,19 +109,15 @@ BackwardResult MegaMoeBF16Backward(torch::Tensor context, torch::Tensor gradY, t
 
     const MegaMoeBF16Training::TrainingSavedStateLayout savedStateLayout(
         m, k, topk, worldSize, expertPerRank, maxRecvTokens, n,
-        MegaMoeBF16Training::SaveGateUpAsMxFp8(tiling.swigluLimit, tiling.savedGateUpMode),
+        tiling.savedGateUpMode == MegaMoeBF16Training::kSaveMxFp8,
         tiling.savedGateUpMode != MegaMoeBF16Training::kSaveNone,
         MegaMoeBF16Training::SaveGateUpClipMasks(tiling.swigluLimit, tiling.savedGateUpMode), false, topkWeightBytes);
     TORCH_CHECK(static_cast<std::size_t>(trainingSavedState.numel()) * trainingSavedState.element_size() >=
                     savedStateLayout.totalBytes,
                 "MegaMoe BF16 training_saved_state is too small: need ", savedStateLayout.totalBytes, " bytes");
-#if DEEPEP_BF16_FORCE_EXPERT_READY
-    // This build policy takes precedence over the diagnostic split override.
-    const uint32_t splitExperts = 0;
-#else
     uint32_t splitExperts = MegaMoeBF16Training::DefaultBackwardDispatchSplitExperts(
         tiling.savedGateUpMode, static_cast<uint32_t>(expertPerRank));
-    // Explicit k is a diagnostic override; none still forces k=0 below.
+    // This diagnostic override selects how many experts use row readiness on the GM path.
     const char* splitText = std::getenv("MEGAMOE_BF16_BWD_DISPATCH_SPLIT_EXPERTS");
     if (splitText != nullptr) {
         if (std::string(splitText) == "all") {
@@ -135,7 +131,6 @@ BackwardResult MegaMoeBF16Backward(torch::Tensor context, torch::Tensor gradY, t
         }
     }
     if (!MegaMoeBF16Training::UseGmForBackwardDataGrad(tiling.savedGateUpMode)) splitExperts = 0;
-#endif
     const MegaMoeBF16BackwardWorkspaceLayout backwardLayout(tiling, splitExperts);
     auto backwardWorkspace = AllocateBackwardWorkspace(backwardLayout, gradY);
 
@@ -187,7 +182,7 @@ ops::BackwardResult BF16Plan::backward_with_timer(torch::Tensor dy, torch::Tenso
 {
     TORCH_CHECK(address_ != 0, "training operator has been closed");
     TORCH_CHECK(weight_before_gmm2_, "BF16 backward requires a need_grad=True Plan");
-    auto timer = AllocateTrainingTimer(dy, weights, w1, w2, maxRecv, 1, limit, mode);
+    auto timer = AllocateTrainingTimer(dy, weights, w1, w2, maxRecv, 1, mode);
     return ops::MegaMoeBF16Backward(Context(dy), dy, weights, w1, w2, counts, saved, dispatch, maxRecv, rank_,
                                     world_size_, SymmetricBufferBytes(), ffts_addr_, SymmetricBuffer(), limit, mode,
                                     timer);

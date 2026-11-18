@@ -67,7 +67,6 @@ struct ForwardWorkspaceInfo {
     GM_ADDR expandedRowIdxGather;
     GM_ADDR ptrSumBeforeRank;
     GM_ADDR ptrFlagSwiGluToGmm2;
-    GM_ADDR ptrFlagDispatchToGmm1;
     GM_ADDR ptrDispatchedTopkWeights;
     GM_ADDR ptrSavedGate{nullptr};
     GM_ADDR ptrSavedUp{nullptr};
@@ -106,8 +105,6 @@ struct ForwardWorkspaceInfo {
             Ops::Base::CeilAlign(static_cast<int64_t>(tilingData->epWorldSize) * tilingData->expertPerRank, ALIGN_128);
         ptrFlagSwiGluToGmm2 = base + workspaceSize;
         workspaceSize += Ops::Base::CeilAlign(SIZE_INT_32 * tilingData->expertPerRank * INT_CACHELINE, ALIGN_128);
-        ptrFlagDispatchToGmm1 = base + workspaceSize;
-        workspaceSize += Ops::Base::CeilAlign(SIZE_INT_32 * tilingData->expertPerRank * INT_CACHELINE, ALIGN_128);
         ptrDispatchedTopkWeights = base + workspaceSize;
         workspaceSize += Ops::Base::CeilAlign(
             static_cast<int64_t>(MegaMoeBF16Training::TopkWeightBytes(tilingData->topkWeightType)) *
@@ -125,8 +122,7 @@ struct ForwardWorkspaceInfo {
     {
         const MegaMoeBF16Training::TrainingSavedStateLayout savedLayout(
             tilingData->m, tilingData->k, tilingData->topK, tilingData->epWorldSize, tilingData->expertPerRank,
-            tilingData->maxOutputSize, tilingData->n,
-            MegaMoeBF16Training::SaveGateUpAsMxFp8(tilingData->swigluLimit, tilingData->savedGateUpMode),
+            tilingData->maxOutputSize, tilingData->n, tilingData->savedGateUpMode == MegaMoeBF16Training::kSaveMxFp8,
             tilingData->savedGateUpMode != MegaMoeBF16Training::kSaveNone,
             MegaMoeBF16Training::SaveGateUpClipMasks(tilingData->swigluLimit, tilingData->savedGateUpMode),
             embeddedDispatchOutput, MegaMoeBF16Training::TopkWeightBytes(tilingData->topkWeightType));
@@ -152,7 +148,6 @@ struct ForwardWorkspaceInfo {
         ptrAScale = nullptr;
         ptrA2Scale = ptrcumsumMM;
         ptrFlagSwiGluToGmm2 = nullptr;
-        ptrFlagDispatchToGmm1 = nullptr;
         savedStateSize = static_cast<int64_t>(savedLayout.totalBytes);
         transientWorkspaceSize = 0;
         workspaceSize = savedStateSize;
@@ -167,7 +162,6 @@ struct ForwardWorkspaceInfo {
             tilingData->n, tilingData->expertPerRank, tilingData->maxOutputSize);
         ptrA2 = transientWorkspaceBase + transientLayout.ptrA2Offset;
         ptrFlagSwiGluToGmm2 = transientWorkspaceBase + transientLayout.swigluToGmm2FlagOffset;
-        ptrFlagDispatchToGmm1 = transientWorkspaceBase + transientLayout.dispatchToGmm1FlagOffset;
         ptrAScale = ptrA2;
         transientWorkspaceSize = static_cast<int64_t>(transientLayout.totalBytes);
         workspaceSize = savedStateSize + transientWorkspaceSize;
@@ -188,7 +182,6 @@ struct ForwardWorkspaceInfo {
             tilingData->n, tilingData->expertPerRank, tilingData->maxOutputSize);
         ptrA2 = transientWorkspaceBase + transientLayout.ptrA2Offset;
         ptrFlagSwiGluToGmm2 = transientWorkspaceBase + transientLayout.swigluToGmm2FlagOffset;
-        ptrFlagDispatchToGmm1 = transientWorkspaceBase + transientLayout.dispatchToGmm1FlagOffset;
         ptrAScale = ptrA2;
         transientWorkspaceSize = static_cast<int64_t>(transientLayout.totalBytes);
         workspaceSize = savedStateSize + transientWorkspaceSize;
@@ -263,7 +256,8 @@ struct BackwardWorkspaceInfo {
         ptrRecomputeSlices = DEEPEP_MEGAMOE_BF16_BACKWARD_SLICES && layout.sliceSlots && layout.recompute
                                  ? base + layout.recomputeSlicesOffset
                                  : nullptr;
-        ptrDXSlices = DEEPEP_MEGAMOE_BF16_COMBINE_SLICES && layout.sliceSlots ? base + layout.dxSlicesOffset : nullptr;
+        ptrDXSlices =
+            DEEPEP_MEGAMOE_BF16_BACKWARD_COMBINE_SLICES && layout.sliceSlots ? base + layout.dxSlicesOffset : nullptr;
         workspaceSize = layout.totalBytes;
     }
 };

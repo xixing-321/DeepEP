@@ -84,7 +84,6 @@ MegaMoeHostTiling MakeMegaMoeHostTiling(MegaMoeBf16TilingData& tiling, int64_t m
         saveMode = kSaveMxFp8;
     else
         TORCH_CHECK(save_gmm1_output == "bf16", "gmm1_save_type must be none, bf16 or mxfp8");
-    saveMode = ResolveSavedGateUpMode(saveMode, normalizedSwigluLimit);
     if (bf16 && saveMode == kSaveMxFp8) {
         const uint64_t quantUbBytes = SaveGateUpClipMasks(normalizedSwigluLimit, saveMode)
                                           ? SavedGateUpQuantUbLayout::totalBytesWithClipMasks

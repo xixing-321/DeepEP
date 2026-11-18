@@ -60,7 +60,7 @@ class RunnerConfiguration(unittest.TestCase):
         expected = {
             (dtype, values, mode, clipped)
             for dtype, values in (("bf16", "bf16-rounded"), ("fp32", "bf16-rounded"), ("fp32", "full-precision"))
-            for mode in ("bf16", "none", "mxfp8", "auto")
+            for mode in ("bf16", "none", "mxfp8")
             for clipped in (False, True)
         }
         self.assertEqual(actual, expected)

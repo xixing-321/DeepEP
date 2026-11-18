@@ -132,11 +132,7 @@ With matching Torch/torch_npu and CANN 9.2.0, run:
 bash experiments/megamoe/scripts/build.sh
 ```
 
-The script prepares dependencies and builds and installs a wheel with MegaMoE and timer support. Subsequent builds reuse the validated SHMEM SDK. Direct `pip wheel` builds keep MegaMoE disabled by default. See the [MegaMoE guide](experiments/megamoe/README.md) for multi-node configuration and validation. Device compilation, accuracy and performance qualification remain outstanding.
-
-### Install MegaMoE Train
-
-Build BF16 with `DEEPEP_BUILD_MEGAMOE_TRAIN=ON`. Set `DEEPEP_BUILD_MEGAMOE=ON` as well to include quantized inference in the same wheel. See the [BF16 build and installation guide](experiments/megamoe/README.md#bf16构建与安装).
+The script prepares dependencies and installs a wheel with W4A8, W8A8, BF16 forward and backward, and timer support. Subsequent builds reuse the validated SHMEM SDK. For manual builds, set `DEEPEP_BUILD_MEGAMOE=ON` to enable MegaMoE, which is disabled by default. See the [MegaMoE guide](experiments/megamoe/README.md) for multi-node configuration and validation and the [BF16 example](experiments/megamoe/README.md#bf16使用示例) to run training.
 
 ## Interfaces and examples
 

@@ -56,13 +56,14 @@ def wheel(tmp_path, enabled, payload, ep_gmm_fused=False):
         for name in (
             "__init__.py",
             "api.py",
+            "_bf16.py",
+            "_autograd.py",
             "benchmark.py",
             "configs/smoke.json",
             "libmegamoe_kernel.so",
             "_C.fake.so",
         ):
             entries["deep_ep_experimental/megamoe/" + name] = b"fixture"
-        entries["test.dist-info/licenses/cann.LICENSE"] = b"fixture"
     if ep_gmm_fused:
         prefix = "deep_ep_experimental/ep_gmm_fused/"
         for name in (

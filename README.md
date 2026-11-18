@@ -121,11 +121,7 @@ python -m pip install -v --no-build-isolation --no-deps .
 bash experiments/megamoe/scripts/build.sh
 ```
 
-脚本准备依赖并构建、安装启用 MegaMoE 和 timer 的 wheel，日常重编复用已校验的 SHMEM。直接使用 `pip wheel` 时默认不构建 MegaMoE。多机配置和验证步骤见 [MegaMoE 使用说明](experiments/megamoe/README.md)；设备编译、精度与性能仍待验收。
-
-### 安装 MegaMoE Train
-
-训练组件与推理组件同源构建，构建时开启 `DEEPEP_BUILD_MEGAMOE_TRAIN=ON`（默认关闭）；构建命令、产物约束与首跑示例见[训练模块 README](experiments/megamoe/README.md#bf16构建与安装)。
+脚本准备依赖并安装 MegaMoE wheel，包含 W4A8、W8A8、BF16 前反向及 Timer，日常重编复用已校验的 SHMEM。手动构建时用 `DEEPEP_BUILD_MEGAMOE=ON` 启用 MegaMoE，默认关闭。多机配置和验证步骤见 [MegaMoE 使用说明](experiments/megamoe/README.md)，训练首跑见 [BF16 使用示例](experiments/megamoe/README.md#bf16使用示例)。
 
 ## 接口与示例
 

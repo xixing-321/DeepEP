@@ -63,10 +63,6 @@ public:
         return workspace_.defined() ? workspace_.numel() : 0;
     }
 
-    ops::ForwardResult forward(torch::Tensor x, torch::Tensor topk_ids, torch::Tensor topk_weights,
-                               torch::Tensor weight1, torch::Tensor weight2, int64_t max_recv_tokens,
-                               double swiglu_limit, const std::string& save_gmm1_output);
-
     ops::ForwardResult forward_out(torch::Tensor out, torch::Tensor x, torch::Tensor topk_ids,
                                    torch::Tensor topk_weights, torch::Tensor weight1, torch::Tensor weight2,
                                    int64_t max_recv_tokens, double swiglu_limit, const std::string& save_gmm1_output);

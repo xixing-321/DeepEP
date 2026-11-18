@@ -77,20 +77,20 @@ struct BackwardWorkspaceLayout {
         if (gmDataGrad) offset += AlignUp(4 * e * 16, 128);
         progressOffset = AlignUp(offset, 64);
         totalBytes = BackwardDispatchProgressLayout::TotalBytes(offset, splitExperts, world, producers, savedMode);
-        sliceSlots = (DEEPEP_MEGAMOE_BF16_BACKWARD_SLICES || DEEPEP_MEGAMOE_BF16_COMBINE_SLICES) && gmDataGrad
+        sliceSlots = (DEEPEP_MEGAMOE_BF16_BACKWARD_SLICES || DEEPEP_MEGAMOE_BF16_BACKWARD_COMBINE_SLICES) && gmDataGrad
                          ? (r + 127U) / 128U + e
                          : 0U;
         dhpSlicesOffset = AlignUp(totalBytes, 64);
         recomputeSlicesOffset = dhpSlicesOffset + (DEEPEP_MEGAMOE_BF16_BACKWARD_SLICES ? sliceSlots * 64 : 0U);
         dxSlicesOffset =
             recomputeSlicesOffset + (recompute && DEEPEP_MEGAMOE_BF16_BACKWARD_SLICES ? sliceSlots * 64 : 0U);
-        if (sliceSlots) totalBytes = dxSlicesOffset + (DEEPEP_MEGAMOE_BF16_COMBINE_SLICES ? sliceSlots * 64 : 0U);
+        if (sliceSlots)
+            totalBytes = dxSlicesOffset + (DEEPEP_MEGAMOE_BF16_BACKWARD_COMBINE_SLICES ? sliceSlots * 64 : 0U);
     }
     template <typename Tiling>
     MEGA_MOE_WORKSPACE_HD explicit BackwardWorkspaceLayout(const Tiling& t, uint32_t splitExperts)
         : BackwardWorkspaceLayout(t.expertPerRank, t.maxOutputSize, t.k, t.n, t.epWorldSize, t.blockNumPerEP,
-                                  splitExperts, ResolveSavedGateUpMode(t.savedGateUpMode, t.swigluLimit),
-                                  t.mGroupsPerWave)
+                                  splitExperts, t.savedGateUpMode, t.mGroupsPerWave)
     {
     }
 };

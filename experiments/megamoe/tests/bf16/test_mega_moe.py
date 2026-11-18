@@ -54,13 +54,6 @@ def parse_devices(value):
     return devices
 
 
-def resolved_save_mode(mode, limit):
-    if mode != "auto":
-        return mode
-    limit = struct.unpack("f", struct.pack("f", limit))[0]
-    return "mxfp8" if limit <= 0 or limit == float.fromhex("0x1.fffffep127") else "bf16"
-
-
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("devices", type=parse_devices, nargs="?", default=None)
@@ -79,7 +72,7 @@ def parse_args(argv=None):
     parser.add_argument(
         "--skip-mxfp8",
         action="store_true",
-        help="Exclude suite cases resolving to MXFP8, including auto without clipping",
+        help="Exclude suite cases that save Gate/Up as MXFP8",
     )
     parser.add_argument(
         "--isolate-cases", action="store_true", help="Start fresh workers/runtime per case instead of reusing them"
@@ -133,7 +126,7 @@ def parse_args(argv=None):
     parser.add_argument(
         "--data-profile", choices=DATA_PROFILES, default="random", help="Reproducible input-value scenario"
     )
-    parser.add_argument("--save-gmm1-output", choices=("none", "bf16", "mxfp8", "auto"), default="bf16")
+    parser.add_argument("--save-gmm1-output", choices=("none", "bf16", "mxfp8"), default="bf16")
     parser.add_argument("--swiglu-limit", type=float, default=0.0)
     parser.add_argument("--seed", type=int, default=20260825)
     parser.add_argument("--chunk-rows", type=int, default=256, help="CPU FP64 expert-row chunk size")
@@ -233,8 +226,8 @@ def parse_args(argv=None):
     if args.routed_scaling_factor == 0:
         parser.error("routed-scaling-factor must remain positive in FP32")
     if args.diagnose_mxfp8 and not args.suite:
-        if resolved_save_mode(args.save_gmm1_output, args.swiglu_limit) != "mxfp8":
-            parser.error("--diagnose-mxfp8 requires a case resolving to mxfp8")
+        if args.save_gmm1_output != "mxfp8":
+            parser.error("--diagnose-mxfp8 requires MXFP8 saving")
     if args.routing_mode == "imbalanced" and args.topk == world * args.expert_per_rank:
         parser.error("imbalanced routing requires topk < total experts; selecting every expert cannot skew counts")
     if args.routing_mode == "hot_expert" and args.topk != 1:
@@ -294,9 +287,7 @@ def suite_cases(args, *, include_skipped=False):
     if not selected:
         raise ValueError(f"No cases in suite {args.suite}")
     if args.skip_mxfp8 and not include_skipped:
-        selected = [
-            case for case in selected if resolved_save_mode(case["save_gmm1_output"], case["swiglu_limit"]) != "mxfp8"
-        ]
+        selected = [case for case in selected if case["save_gmm1_output"] != "mxfp8"]
         if not selected:
             raise ValueError(
                 "No cases remain after --skip-mxfp8; choose a suite/case containing BF16 or recompute cases"
@@ -564,7 +555,7 @@ def run_suite(args):
             "status": "SKIPPED",
             "reason": "--skip-mxfp8",
             "requested_save_mode": case["save_gmm1_output"],
-            "resolved_save_mode": resolved_save_mode(case["save_gmm1_output"], case["swiglu_limit"]),
+            "resolved_save_mode": case["save_gmm1_output"],
         }
         for case in requested_cases
         if case["id"] not in selected_ids
@@ -741,7 +732,7 @@ def runtime_identity():
         origin = Path(spec.origin)
         identity["libraries"][label] = {"path": str(origin), "sha256": digest(origin)}
         if label == "megamoe._C":
-            kernel = origin.with_name("libdeepep_megamoe_train_bf16.so")
+            kernel = origin.with_name("libmegamoe_kernel.so")
             if kernel.is_file():
                 identity["libraries"]["megamoe_bf16_kernel"] = {
                     "path": str(kernel),
@@ -769,7 +760,7 @@ def runtime_identity():
 def installed_root():
     locations = list(dict.fromkeys(sysconfig.get_path(name) for name in ("purelib", "platlib")))
     spec = PathFinder.find_spec("deep_ep", locations)
-    hint = "Build with DEEPEP_BUILD_MEGAMOE_TRAIN=ON and install its wheel in this Python environment."
+    hint = "Build with DEEPEP_BUILD_MEGAMOE=ON and install its wheel in this Python environment."
     if spec is None or spec.origin is None:
         raise RuntimeError(f"No installed deep_ep package for {sys.executable}. {hint}")
     root = Path(spec.origin).resolve().parent.parent
@@ -977,7 +968,7 @@ def local_truth(inputs, args, rank):
 PEAK_TFLOPS = 432.0  # source comment: Ascend950 BF16 cube peak
 ROOFLINE_TFLOPS = round(PEAK_TFLOPS * 0.95, 1)  # 410.4: the source's derated roofline
 FORWARD_RFK = 6.0  # GMM1 (4) + GMM2 (2) per routed row
-SAVED_MODE_RFK = {"none": 16.0, "bf16": 12.0, "mxfp8": 12.0, "auto": 12.0}
+SAVED_MODE_RFK = {"none": 16.0, "bf16": 12.0, "mxfp8": 12.0}
 BASELINE_BUDGET_BYTES = 16 << 30  # packed-route working set the baseline may allocate
 
 
@@ -1164,7 +1155,7 @@ def baseline_chain():
 
         permute1 -> dispatch -> permute2 -> GMM1 -> SwiGLU*probs -> GMM2 ->
         unpermute1 -> combine -> unpermute2. ``recompute`` mirrors the source's
-        coupled regime: MegaMoE BF16 saves Gate/Up for bf16/mxfp8/auto and
+        coupled regime: MegaMoE BF16 saves Gate/Up for bf16/mxfp8 and
         recomputes GMM1 for none, so the baseline performs the same GEMM work
         (12 versus 16 RFK).
         """
@@ -1279,7 +1270,7 @@ def fused_forward(op, x, ids, weights, w1, w2, capacity, *, save_gmm1_output, sw
     from deep_ep_experimental.megamoe import bf16_mega_moe
 
     op.x, op.topk_idx, op.topk_weights = x, ids, weights
-    op.gmm1_save_type = resolved_save_mode(save_gmm1_output, swiglu_limit)
+    op.gmm1_save_type = save_gmm1_output
     op.max_recv_tokens = capacity
     y = torch.empty_like(x, requires_grad=False)
     counts = torch.zeros(w1.shape[0], dtype=torch.int32, device=x.device) if collect_counts else None
@@ -1596,7 +1587,7 @@ def execute_case(local_rank, args, rank, world, op, local_mem, phase_seconds, ex
     )
     raw_baseline = mixed_baseline = truth = None
     trace = {} if args.diagnose_mxfp8 else None
-    mode = resolved_save_mode(args.save_gmm1_output, args.swiglu_limit)
+    mode = args.save_gmm1_output
     if precision:
         with phase("cpu_fp64_reference"):
             truth = local_truth(inputs, args, rank)

@@ -284,12 +284,12 @@ BF16支持routed experts，暂不支持shared experts、其他激活或 `fast_ma
 
 ### BF16构建与安装
 
-沿用根仓依赖和wheel构建流程。`DEEPEP_BUILD_MEGAMOE_TRAIN=ON` 构建BF16，
-`DEEPEP_BUILD_MEGAMOE=ON` 构建量化推理。两项可以同时开启，使用一个MegaMoE Host扩展和根SHMEM依赖。
+`DEEPEP_BUILD_MEGAMOE=ON` 同时构建 W4A8、W8A8 和 BF16 前反向。wheel 包含一个
+MegaMoE Host 扩展和一个设备库 `libmegamoe_kernel.so`，沿用根仓的 SHMEM 运行库。
 
 ```bash
 export DEEPEP_NPU_ARCH=Ascend950
-export DEEPEP_BUILD_MEGAMOE_TRAIN=ON
+export DEEPEP_BUILD_MEGAMOE=ON
 python -m build --wheel --no-isolation
 python -m pip install --force-reinstall --no-deps dist/*.whl
 ```

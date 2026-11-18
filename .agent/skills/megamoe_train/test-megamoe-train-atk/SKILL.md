@@ -66,7 +66,7 @@ PY
 
 物理设备列表通过位置参数传入，EP 等于列表长度；worker 使用映射后的逻辑 local rank。常用 EP2/4/8，实际结论仅覆盖本轮运行规模。多机需要单独确认网络和启动方式，不把单机通过扩大为多机通过。
 
-当前公开清单包含 12 条典型尺寸：Flash、Pro、GLM 各取每 rank M=512、2048、4096、8192，统一 balanced 路由、BF16 路由权重、BF16 保存和固定 seed。`priority`、`model` 选择这 12 条；`dtype` 另有 24 条 BF16/FP32 路由权重、保存模式和 clipping 组合，`gather` 有 6 条 FP32 源窗口边界，`all` 选择全部 42 条。运行前用当前入口核对实际配置：
+当前公开清单包含 12 条典型尺寸：Flash、Pro、GLM 各取每 rank M=512、2048、4096、8192，统一 balanced 路由、BF16 路由权重、BF16 保存和固定 seed。`priority`、`model` 选择这 12 条；`dtype` 另有 18 条 BF16/FP32 路由权重、保存模式和 clipping 组合，`gather` 有 6 条 FP32 源窗口边界，`all` 选择全部 36 条。运行前用当前入口核对实际配置：
 
 ```bash
 : "${MEGAMOE_TEST_DEVICES:?填写本轮用户指定的物理设备列表}"
@@ -111,7 +111,7 @@ python -u "$entry" "$MEGAMOE_TEST_DEVICES" \
 
 当前精度默认启用 ATK，保留显式 `--atk` 便于审阅命令；`--skip performance` 只测精度。默认不加 skip 会先做精度、再做性能，不属于本 skill 范围；`--skip precision` 不是精度验证。
 
-套件默认复用 worker、进程组和算子实例，逐 case 重新生成输入、参考和梯度。`--suite all` 在一个作业内运行当前 42 条；仅需原 12 条模型用例时选 `priority` 或 `model`。只在需要隔离复现或比较时使用 `--isolate-cases`。套件由一次普通 `python` 启动，不放到 `torchrun` 下重复启动。
+套件默认复用 worker、进程组和算子实例，逐 case 重新生成输入、参考和梯度。`--suite all` 在一个作业内运行当前 36 条；仅需原 12 条模型用例时选 `priority` 或 `model`。只在需要隔离复现或比较时使用 `--isolate-cases`。套件由一次普通 `python` 启动，不放到 `torchrun` 下重复启动。
 
 执行时保留真实 Python 退出码。套件会实时输出并保存 `suite.log` 和 case 日志，无需另造输出框架；若使用 `tee`，开启 pipefail 并保留 Python 的退出码，不能将 tee 成功当作测试通过。运行期间不更新源码或重新安装 wheel。
 

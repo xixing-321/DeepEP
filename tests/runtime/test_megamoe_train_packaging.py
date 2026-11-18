@@ -1,6 +1,6 @@
 # Copyright (c) 2026, Lu Lu
 # Modified by xixing 2026
-"""One extension for quantized/BF16 payloads and component switching."""
+"""Wheel contains the joint quantized and BF16 MegaMoE payload."""
 
 import importlib.util
 import json
@@ -19,15 +19,22 @@ def inspect_wheel(path):
     return m.inspect_wheel(path)
 
 
-def wheel(tmp, payload, train, beta, *, missing=None, extra=()):
+def wheel(tmp, payload, enabled, *, missing=None, extra=()):
     path = tmp / "sample.whl"
     names = set()
-    if train or beta:
-        names.update(("__init__.py", "api.py", "_C.fake.so"))
-    if train:
-        names.update(("_bf16.py", "_autograd.py", "libdeepep_megamoe_train_bf16.so"))
-    if beta:
-        names.update(("benchmark.py", "configs/smoke.json", "libmegamoe_kernel.so"))
+    if enabled:
+        names.update(
+            (
+                "__init__.py",
+                "api.py",
+                "_C.fake.so",
+                "_bf16.py",
+                "_autograd.py",
+                "benchmark.py",
+                "configs/smoke.json",
+                "libmegamoe_kernel.so",
+            )
+        )
     if missing:
         names.discard(missing)
     with zipfile.ZipFile(path, "w") as a:
@@ -38,8 +45,7 @@ def wheel(tmp, payload, train, beta, *, missing=None, extra=()):
             json.dumps(
                 dict(
                     communication_operations=[],
-                    megamoe=dict(enabled=beta),
-                    megamoe_train=dict(enabled=train),
+                    megamoe=dict(enabled=enabled),
                     shmem_runtime=manifest,
                 )
             ),
@@ -52,35 +58,30 @@ def wheel(tmp, payload, train, beta, *, missing=None, extra=()):
     return path
 
 
-@pytest.mark.parametrize("train", [False, True])
-@pytest.mark.parametrize("beta", [False, True])
-def test_one_extension_supports_all_capability_combinations(tmp_path, shmem_wheel_payload, train, beta):
-    info = inspect_wheel(wheel(tmp_path, shmem_wheel_payload, train, beta))
-    assert info["megamoe_train"]["enabled"] is train and info["megamoe"]["enabled"] is beta
+@pytest.mark.parametrize("enabled", [False, True])
+def test_single_megamoe_payload_matches_build_option(tmp_path, shmem_wheel_payload, enabled):
+    info = inspect_wheel(wheel(tmp_path, shmem_wheel_payload, enabled))
+    assert info["megamoe"]["enabled"] is enabled
 
 
-@pytest.mark.parametrize("missing", ["_C.fake.so", "_bf16.py", "_autograd.py", "libdeepep_megamoe_train_bf16.so"])
-def test_training_requires_matching_host_python_and_device(tmp_path, shmem_wheel_payload, missing):
+@pytest.mark.parametrize("missing", ["_C.fake.so", "_bf16.py", "_autograd.py", "benchmark.py", "libmegamoe_kernel.so"])
+def test_megamoe_requires_matching_host_python_and_device(tmp_path, shmem_wheel_payload, missing):
     with pytest.raises(RuntimeError, match="Incomplete MegaMoE"):
-        inspect_wheel(wheel(tmp_path, shmem_wheel_payload, True, False, missing=missing))
+        inspect_wheel(wheel(tmp_path, shmem_wheel_payload, True, missing=missing))
 
 
 @pytest.mark.parametrize(
     "extra",
     [
-        "deep_ep_experimental/megamoe_train/_C.old.so",
         "build/stale/deep_ep_experimental/megamoe/_C.old.so",
         COMPONENT + "_C.old.so",
     ],
 )
-def test_old_or_duplicate_extension_is_rejected(tmp_path, shmem_wheel_payload, extra):
+def test_nested_or_duplicate_extension_is_rejected(tmp_path, shmem_wheel_payload, extra):
     with pytest.raises(RuntimeError):
-        inspect_wheel(wheel(tmp_path, shmem_wheel_payload, True, True, extra=[extra]))
+        inspect_wheel(wheel(tmp_path, shmem_wheel_payload, True, extra=[extra]))
 
 
-@pytest.mark.parametrize(
-    "train,beta,extra", [(False, True, "libdeepep_megamoe_train_bf16.so"), (True, False, "libmegamoe_kernel.so")]
-)
-def test_device_payload_must_match_capability(tmp_path, shmem_wheel_payload, train, beta, extra):
-    with pytest.raises(RuntimeError, match="OFF wheel"):
-        inspect_wheel(wheel(tmp_path, shmem_wheel_payload, train, beta, extra=[COMPONENT + extra]))
+def test_second_device_library_is_rejected(tmp_path, shmem_wheel_payload):
+    with pytest.raises(RuntimeError, match="one device library"):
+        inspect_wheel(wheel(tmp_path, shmem_wheel_payload, True, extra=[COMPONENT + "libextra_kernel.so"]))

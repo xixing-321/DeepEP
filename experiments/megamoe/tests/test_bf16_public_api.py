@@ -111,7 +111,7 @@ def call(b, w1, w2, **kwargs):
     return y
 
 
-def test_public_signature_and_no_legacy_namespace():
+def test_public_signature_and_export():
     assert list(inspect.signature(api.bf16_mega_moe).parameters) == [
         "y",
         "l1_weights",

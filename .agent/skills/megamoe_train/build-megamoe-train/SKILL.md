@@ -91,12 +91,11 @@ SHMEM 自身的离线源码依赖或已经构建好的 SDK 也须提前准备；
 
 ## 3. 启用训练算子，编译并安装
 
-只构建训练组件时，显式关闭其他可选实验组件，避免沿用终端中的旧开关：
+开启 MegaMoE 构建 W4A8、W8A8 和 BF16 前反向。
 
 ```bash
 export DEEPEP_NPU_ARCH=Ascend950
-export DEEPEP_BUILD_MEGAMOE_TRAIN=ON
-export DEEPEP_BUILD_MEGAMOE=OFF
+export DEEPEP_BUILD_MEGAMOE=ON
 export DEEPEP_MEGAMOE_TIMER=OFF
 export DEEPEP_BUILD_EP_GMM_FUSED=OFF
 
@@ -175,7 +174,7 @@ from deep_ep_experimental.megamoe import SymmBuffer, bf16_mega_moe
 from deep_ep_experimental.megamoe import _C as train_native
 
 info = json.loads((Path(deep_ep.__file__).parent / "_build_info.json").read_text())
-assert info["megamoe_train"]["enabled"]
+assert info["megamoe"]["enabled"]
 print("Python:", sys.executable)
 print("Core extension:", core_native.__file__)
 print("Training extension:", train_native.__file__)

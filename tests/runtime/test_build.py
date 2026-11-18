@@ -109,23 +109,6 @@ def test_missing_sdk_rejected(build):
         build.build_configuration({"DEEPEP_NPU_ARCH": "Ascend950"})
 
 
-def test_expert_ready_requires_training(build):
-    with pytest.raises(RuntimeError, match="requires DEEPEP_BUILD_MEGAMOE_TRAIN=ON"):
-        build.build_configuration({"DEEPEP_NPU_ARCH": "Ascend950", "DEEPEP_BF16_FORCE_EXPERT_READY": "ON"})
-
-
-@pytest.mark.parametrize("value", ["auto", "yes", "2", ""])
-def test_expert_ready_rejects_unknown_policy(build, value):
-    with pytest.raises(ValueError, match="DEEPEP_BF16_FORCE_EXPERT_READY"):
-        build.build_configuration(
-            {
-                "DEEPEP_NPU_ARCH": "Ascend950",
-                "DEEPEP_BUILD_MEGAMOE_TRAIN": "ON",
-                "DEEPEP_BF16_FORCE_EXPERT_READY": value,
-            }
-        )
-
-
 def test_beta_requires_sdk_and_timer_requires_beta(build):
     with pytest.raises(RuntimeError, match="ASCEND_HOME_PATH"):
         build.build_configuration({"DEEPEP_NPU_ARCH": "Ascend950", "DEEPEP_BUILD_MEGAMOE": "ON"})
@@ -358,6 +341,8 @@ def test_combined_elastic_megamoe_wheel_requires_both_payloads(tmp_path, missing
         "deep_ep/deepseek-deepep.LICENSE",
         "deep_ep_experimental/megamoe/__init__.py",
         "deep_ep_experimental/megamoe/api.py",
+        "deep_ep_experimental/megamoe/_bf16.py",
+        "deep_ep_experimental/megamoe/_autograd.py",
         "deep_ep_experimental/megamoe/benchmark.py",
         "deep_ep_experimental/megamoe/configs/smoke.json",
         "deep_ep_experimental/megamoe/_C.fake.so",
@@ -744,14 +729,14 @@ def test_host_compiler_cann_path_and_missing(build, tmp_path):
     assert build.find_host_compiler(env)[0] == str(compiler)
 
 
-@pytest.mark.parametrize("flag", ["DEEPEP_MEGAMOE_BF16_BACKWARD_SLICES", "DEEPEP_MEGAMOE_BF16_COMBINE_SLICES"])
+@pytest.mark.parametrize("flag", ["DEEPEP_MEGAMOE_BF16_BACKWARD_SLICES", "DEEPEP_MEGAMOE_BF16_BACKWARD_COMBINE_SLICES"])
 @pytest.mark.parametrize("value", ["1", "on", "invalid"])
 def test_bf16_slice_switch_rejects_ambiguous_values(build, flag, value):
     with pytest.raises(RuntimeError, match=f"{flag} accepts ON or OFF only"):
-        build.build_configuration({"DEEPEP_NPU_ARCH": "Ascend950", "DEEPEP_BUILD_MEGAMOE_TRAIN": "ON", flag: value})
+        build.build_configuration({"DEEPEP_NPU_ARCH": "Ascend950", "DEEPEP_BUILD_MEGAMOE": "ON", flag: value})
 
 
-@pytest.mark.parametrize("flag", ["DEEPEP_MEGAMOE_BF16_BACKWARD_SLICES", "DEEPEP_MEGAMOE_BF16_COMBINE_SLICES"])
+@pytest.mark.parametrize("flag", ["DEEPEP_MEGAMOE_BF16_BACKWARD_SLICES", "DEEPEP_MEGAMOE_BF16_BACKWARD_COMBINE_SLICES"])
 def test_bf16_slice_switch_requires_bf16_component(build, flag):
-    with pytest.raises(RuntimeError, match=f"{flag} requires DEEPEP_BUILD_MEGAMOE_TRAIN=ON"):
+    with pytest.raises(RuntimeError, match=f"{flag} requires DEEPEP_BUILD_MEGAMOE=ON"):
         build.build_configuration({"DEEPEP_NPU_ARCH": "Ascend950", flag: "ON"})

@@ -62,7 +62,7 @@ class TimerCapture:
                 values.tofile(directory / f"rank_{rank}_{name}_time.bin")
                 manifest["phases"].append(name)
         native = Path(_C.__file__)
-        for name, path in (("host", native), ("device", native.with_name("libdeepep_megamoe_train_bf16.so"))):
+        for name, path in (("host", native), ("device", native.with_name("libmegamoe_kernel.so"))):
             manifest["libraries"][name] = dict(path=str(path), sha256=hashlib.sha256(path.read_bytes()).hexdigest())
         (directory / f"rank_{rank}_capture.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
         if parse:

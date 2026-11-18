@@ -1,7 +1,7 @@
 # MegaMoE BF16 训练测试规范
 
 当前 [cases.json](../../../../experiments/megamoe/tests/bf16/cases.json) 包含 12 条典型模型尺寸用例：Flash、Pro、GLM 各取
-每 rank M=512、2048、4096、8192；另有 24 条路由权重类型/保存模式用例及 6 条 FP32
+每 rank M=512、2048、4096、8192；另有 18 条路由权重类型/保存模式用例及 6 条 FP32
 Gather 边界用例。
 清单与设备验收分开记录；设备精度、性能结果对应具体源码提交与构建产物。
 
@@ -10,7 +10,7 @@ Gather 边界用例。
 范围为 Ascend950、CANN 9.2、BF16 训练公共接口的前向、四项反向梯度及独立计时。
 典型尺寸采用 Flash、Pro、GLM 配置；使用合成输入和缩减专家数，
 不加载真实 checkpoint，不复现模型 router、共享专家或量化计算。
-典型模型清单的 12 条用例统一使用 BF16 保存；另有 dtype 专项覆盖 `bf16/none/mxfp8/auto`，用于检查类型与保存模式的组合。`mxfp8` 与 `auto` 仍按实验性质对待，清单存在和诊断对照不构成设备验收（见第 5 节）。
+典型模型清单的 12 条用例统一使用 BF16 保存。dtype 专项检查路由权重类型与 `bf16`、`mxfp8`、`none` 保存模式的组合。
 
 | 用例前缀 | hidden H | SwiGLU F / GMM1 N | TopK | 每 rank 专家数 | clipping | 路由权重缩放 | 条数 |
 | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: |
@@ -85,13 +85,13 @@ golden 保持 FP64。
 以及 FP32 TopK 路由权重的有效位、`dtopk_weights` 的类型、同输入变体、FP64 真值和 MXFP8 诊断重放；不启动 NPU 或 ATK。
 CLI 默认值、合法参数及用例覆盖检查不依赖 Torch；没有 Torch 时数值项显示 SKIP，不能计为通过。
 
-`priority`、`model` 选择这 12 条；`dtype` 选择 24 条 H256/F512/M129 小用例，
+`priority`、`model` 选择这 12 条；`dtype` 选择 18 条 H256/F512/M129 小用例，
 覆盖 BF16、BF16-rounded FP32、full-precision FP32 三类 TopK 路由权重，逐一组合
-bf16/none/mxfp8/auto 与 clipping 0/0.1。`gather` 选择六条 FP32 full-precision
+`bf16`、`mxfp8`、`none` 与 clipping 0/0.1。`gather` 选择六条 FP32 full-precision
 用例：M8191/8192/8193、TopK4 或 TopK8，对应 R=M*TopK 为
 32764/32768/32772 和 65528/65536/65544，覆盖 32768 元素窗口的边界和第三窗口尾块。
 exact 数学边界由布局 CPU 测试覆盖；这些 NPU shape 不声称逐整数扫描窗口边界。
-`all` 选择全部 42 条。
+`all` 选择全部 36 条。
 `--case-id` 可重复指定，仅选择清单内的 ID。套件参数由 JSON 决定，不被单例 shape 参数覆盖。
 `--list-cases` 不导入 Torch/ATK，不启动设备：
 

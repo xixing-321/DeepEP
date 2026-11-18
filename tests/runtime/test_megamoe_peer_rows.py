@@ -24,7 +24,7 @@ def test_peer_row_mapping_round_trip(tmp_path, fast_path, slices, combine):
             "-O2",
             f"-DMEGAMOE_PREFILL_PEER_FAST_PATH={fast_path}",
             f"-DDEEPEP_MEGAMOE_BF16_BACKWARD_SLICES={slices}",
-            f"-DDEEPEP_MEGAMOE_BF16_COMBINE_SLICES={combine}",
+            f"-DDEEPEP_MEGAMOE_BF16_BACKWARD_COMBINE_SLICES={combine}",
             f"-iquote{root}",
             f"-iquote{root / 'experiments/megamoe/csrc/kernels/mega_moe'}",
             str(root / "tests/runtime/megamoe_peer_rows_test.cpp"),

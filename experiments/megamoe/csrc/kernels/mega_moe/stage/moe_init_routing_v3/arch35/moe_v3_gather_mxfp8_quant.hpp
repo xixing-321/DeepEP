@@ -315,7 +315,7 @@ private:
     __aicore__ inline void InitKernelTiling(const MoeInitRoutingV3Arch35TilingData* tilingData);
     __aicore__ inline void CopyInGatherIdx(int64_t globalTokenIdx);
     __aicore__ inline void ProcessOneToken(int64_t globalTokenIdx);
-    __aicore__ inline void CopyIn(int64_t srcTokenIdx);
+    __aicore__ inline void CopyInput(int64_t srcTokenIdx);
     __aicore__ inline void Compute(uint32_t xElemNum, uint32_t scaleElemNum, uint32_t validScaleElemNum);
     __aicore__ inline void CopyOut(int64_t dstIdx);
 
@@ -444,8 +444,8 @@ __aicore__ inline void MoeGatherOutMxfp8Quant<T, U>::CopyInGatherIdx(int64_t glo
 template <typename T, typename U>
 __aicore__ inline void MoeGatherOutMxfp8Quant<T, U>::ProcessOneToken(int64_t globalTokenIdx)
 {
-    // CopyIn -> Compute（一次量化）
-    CopyIn(globalTokenIdx);
+    // CopyInput -> Compute（一次量化）
+    CopyInput(globalTokenIdx);
     Compute(perLoopCols_, perLoopScaleCols_, perLoopScaleCols_);
 
     // DeQue 一次量化结果，写出 k 份（不插 MTE3 等待）
@@ -457,7 +457,7 @@ __aicore__ inline void MoeGatherOutMxfp8Quant<T, U>::ProcessOneToken(int64_t glo
 }
 
 template <typename T, typename U>
-__aicore__ inline void MoeGatherOutMxfp8Quant<T, U>::CopyIn(int64_t srcTokenIdx)
+__aicore__ inline void MoeGatherOutMxfp8Quant<T, U>::CopyInput(int64_t srcTokenIdx)
 {
     LocalTensor<T> inLocal = xInQueue_.AllocTensor<T>();
     DataCopyExtParams copyInParam = {1, static_cast<uint32_t>(perLoopCols_ * sizeof(T)), 0, 0, 0};

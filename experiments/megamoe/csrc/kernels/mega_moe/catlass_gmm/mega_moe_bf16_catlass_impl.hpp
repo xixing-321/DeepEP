@@ -34,7 +34,6 @@
 #include "stage/mega_moe_combine_send.hpp"
 #include "common/mega_moe_bf16_wave_plan.hpp"
 #include "common/mega_moe_bf16_wave_completion.hpp"
-#include "stage/peer_row_view.hpp"
 
 namespace MegaMoeBF16ForwardCatlassImpl {
 
@@ -194,20 +193,7 @@ public:
             if (!ready) {
                 MegaMoeTrainTimerPassiveScope wait(params.timer, MegaMoeTrainTimer::AIC_GMM1_WAIT, slice.expert,
                                                    slice.row + m, shape.m(), n, kRows, kPairedColumns, h, f);
-                if constexpr (DEEPEP_BF16_FORCE_EXPERT_READY != 0) {
-                    const GmPeerPrefix prefix{reinterpret_cast<__gm__ int32_t*>(params.workspaceInfo.ptrcumsumMM)};
-                    const auto expert =
-                        DescribePeerExpert(prefix, params.tilingData->epWorldSize, params.tilingData->expertPerRank,
-                                           slice.expert, params.tilingData->maxOutputSize, params.peerRowsGroups);
-                    const uint32_t rest = expert.rows - expert.firstSliceRows;
-                    const uint32_t waveRows = params.peerRowsGroups * kGroupRows;
-                    const uint32_t slices = 1U + (rest + waveRows - 1U) / waveRows;
-                    auto* flag = reinterpret_cast<__gm__ int32_t*>(params.workspaceInfo.ptrFlagDispatchToGmm1);
-                    while (AscendC::ReadGmByPassDCache(flag + slice.expert * 16U) < cores * slices) {
-                    }
-                } else {
-                    while (AscendC::ReadGmByPassDCache(dispatchReady) < cores) {
-                    }
+                while (AscendC::ReadGmByPassDCache(dispatchReady) < cores) {
                 }
                 AscendC::SyncFunc<AscendC::HardEvent::S_MTE2>();
                 ready = true;

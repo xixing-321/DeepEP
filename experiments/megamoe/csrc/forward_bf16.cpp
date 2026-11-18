@@ -72,7 +72,7 @@ ForwardResult MegaMoeBF16Forward(torch::Tensor context, torch::Tensor x, torch::
 
     const MegaMoeBF16Training::TrainingSavedStateLayout savedStateLayout(
         m, k, topk, worldSize, expertPerRank, maxRecvTokens, n,
-        MegaMoeBF16Training::SaveGateUpAsMxFp8(tiling.swigluLimit, tiling.savedGateUpMode),
+        tiling.savedGateUpMode == MegaMoeBF16Training::kSaveMxFp8,
         tiling.savedGateUpMode != MegaMoeBF16Training::kSaveNone,
         MegaMoeBF16Training::SaveGateUpClipMasks(tiling.swigluLimit, tiling.savedGateUpMode), false, topkWeightBytes);
     const MegaMoeBF16Training::DispatchOutputLayout dispatchOutputLayout(k, maxRecvTokens, topkWeightBytes);
@@ -175,16 +175,6 @@ void BF16Plan::close()
     workspace_ = torch::Tensor();
 }
 
-ops::ForwardResult BF16Plan::forward(torch::Tensor x, torch::Tensor topk_ids, torch::Tensor topk_weights,
-                                     torch::Tensor weight1, torch::Tensor weight2, int64_t max_recv_tokens,
-                                     double swiglu_limit, const std::string& save_gmm1_output)
-{
-    TORCH_CHECK(address_ != 0, "training operator has been closed");
-    return ops::MegaMoeBF16Forward(Context(x), x, topk_ids, topk_weights, weight1, weight2, max_recv_tokens, rank_,
-                                   world_size_, SymmetricBufferBytes(), ffts_addr_, SymmetricBuffer(), swiglu_limit,
-                                   save_gmm1_output, {}, {}, workspace_, weight_before_gmm2_);
-}
-
 ops::ForwardResult BF16Plan::forward_out(torch::Tensor out, torch::Tensor x, torch::Tensor topk_ids,
                                          torch::Tensor topk_weights, torch::Tensor weight1, torch::Tensor weight2,
                                          int64_t max_recv_tokens, double swiglu_limit,
@@ -202,7 +192,7 @@ ops::ForwardResult BF16Plan::forward_with_timer(torch::Tensor x, torch::Tensor i
                                                 const std::string& mode, c10::optional<torch::Tensor> out)
 {
     TORCH_CHECK(address_ != 0, "training operator has been closed");
-    auto timer = AllocateTrainingTimer(x, weights, w1, w2, maxRecv, 0, limit, mode);
+    auto timer = AllocateTrainingTimer(x, weights, w1, w2, maxRecv, 0, mode);
     return ops::MegaMoeBF16Forward(Context(x), x, ids, weights, w1, w2, maxRecv, rank_, world_size_,
                                    SymmetricBufferBytes(), ffts_addr_, SymmetricBuffer(), limit, mode,
                                    out.value_or(torch::Tensor()), timer, workspace_, weight_before_gmm2_);

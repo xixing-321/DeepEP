@@ -66,29 +66,29 @@ def inspect_wheel(path):
         if len([n for n in names if n.endswith("deepseek-deepep.LICENSE")]) != 1:
             raise RuntimeError("Wheel must include the adopted API's third-party license")
         info = json.loads(archive.read("deep_ep/_build_info.json"))
-        beta = info.get("megamoe", {}).get("enabled", False)
-        training = info.get("megamoe_train", {}).get("enabled", False)
+        megamoe_enabled = info.get("megamoe", {}).get("enabled", False)
         component = "deep_ep_experimental/megamoe/"
         members = [n for n in names if n.startswith(component)]
-        if any("deep_ep_experimental/megamoe_train/" in n for n in names):
-            raise RuntimeError("Obsolete separate MegaMoE training package")
         if any(component in n and not n.startswith(component) for n in names):
             raise RuntimeError("Wheel contains nested MegaMoE staging")
-        if beta or training:
-            required = {component + "api.py", component + "__init__.py"}
-            if beta:
-                required.update(component + n for n in ("benchmark.py", "configs/smoke.json", "libmegamoe_kernel.so"))
-            if training:
-                required.update(component + n for n in ("_bf16.py", "_autograd.py", "libdeepep_megamoe_train_bf16.so"))
-            extensions = [n for n in members if n.startswith(component + "_C.") and n.endswith(".so")]
-            if len(extensions) != 1 or not required.issubset(names):
-                raise RuntimeError("Incomplete MegaMoE unified wheel")
-            if not training and component + "libdeepep_megamoe_train_bf16.so" in names:
-                raise RuntimeError("BF16 device library in a training-OFF wheel")
-            if not beta and component + "libmegamoe_kernel.so" in names:
-                raise RuntimeError("Quantized device library in an inference-OFF wheel")
+        if megamoe_enabled:
+            required = (
+                "__init__.py",
+                "api.py",
+                "_bf16.py",
+                "_autograd.py",
+                "benchmark.py",
+                "configs/smoke.json",
+                "libmegamoe_kernel.so",
+            )
+            libraries = [n for n in members if n.endswith(".so")]
+            extensions = [n for n in libraries if n.startswith(component + "_C.")]
+            if len(extensions) != 1 or any(component + n not in names for n in required):
+                raise RuntimeError("Incomplete MegaMoE wheel")
+            if len(libraries) != 2:
+                raise RuntimeError("MegaMoE wheel must contain exactly one Host extension and one device library")
         elif members:
-            raise RuntimeError("MegaMoE Beta payload in an OFF wheel; use a fresh build directory")
+            raise RuntimeError("MegaMoE payload in an OFF wheel; use a fresh build directory")
         component = "deep_ep_experimental/ep_gmm_fused/"
         if any(component in n and not n.startswith(component) for n in names):
             raise RuntimeError("Wheel contains nested EP_GMM_FUSED staging artifacts")
@@ -354,13 +354,17 @@ def main():
             "assert not torch.npu.is_initialized(); print('Installed shared EP_GMM_FUSED runtime verified')"
         )
     run([python, "-I", "-c", probe], output, env, 120)
-    if info.get("megamoe", {}).get("enabled"):
-        probe_beta = (
-            "import pathlib,sys; from deep_ep_experimental.megamoe.api import _extension; "
+    megamoe = info.get("megamoe", {})
+    if megamoe.get("enabled"):
+        probe_megamoe = (
+            "import pathlib,sys,torch,torch_npu; from deep_ep_experimental.megamoe.api import _extension; "
             "m=_extension(); assert pathlib.Path(m.__file__).resolve().is_relative_to(pathlib.Path(sys.prefix).resolve()); "
-            "assert callable(m.forward) and callable(m.buffer_size); print('Installed MegaMoE extension loaded; no device call')"
+            "assert m.quantized_enabled and m.bf16_enabled; "
+            "assert callable(m.Plan.forward) and callable(m.BF16Plan.forward_out) and callable(m.BF16Plan.backward); "
+            f"assert m.timer_enabled is {megamoe['timer']!r}; "
+            "assert not torch.npu.is_initialized(); print('Installed MegaMoE extension verified')"
         )
-        run([python, "-I", "-c", probe_beta], output, env, 120)
+        run([python, "-I", "-c", probe_megamoe], output, env, 120)
     # Copy tests, not the Python package: sys.path cannot select checkout code.
     shutil.copytree(source / "tests", output / "tests", ignore=shutil.ignore_patterns("__pycache__"))
     shutil.copytree(

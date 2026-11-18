@@ -40,24 +40,22 @@ def test_training_owner_rejects_second_owner_and_releases(monkeypatch):
     assert _runtime._OWNER is None
 
 
-@pytest.mark.parametrize("training", [False, True])
-@pytest.mark.parametrize("inference", [False, True])
+@pytest.mark.parametrize("megamoe", [False, True])
 @pytest.mark.parametrize("fused", [False, True])
-def test_optional_package_combinations(monkeypatch, training, inference, fused):
+def test_optional_package_combinations(monkeypatch, megamoe, fused):
     import setuptools
 
     root = Path(__file__).resolve().parents[2]
     monkeypatch.chdir(root)
     for key, value in (
-        ("DEEPEP_BUILD_MEGAMOE_TRAIN", training),
-        ("DEEPEP_BUILD_MEGAMOE", inference),
+        ("DEEPEP_BUILD_MEGAMOE", megamoe),
         ("DEEPEP_BUILD_EP_GMM_FUSED", fused),
     ):
         monkeypatch.setenv(key, "ON" if value else "OFF")
     captured = {}
     monkeypatch.setattr(setuptools, "setup", lambda **kwargs: captured.update(kwargs))
     runpy.run_path(str(root / "setup.py"))
-    for component, selected in (("megamoe", training or inference), ("ep_gmm_fused", fused)):
+    for component, selected in (("megamoe", megamoe), ("ep_gmm_fused", fused)):
         package = f"deep_ep_experimental.{component}"
         assert (package in captured["packages"]) is selected
         if selected:
@@ -65,7 +63,6 @@ def test_optional_package_combinations(monkeypatch, training, inference, fused):
             if path is None:
                 path = captured["package_dir"]["deep_ep_experimental"] + "/" + component
             assert (root / path / "__init__.py").is_file()
-    assert "deep_ep_experimental.megamoe_train" not in captured["packages"]
     assert len(captured["packages"]) == len(set(captured["packages"]))
 
 
@@ -207,7 +204,7 @@ def test_training_bootstrap_agrees_on_debug_before_creating_native_owner(monkeyp
         runtime.close()
 
 
-def test_expert_ready_builds_use_distinct_cache_and_record_actual_policy(monkeypatch, tmp_path):
+def test_bf16_builds_use_distinct_cache_and_record_actual_options(monkeypatch, tmp_path):
     import json
     import sys
     from types import ModuleType
@@ -222,7 +219,7 @@ def test_expert_ready_builds_use_distinct_cache_and_record_actual_policy(monkeyp
     monkeypatch.setenv("CMAKE_BUILD_PARALLEL_LEVEL", "2")
     # Exercise the real build command and cache key without invoking SDK tools.
     configuration = {
-        "megamoe_train": {"enabled": True, "force_expert_ready": False},
+        "megamoe": {"enabled": True, "timer": False},
         "source_sha256": "current",
         "source_version": "1",
         "cmake_path": "cmake",
@@ -250,9 +247,9 @@ def test_expert_ready_builds_use_distinct_cache_and_record_actual_policy(monkeyp
     ext = Extension("deep_ep._C", sources=[])
     import itertools
 
-    for forced, schedule, slices, combine in itertools.product((False, True), (0, 1), (False, True), (False, True)):
-        configuration["megamoe_train"].update(
-            force_expert_ready=forced, forward_schedule=str(schedule), backward_slices=slices, combine_slices=combine
+    for schedule, slices, combine in itertools.product((0, 1), (False, True), (False, True)):
+        configuration["megamoe"].update(
+            bf16_forward_schedule=str(schedule), bf16_backward_slices=slices, bf16_backward_combine_slices=combine
         )
         command = build.CMakeBuild(Distribution({"ext_modules": [ext]}))
         command.ensure_finalized()
@@ -262,15 +259,20 @@ def test_expert_ready_builds_use_distinct_cache_and_record_actual_policy(monkeyp
         destination.mkdir(parents=True, exist_ok=True)
         command.build_extension(ext)
         args = configure_calls[-1]
-        assert f"-DDEEPEP_BF16_FORCE_EXPERT_READY={'ON' if forced else 'OFF'}" in args
-        assert "-DDEEPEP_BUILD_MEGAMOE_TRAIN=ON" in args
+        assert "-DDEEPEP_BUILD_MEGAMOE=ON" in args
         assert f"-DDEEPEP_MEGAMOE_BF16_FORWARD_SCHEDULE={schedule}" in args
         assert f"-DDEEPEP_MEGAMOE_BF16_BACKWARD_SLICES={'ON' if slices else 'OFF'}" in args
-        assert f"-DDEEPEP_MEGAMOE_BF16_COMBINE_SLICES={'ON' if combine else 'OFF'}" in args
+        assert f"-DDEEPEP_MEGAMOE_BF16_BACKWARD_COMBINE_SLICES={'ON' if combine else 'OFF'}" in args
         info = json.loads((destination / "_build_info.json").read_text(encoding="utf-8"))
-        assert info["megamoe_train"]["force_expert_ready"] is forced
+        assert info["megamoe"] == {
+            "enabled": True,
+            "timer": False,
+            "bf16_forward_schedule": str(schedule),
+            "bf16_backward_slices": slices,
+            "bf16_backward_combine_slices": combine,
+        }
         assert info["shmem_runtime"] == {"test": "hash"}
         assert published[-1] == destination.resolve()
     object_directories = [args[args.index("-B") + 1] for args in configure_calls]
-    assert len(set(object_directories)) == 16
-    assert len(published) == 16
+    assert len(set(object_directories)) == 8
+    assert len(published) == 8

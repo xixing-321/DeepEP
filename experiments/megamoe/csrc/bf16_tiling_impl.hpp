@@ -471,7 +471,7 @@ WorkspaceInfo CalcWorkspaceSize(const MegaMoeBf16TilingData& td)
     ws.totalSize += HostCeilAlign(static_cast<int64_t>(td.epWorldSize) * td.expertPerRank * SIZE_INT_32, ALIGN_512);
     ws.totalSize += SIZE_INT_32 * HostCeilAlign(static_cast<int64_t>(td.m), ALIGN_256) * td.topK * 2;
     ws.totalSize += SIZE_INT_32 * HostCeilAlign(static_cast<int64_t>(td.epWorldSize) * td.expertPerRank, ALIGN_128);
-    ws.totalSize += 2 * HostCeilAlign(static_cast<int64_t>(SIZE_INT_32) * td.expertPerRank * INT_CACHELINE, ALIGN_128);
+    ws.totalSize += HostCeilAlign(static_cast<int64_t>(SIZE_INT_32) * td.expertPerRank * INT_CACHELINE, ALIGN_128);
     return ws;
 }
 

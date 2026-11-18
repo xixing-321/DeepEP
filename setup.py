@@ -21,10 +21,9 @@ from build_support import (  # noqa: E402
     enabled,
 )
 
-BETA = "experiments/megamoe/python"
-beta_enabled = os.environ.get("DEEPEP_BUILD_MEGAMOE", "OFF") == "ON"
+MEGAMOE = "experiments/megamoe/python"
+megamoe_enabled = os.environ.get("DEEPEP_BUILD_MEGAMOE", "OFF") == "ON"
 ep_gmm_fused = enabled("DEEPEP_BUILD_EP_GMM_FUSED")
-train_enabled = enabled("DEEPEP_BUILD_MEGAMOE_TRAIN")
 packages = find_packages(include=["deep_ep", "deep_ep.*", "ascend_deepep"])
 package_dir = {}
 cmdclass = {"build_ext": CMakeBuild, "install_lib": CheckedInstallLib}
@@ -33,13 +32,11 @@ if ep_gmm_fused:
     package_dir["deep_ep_experimental"] = "experiments/ep_gmm_fused/python/deep_ep_experimental"
     cmdclass["build"] = ConfiguredBuild
     cmdclass["egg_info"] = BuildEggInfo
-if beta_enabled or train_enabled:
-    packages += [name for name in find_packages(where=BETA) if name not in packages]
-    package_dir.setdefault("deep_ep_experimental", BETA + "/deep_ep_experimental")
-    package_dir["deep_ep_experimental.megamoe"] = BETA + "/deep_ep_experimental/megamoe"
+if megamoe_enabled:
+    packages += [name for name in find_packages(where=MEGAMOE) if name not in packages]
+    package_dir.setdefault("deep_ep_experimental", MEGAMOE + "/deep_ep_experimental")
+    package_dir["deep_ep_experimental.megamoe"] = MEGAMOE + "/deep_ep_experimental/megamoe"
     cmdclass["build"] = VariantBuild
-
-if train_enabled:
     cmdclass["egg_info"] = BuildEggInfo
 
 setup(

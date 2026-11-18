@@ -270,7 +270,7 @@ __aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::InitForwardWorkspace(GM_
     using namespace MegaMoeBF16Training;
     const ForwardTransientWorkspaceLayout transient(params_.tilingData->n, expertPerRank_, maxOutputSize_);
     const Wave::ReadyLayout ready(maxOutputSize_, expertPerRank_, k_);
-    const auto mode = ResolveSavedGateUpMode(params_.tilingData->savedGateUpMode, params_.tilingData->swigluLimit);
+    const auto mode = params_.tilingData->savedGateUpMode;
     const Wave::ForwardWorkspaceLayout layout(transient.totalBytes, maxOutputSize_, expertPerRank_, k_,
                                               params_.tilingData->n / 2U, mode == kSaveBf16);
     waveReadyBase_ = workspace + layout.readyOffset;
@@ -305,9 +305,6 @@ __aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::ResetWorkSpaceFlagList()
         auto* words = reinterpret_cast<__gm__ int32_t*>(waveReadyBase_);
         for (uint64_t word = aivCoreIdx_; word < ready.outputOffset / sizeof(int32_t); word += blockAivNum_)
             WriteGmByPassDCache(words + word, 0);
-        auto* flags = reinterpret_cast<__gm__ int32_t*>(params_.workspaceInfo.ptrFlagDispatchToGmm1);
-        for (uint32_t expert = aivCoreIdx_; expert < expertPerRank_; expert += blockAivNum_)
-            WriteGmByPassDCache(flags + expert * INT_CACHELINE, 0);
     }
 }
 
@@ -706,7 +703,7 @@ __aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::Process()
 {
     using namespace MegaMoeBF16Training;
     const bool transW = params_.tilingData->transW;
-    switch (ResolveSavedGateUpMode(params_.tilingData->savedGateUpMode, params_.tilingData->swigluLimit)) {
+    switch (params_.tilingData->savedGateUpMode) {
         case kSaveNone:
             if (transW) {
                 ProcessWithSaveMode<kSaveNone, true>();
@@ -927,10 +924,6 @@ __aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::DispatchWave(const WaveR
         // Publish only after both X and p writes have completed.
         SyncFunc<HardEvent::MTE3_S>();
         AtomicAdd(waveDispatchReady_ + ReadySlot(expertBase, slice.expert, slice.row), int32_t(1));
-        if constexpr (DEEPEP_BF16_FORCE_EXPERT_READY != 0) {
-            auto* expertReady = reinterpret_cast<__gm__ int32_t*>(params_.workspaceInfo.ptrFlagDispatchToGmm1);
-            AtomicAdd(expertReady + slice.expert * INT_CACHELINE, int32_t(1));
-        }
     }
 }
 

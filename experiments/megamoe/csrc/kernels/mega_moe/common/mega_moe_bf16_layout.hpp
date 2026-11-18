@@ -13,18 +13,12 @@
 #define MEGA_MOE_BF16_HOST_DEVICE
 #endif
 
-#ifndef DEEPEP_BF16_FORCE_EXPERT_READY
-#define DEEPEP_BF16_FORCE_EXPERT_READY 0
-#endif
-static_assert(DEEPEP_BF16_FORCE_EXPERT_READY == 0 || DEEPEP_BF16_FORCE_EXPERT_READY == 1,
-              "DEEPEP_BF16_FORCE_EXPERT_READY must be 0 or 1");
-
 // Compile-time selection of the GM slice-ready backward pipeline.
 #ifndef DEEPEP_MEGAMOE_BF16_BACKWARD_SLICES
 #define DEEPEP_MEGAMOE_BF16_BACKWARD_SLICES 0
 #endif
-#ifndef DEEPEP_MEGAMOE_BF16_COMBINE_SLICES
-#define DEEPEP_MEGAMOE_BF16_COMBINE_SLICES 0
+#ifndef DEEPEP_MEGAMOE_BF16_BACKWARD_COMBINE_SLICES
+#define DEEPEP_MEGAMOE_BF16_BACKWARD_COMBINE_SLICES 0
 #endif
 
 namespace MegaMoeBF16Training {
@@ -133,12 +127,7 @@ struct CompactTokenCountExchangeLayout {
 };
 
 // Host normalizes the public swiglu_limit=0 to FLT_MAX in tiling.
-enum SavedGateUpMode : uint32_t { kSaveAuto = 0, kSaveNone = 1, kSaveBf16 = 2, kSaveMxFp8 = 3 };
-
-MEGA_MOE_BF16_HOST_DEVICE constexpr uint32_t ResolveSavedGateUpMode(uint32_t mode, float tilingLimit)
-{
-    return mode == kSaveAuto ? (tilingLimit == FLT_MAX ? kSaveMxFp8 : kSaveBf16) : mode;
-}
+enum SavedGateUpMode : uint32_t { kSaveNone = 1, kSaveBf16 = 2, kSaveMxFp8 = 3 };
 
 // A complete row uses 6F bytes of BF16 inputs, 4F bytes of FP32 products
 // and a padded scalar result. Wider rows keep the tiled partial path.
@@ -203,17 +192,12 @@ MEGA_MOE_BF16_HOST_DEVICE constexpr bool UseBackwardDispatchRowReady(uint32_t sa
     return UseGmForBackwardDataGrad(savedMode) && ordinal < splitExperts && effectiveRows > computeRows;
 }
 
-MEGA_MOE_BF16_HOST_DEVICE constexpr bool SaveGateUpAsMxFp8(float tilingLimit, uint32_t mode = kSaveAuto)
-{
-    return ResolveSavedGateUpMode(mode, tilingLimit) == kSaveMxFp8;
-}
-
 // v2 appends three uint32 bit planes only for explicit MXFP8 with clipping.
 // All v1 prefix/data/scale offsets are retained. No GM header or initialization.
 enum SavedClipMaskKind : uint32_t { kClipMaskNone = 0, kClipMaskThreeBitplanesV1 = 1 };
 MEGA_MOE_BF16_HOST_DEVICE constexpr bool SaveGateUpClipMasks(float tilingLimit, uint32_t mode)
 {
-    return SaveGateUpAsMxFp8(tilingLimit, mode) && tilingLimit != FLT_MAX;
+    return mode == kSaveMxFp8 && tilingLimit != FLT_MAX;
 }
 
 // AIV0 epilogue only. Dispatch and GMM2 own UB in different phases.
@@ -367,16 +351,13 @@ struct TrainingSavedStateLayout {
 struct ForwardTransientWorkspaceLayout {
     uint64_t ptrA2Offset;
     uint64_t swigluToGmm2FlagOffset;
-    uint64_t dispatchToGmm1FlagOffset;
     uint64_t totalBytes;
 
     MEGA_MOE_BF16_HOST_DEVICE constexpr ForwardTransientWorkspaceLayout(uint64_t n, uint64_t expertPerRank,
                                                                         uint64_t maxRecvTokens)
         : ptrA2Offset(0),
           swigluToGmm2FlagOffset(ptrA2Offset + AlignUp(maxRecvTokens * (n / 2) * kBf16Bytes, kAlignment512)),
-          dispatchToGmm1FlagOffset(swigluToGmm2FlagOffset +
-                                   AlignUp(expertPerRank * kIntCacheline * kInt32Bytes, kAlignment128)),
-          totalBytes(dispatchToGmm1FlagOffset + AlignUp(expertPerRank * kIntCacheline * kInt32Bytes, kAlignment128))
+          totalBytes(swigluToGmm2FlagOffset + AlignUp(expertPerRank * kIntCacheline * kInt32Bytes, kAlignment128))
     {
     }
 };

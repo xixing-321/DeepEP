@@ -136,8 +136,7 @@ def runtime_identity():
             for name in ("deep_ep._C", "deep_ep_experimental.megamoe._C")
         },
         "kernel_library": fingerprint(
-            Path(importlib.import_module("deep_ep_experimental.megamoe").__file__).parent
-            / "libdeepep_megamoe_train_bf16.so"
+            Path(importlib.import_module("deep_ep_experimental.megamoe").__file__).parent / "libmegamoe_kernel.so"
         ),
         "build_info": json.loads(
             (Path(importlib.import_module("deep_ep").__file__).parent / "_build_info.json").read_text(encoding="utf-8")

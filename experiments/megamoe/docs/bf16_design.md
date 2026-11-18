@@ -35,6 +35,13 @@ SHMEM窗口属于根Runtime，BF16 Plan只借用地址。prepare或首次调用�
 输入保留原Tensor的梯度连接。每次前向保存独立counts、dispatch数据及反向状态，后续前向可以复用临时区。
 buffer锁及caller/runtime stream依赖对调用排序；异步Tensor登记record_stream。
 
-反向保存行映射每route占两个uint32，描述物理行及连续段，不复制整份行序。
-BF16整行路径一次读取dHp/Gate/Up，融合dP/Hp/dZ。归约计划使用完整rank的路由行数和全部AIV，不随局部行分工改变。
+## GMM1 保存与反向
+
+| 保存类型 | 反向如何获得 Gate 和 Up |
+| --- | --- |
+| `bf16` | 读取前向保存的 BF16 值。在整行路径中，一次读取 dHp、Gate、Up，生成 dP、Hp 和 dZ。 |
+| `mxfp8` | 按前向保存的 Wave 行序读取量化值和比例因子。在寄存器中以 FP32 解码并舍入为 BF16。启用裁剪时，梯度使用前向保存的掩码。 |
+| `none` | 利用前向保留的分发输入重新执行 GMM1，得到 Gate 和 Up。 |
+
+保存行映射每条 route 占两个 uint32，记录物理行和连续段。dP 归约计划使用整个 rank 的路由行数和全部 AIV，保持各分片的归约顺序。dP 回传以 UB 中的源 rank 前缀定位行区间，将梯度写回原来的 TopK slot。
 dHp覆盖为Hp前完成本行dP；dX覆盖dO前，等待dHp和dW2的全部读者退出。

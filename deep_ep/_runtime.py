@@ -138,7 +138,7 @@ class Runtime:
             integer("world_size", size, 2, 1024)
             factory = getattr(native, "create_megamoe_train_runtime", None)
             if factory is None:
-                raise RuntimeError("Rebuild with DEEPEP_BUILD_MEGAMOE_TRAIN=ON")
+                raise RuntimeError("Rebuild with DEEPEP_BUILD_MEGAMOE=ON")
         elif self._megamoe:
             integer("world_size", size, 2, 128)
             factory = getattr(native, "create_megamoe_runtime", None)

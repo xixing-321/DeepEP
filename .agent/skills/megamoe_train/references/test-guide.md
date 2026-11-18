@@ -6,7 +6,7 @@ Modified by guofanfeng 2026
 # MegaMoE BF16 测试入口
 
 本目录只有**一个**测试入口 `test_mega_moe.py`，精度与性能共用它。用例清单见
-[cases.json](../../../../experiments/megamoe/tests/bf16/cases.json)；12 条典型尺寸、24 条类型/保存模式和 6 条 Gather 边界的覆盖理由见
+[cases.json](../../../../experiments/megamoe/tests/bf16/cases.json)；12 条典型尺寸、18 条类型/保存模式和 6 条 Gather 边界的覆盖理由见
 [TEST_SPEC.md](test-spec.md)；模块级构建、接口与保存模式见
 [模块 README](../../../../experiments/megamoe/README.md#bf16前向与训练)。
 
@@ -15,7 +15,7 @@ Modified by guofanfeng 2026
 | 项 | 要求 |
 | --- | --- |
 | 设备 | 单节点 Ascend950；EP = 传入的设备列表长度，物理卡号 |
-| 安装 | 已安装带训练扩展的 wheel（`DEEPEP_BUILD_MEGAMOE_TRAIN=ON`），默认 `python` 能导入 `deep_ep_experimental.megamoe` |
+| 安装 | 已安装带训练扩展的 wheel（`DEEPEP_BUILD_MEGAMOE=ON`），默认 `python` 能导入 `deep_ep_experimental.megamoe` |
 | 环境 | `source <CANN>/set_env.sh`；SHMEM 使用 wheel 内附的运行库，不预加载其他 SDK |
 | 端口 | `--shmem-ip-port tcp://IP:port`；Gloo 另用 `port+2`，两者都不得被占用 |
 | 精度 | 需要 ATK 与内部 `atk-private-precision`；`--skip precision` 不需要 |
@@ -70,7 +70,7 @@ python -u experiments/megamoe/tests/bf16/test_mega_moe.py 0,1,2,3,4,5,6,7 \
 | 方式 | 说明 |
 | --- | --- |
 | `--suite priority` / `model` | 同一组 12 条模型用例 |
-| `--suite dtype` / `gather` / `all` | 分别选择 24 条类型/保存模式、6 条 FP32 Gather 边界、全部 42 条 |
+| `--suite dtype` / `gather` / `all` | 分别选择 18 条类型/保存模式、6 条 FP32 Gather 边界、全部 36 条 |
 | `--case-id <id>`（可重复） | 在选中套件内取子集，例如 `--case-id pro_m4096 --case-id glm_m8192` |
 | `--list-cases` | 只打印配置，不导入 Torch/ATK、不访问设备 |
 | 不使用 `--suite` | 单 case 模式，全部参数由命令行给出（见下） |
@@ -188,7 +188,7 @@ MFU 差异的关键量。
   "libraries": {
     "deep_ep._C":            {"path": "/…/deep_ep/_C…so", "sha256": "…"},
     "megamoe._C":      {"path": "/…/megamoe/_C…so", "sha256": "…"},
-    "megamoe_train_kernel":  {"path": "/…/libdeepep_megamoe_train_bf16.so", "sha256": "…"}
+    "megamoe_kernel":  {"path": "/…/libmegamoe_kernel.so", "sha256": "…"}
   }
 }
 ```

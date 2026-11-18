@@ -91,8 +91,8 @@ struct ForwardWorkspaceLayout {
     uint64_t readyOffset, rawUpOffset, rawUpBytes, totalBytes;
     MEGA_MOE_WAVE_HOST_DEVICE constexpr ForwardWorkspaceLayout(uint64_t baseBytes, uint64_t capacity, uint64_t experts,
                                                                uint64_t hidden, uint64_t ffn, bool savedBf16)
-        : readyOffset(baseBytes),
-          rawUpOffset(baseBytes + ReadyLayout(capacity, experts, hidden).bytes),
+        : readyOffset((baseBytes + 511U) / 512U * 512U),
+          rawUpOffset(readyOffset + ReadyLayout(capacity, experts, hidden).bytes),
           rawUpBytes(savedBf16 ? 0U : (capacity * ffn * sizeof(uint16_t) + 511U) / 512U * 512U),
           totalBytes(rawUpOffset + rawUpBytes)
     {

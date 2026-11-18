@@ -180,7 +180,7 @@ class SymmBuffer:
         ext = _extension()
         if bf16:
             if not getattr(ext, "bf16_enabled", False):
-                raise RuntimeError("Install a wheel built with DEEPEP_BUILD_MEGAMOE_TRAIN=ON")
+                raise RuntimeError("Install a wheel built with DEEPEP_BUILD_MEGAMOE=ON")
             capacity = int(
                 ext.bf16_buffer_size(
                     num_max_tokens_per_rank,
