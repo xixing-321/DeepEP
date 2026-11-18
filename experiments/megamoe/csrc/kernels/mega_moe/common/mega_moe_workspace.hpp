@@ -32,6 +32,7 @@ struct WorkspaceInfo {
     GM_ADDR flagSendCntCalToUpdParamsPtr;
     GM_ADDR flagGmmToEpiloguePtr{nullptr};
     GM_ADDR gmm2ReadyPtr{nullptr};
+    GM_ADDR gmm2SubmittedPtr{nullptr};
     GM_ADDR gmm2CombineSyncCounterPtr{nullptr};
     GM_ADDR cumsumInfoPtr{nullptr};
     GM_ADDR gmm1MmadResPtr{nullptr};
@@ -156,6 +157,13 @@ private:
                                               ? waveFlagSlotsPerExpert
                                               : static_cast<int64_t>(tilingData->aicNum) * INT_CACHELINE;
             workspaceSize += SIZE_INT_32 * moeExpertCount * readySlotsPerExpert;
+        }
+
+        if (useMteWaveCombine && tilingData->groupedMatmulMode == GROUPED_MATMUL_MODE_A8W4 &&
+            tilingData->combineQuantMode == COMBINE_NO_QUANT && tilingData->sharedExpertNum == 0U) {
+            // Per-AIC slice sequence. Reset together with the existing ready counters.
+            gmm2SubmittedPtr = base + workspaceSize;
+            workspaceSize += static_cast<int64_t>(tilingData->aicNum) * INT_CACHELINE * SIZE_INT_32;
         }
 
         if (tilingData->topoType == TOPO_TYPE_URMA) {

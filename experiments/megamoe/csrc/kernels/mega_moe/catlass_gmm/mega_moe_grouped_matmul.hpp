@@ -168,8 +168,8 @@ public:
         }
     }
 
-    // Preserve the old slice boundary: GMM2/other stages may reuse the same
-    // event IDs and L1/L0/UB storage while this C++ object remains alive.
+    // Retire the active pipeline before another execution path takes ownership
+    // of its hardware events and L1/L0/UB storage.
     __aicore__ inline void End(bool outputDrained = false)
     {
         if (active_) {
@@ -227,6 +227,14 @@ public:
         fused_ = ProblemConfig::FUSED_GATE_UP;
         planarSingle_ = config.sharedPolicy.decode;
         halfN_ = config.outputN;
+    }
+
+    // Routed GMM1 and GMM2 share the same physical MMAD and prologue resources.
+    __aicore__ inline void UpdateDownProblem(const Config& config, const GMMAddrInfo& addr)
+    {
+        Pipeline::UpdateProblem(config, addr, addr.gmm2OutGlobal);
+        fused_ = false;
+        planarSingle_ = true;
     }
     __aicore__ inline void Compute(uint32_t m, uint32_t n, uint32_t rows, uint32_t cols)
     {

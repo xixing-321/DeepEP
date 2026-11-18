@@ -79,6 +79,7 @@ struct GMMAddrInfo {
     __gm__ int32_t* gmmToEpilogueFlag;
     __gm__ int32_t* gmm1TileStatus;
     __gm__ int32_t* sharedExpertGmm2TileCounter;
+    void* routedA8W4Pipeline = nullptr;
     // 仅 Wave 调试采集设置；其他调用保持空指针。
     AscendTimerDevice* timer = nullptr;
 };

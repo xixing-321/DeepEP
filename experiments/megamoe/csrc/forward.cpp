@@ -144,6 +144,10 @@ uint64_t HostFlagElements(const MegaMoeTilingData& t)
                                                     : static_cast<uint64_t>(t.aicNum) * MegaMoeImpl::INT_CACHELINE;
         count += static_cast<uint64_t>(t.moeExpertPerRank) * ready_slots_per_expert;
     }
+    if (t.topoType == MegaMoeImpl::TOPO_TYPE_MTE && t.groupedMatmulMode == MegaMoeImpl::GROUPED_MATMUL_MODE_A8W4 &&
+        t.combineQuantMode == MegaMoeImpl::COMBINE_NO_QUANT && t.sharedExpertNum == 0U) {
+        count += static_cast<uint64_t>(t.aicNum) * MegaMoeImpl::INT_CACHELINE;
+    }
     if (t.sharedExpertNum > 0U) {
         count += CeilDiv<uint64_t>(t.bs, 256U) * t.sharedExpertNum * MegaMoeImpl::INT_CACHELINE;
         if (t.topoType == MegaMoeImpl::TOPO_TYPE_MTE && t.groupedMatmulMode == MegaMoeImpl::GROUPED_MATMUL_MODE_A8W4) {

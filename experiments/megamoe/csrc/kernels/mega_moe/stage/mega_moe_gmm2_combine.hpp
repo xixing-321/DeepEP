@@ -674,13 +674,14 @@ __aicore__ inline void Gmm2AicMmadA8W4(BlockMmad& blockMmad, Scheduler& schedule
         }
 
         blockMmad.Compute(mLoc, nLoc, Get<M_VALUE>(actualShape), Get<N_VALUE>(actualShape));
-        if constexpr ((NotifyCombineTileReady || TokenCombine) && !IsShared) {
-            // 保留 tile 基线的 FIX 完成边界；token 路径改在 slice 结束后发布行前缀，
-            // 不再推进 GMM1/SwiGLU 复用的配对序号。
+        if constexpr (NotifyCombineTileReady && !IsShared) {
             AscendC::SetFlag<AscendC::HardEvent::FIX_S>(0);
             AscendC::WaitFlag<AscendC::HardEvent::FIX_S>(0);
-            if constexpr (NotifyCombineTileReady) {
-                AscendC::WriteGmByPassDCache(gmmAddrInfo.gmmToEpilogueFlag, ++(*gmTileSequence));
+            AscendC::WriteGmByPassDCache(gmmAddrInfo.gmmToEpilogueFlag, ++(*gmTileSequence));
+        } else if constexpr (TokenCombine) {
+            if (gmmAddrInfo.routedA8W4Pipeline == nullptr) {
+                AscendC::SetFlag<AscendC::HardEvent::FIX_S>(0);
+                AscendC::WaitFlag<AscendC::HardEvent::FIX_S>(0);
             }
         } else if constexpr (IsLayered && !IsShared) {
             NotifyCombineConsumersOfTileCompletion(rowOffsetInExpert + mLoc, groupSyncSlotLayout,
@@ -775,6 +776,24 @@ __aicore__ inline void Gmm2ExecA8W4(Scheduler& scheduler, const GMMAddrInfo& gmm
                                     uint32_t rowOffsetInExpert, const Params* params = nullptr,
                                     int32_t* gmTileSequence = nullptr)
 {
+    if constexpr (TokenCombine) {
+        if (gmmAddrInfo.routedA8W4Pipeline != nullptr) {
+            // The routed GMM1 and GMM2 launchers instantiate the same Config.
+            auto& kernel = *static_cast<CatlassGmm1<Config>*>(gmmAddrInfo.routedA8W4Pipeline);
+            if constexpr (g_coreType == AscendC::AIC) {
+                kernel.UpdateDownProblem(config, gmmAddrInfo);
+                kernel.Begin();
+                Gmm2AicMmadA8W4<IsShared, IsLayered, NotifyCombineTileReady, TokenCombine>(
+                    kernel, scheduler, gmmAddrInfo, config, startLoopIdx, tileNum, expertTokenCount, rowOffsetInExpert,
+                    gmTileSequence);
+            } else if (GetSubBlockIdx() == 0U) {
+                kernel.UpdateDownProblem(config, gmmAddrInfo);
+                kernel.Begin();
+                Gmm2Aiv0PrologueA8W4(kernel, scheduler, config, startLoopIdx, tileNum);
+            }
+            return;
+        }
+    }
     using KernelConfig = typename Config::KernelConfig;
     using ElementA = typename KernelConfig::ElementAType;
     using ElementB = typename KernelConfig::ElementBType;

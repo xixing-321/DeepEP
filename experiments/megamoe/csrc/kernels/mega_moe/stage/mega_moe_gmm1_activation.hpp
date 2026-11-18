@@ -755,7 +755,7 @@ __aicore__ inline void Gmm1Aiv1EpilogueA8W4(WorkSet& workSet, const GMMAddrInfo&
     }
 }
 
-// Kernel lifetime is independent of scratch ownership: each slice begins and drains events.
+// A routed Wave can retain scratch ownership across GMM1 and GMM2.
 template <bool IsShared, bool TopkWeightsPrefetch, typename Config, typename WorkSet>
 __aicore__ inline void RunGmm1CatlassTiles(CatlassGmm1<Config>& kernel, WorkSet& workSet, const Params& params,
                                            const GMMAddrInfo& addr, const Config& config, uint32_t startLoopIdx,
@@ -766,10 +766,10 @@ __aicore__ inline void RunGmm1CatlassTiles(CatlassGmm1<Config>& kernel, WorkSet&
     if constexpr (g_coreType == AscendC::AIC) {
         Gmm1AicMmadA8W4<CatlassGmm1<Config>, IsShared, TopkWeightsPrefetch>(
             kernel, workSet, params, addr, config, startLoopIdx, tileNum, readySequence, expertIdx);
-        kernel.End(true);  // Tile readiness publication already drained FIX.
+        if (addr.routedA8W4Pipeline == nullptr) kernel.End(true);
     } else {
         Gmm1Aiv0PrologueA8W4(kernel, workSet.scheduler, config, startLoopIdx, tileNum);
-        kernel.End();
+        if (addr.routedA8W4Pipeline == nullptr) kernel.End();
     }
 }
 
