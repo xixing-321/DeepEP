@@ -10,11 +10,22 @@
 
 #include "moe_v3_common.hpp"
 #include "kernel_operator.h"
-#include "op_kernel/load_store_utils.hpp"
+#include "basic_api/kernel_vec_intf.h"
 
 namespace MoeInitRoutingV3 {
 using namespace AscendC;
 constexpr int64_t GATHER_OUT_DYNAMIC_QUANT_BUFFER_NUM = 1;
+
+template <typename T>
+__aicore__ inline void LoadB16AsFp32(__local_mem__ T* input, Reg::RegTensor<float>& output, Reg::MaskReg& mask)
+{
+    static constexpr Reg::CastTrait castTrait = {
+        Reg::RegLayout::ZERO, Reg::SatMode::UNKNOWN, Reg::MaskMergeMode::ZEROING, RoundMode::UNKNOWN,
+    };
+    Reg::RegTensor<T> values;
+    Reg::DataCopy<T, Reg::LoadDist::DIST_UNPACK_B16>(values, input);
+    Reg::Cast<float, T, castTrait>(output, values, mask);
+}
 
 template <typename T>
 class MoeGatherOutDynamicQuant {
@@ -137,7 +148,7 @@ __aicore__ inline void MoeGatherOutDynamicQuant<T>::Compute(LocalTensor<float>& 
         for (uint16_t i = 0; i < repeatTimes; i++) {
             maskRegInLoop = Reg::UpdateMask<float>(sreg);
             if constexpr (!IsSameType<T, float>::value) {
-                ops::LoadOneTensorForDtypeT<T>(inUbAddrCastT, inReg, maskRegInLoop, i * FLOAT_REG_TENSOR_LENGTH);
+                LoadB16AsFp32(inUbAddrCastT + i * FLOAT_REG_TENSOR_LENGTH, inReg, maskRegInLoop);
             } else {
                 Reg::DataCopy(inReg, inUbAddr + i * FLOAT_REG_TENSOR_LENGTH);
             }
@@ -278,7 +289,7 @@ __aicore__ inline float MoeGatherOutDynamicQuant<T>::ComputeMax(LocalTensor<floa
         for (uint16_t i = 0; i < repeatTimes; i++) {
             maskRegLoop = Reg::UpdateMask<float>(sreg);
             if constexpr (!IsSameType<T, float>::value) {
-                ops::LoadOneTensorForDtypeT<T>(inUbAddrCastT, inReg, maskRegLoop, i * FLOAT_REG_TENSOR_LENGTH);
+                LoadB16AsFp32(inUbAddrCastT + i * FLOAT_REG_TENSOR_LENGTH, inReg, maskRegLoop);
             } else {
                 Reg::DataCopy(inReg, inUbAddr + i * FLOAT_REG_TENSOR_LENGTH);
             }

@@ -31,7 +31,7 @@
 
 #include "kernel_operator.h"
 #include "stage/mega_moe_slice_ready.hpp"
-#include "op_kernel/mc2_kernel_utils.hpp"
+#include "mc2_common/mc2_kernel_utils.hpp"
 #include "catlass/arch/arch.hpp"
 #include "catlass/arch/resource.hpp"
 #include "catlass/catlass.hpp"
@@ -49,11 +49,11 @@
 #include "catlass/gemm/tile/tile_copy.hpp"
 #include "catlass/layout/layout.hpp"
 #include "catlass/gemm/tile/copy_l0c_to_gm.hpp"
+#include "catlass/gemm/tile/copy_l0c_to_ub.hpp"
 #include "tla/layout.hpp"
 #include "tla/tensor.hpp"
 
 #include "epilogue/block_epilogue_swiglu_bf16_backward.hpp"
-#include "catlass_gmm/copy_l0c_to_ub.hpp"
 #include "catlass_gmm/copy_saved_rows_to_l1.hpp"
 #include "common/mega_moe_bf16_context.hpp"
 #include "stage/mega_moe_dispatch_ready_backward.hpp"
@@ -79,43 +79,6 @@ constexpr uint32_t MAX_SINGLE_MN = L1_TILE_M * L1_TILE_N;
 constexpr uint32_t DUAL_AIV_TARGET = 2;
 static_assert(2U * MAX_SINGLE_MN * sizeof(bfloat16_t) <= ArchTag::UB_SIZE, "The two BF16 GMM tiles must fit in A5 UB");
 
-// Save=none P1 uses one BlockMmad instance (one CATLASS L1/L0 pipeline),
-// but Fixpipe must be able to select either paired AIV at runtime. Encode the
-// target AIV in the destination tensor's row coordinate: row 0 means AIV0,
-// row L1_TILE_M means AIV1. The physical UB offset remains zero on the chosen
-// AIV; the extra logical row band is only a control marker for this copier.
-template <class TensorSrc, class TensorDst>
-struct CopyL0CToDualAivUBTla {
-    using ElementDst = typename TensorDst::Element;
-    using ElementSrc = typename TensorSrc::Element;
-    static constexpr auto quantPre =
-        Catlass::Gemm::Tile::CopyL0CToDstQuantMode<ArchTag, ElementSrc, ElementDst,
-                                                   Catlass::Gemm::Tile::ScaleGranularity::NO_QUANT>::VALUE;
-
-    template <class DstTensor, class SrcTensor>
-    CATLASS_DEVICE void operator()(DstTensor const& dstTensor, SrcTensor const& srcTensor, uint8_t unitFlag = 0)
-    {
-        AscendC::FixpipeParamsC310<AscendC::CO2Layout::ROW_MAJOR> intriParams;
-        intriParams.nSize = tla::get<1>(dstTensor.originShape());
-        intriParams.mSize = tla::get<0>(dstTensor.originShape());
-        intriParams.srcStride = tla::get<1, 1>(srcTensor.stride()) / tla::get<0, 0>(srcTensor.stride());
-        intriParams.dstStride = tla::get<0>(dstTensor.stride());
-        intriParams.quantPre = quantPre;
-        intriParams.reluEn = false;
-        intriParams.unitFlag = unitFlag;
-
-        const uint32_t logicalRow = static_cast<uint32_t>(tla::get<0>(dstTensor.coord()));
-        intriParams.subBlockId = logicalRow >= L1_TILE_M ? 1U : 0U;
-
-        // Remove the logical AIV selector from the physical UB row offset.
-        const auto logicalDstOffset = dstTensor.layout()(dstTensor.coord());
-        const auto dstOffset = logicalDstOffset % MAX_SINGLE_MN;
-        const auto srcOffset = srcTensor.layout()(srcTensor.coord());
-        AscendC::Fixpipe<ElementDst, ElementSrc, CFG_ROW_MAJOR_UB>(dstTensor.data()[dstOffset],
-                                                                   srcTensor.data()[srcOffset], intriParams);
-    }
-};
-
 // Backward TileCopy selects A/B layouts for transW and the GEMM phase.
 // Data gradients use RowMajor A; weight gradients use ColumnMajor A.
 // GmOutput selects L0C -> GM for recompute, saved-mode data gradients
@@ -129,11 +92,25 @@ struct BackwardBF16TileCopy : Catlass::Gemm::Tile::PackedTileCopyTla<ArchTag, bf
     using TensorL0C = typename Base::TensorL0C;
 
     template <class TensorC>
-    using CopyL0CToDst =
-        std::conditional_t<TargetUBIdx == DUAL_AIV_TARGET, CopyL0CToDualAivUBTla<TensorL0C, TensorC>,
-                           Catlass::Gemm::Tile::CopyL0CToTargetUBTla<
-                               ArchTag, TensorL0C, TensorC, Catlass::Gemm::Tile::CopyL0CToUBMode::NO_SPLIT,
-                               Catlass::Gemm::Tile::ScaleGranularity::NO_QUANT, TargetUBIdx, false>>;
+    struct CopyL0CToDst {
+        template <class TensorDst, class TensorSrc>
+        CATLASS_DEVICE void operator()(TensorDst const& dst, TensorSrc const& src, uint8_t unitFlag = 0)
+        {
+            using Copy =
+                Catlass::Gemm::Tile::CopyL0CToUBTla<ArchTag, TensorL0C, TensorC,
+                                                    Catlass::Gemm::Tile::CopyL0CToUBMode::NO_SPLIT,
+                                                    Catlass::Gemm::Tile::ScaleGranularity::NO_QUANT, false>;
+            if constexpr (TargetUBIdx == DUAL_AIV_TARGET) {
+                // The second logical M band selects AIV1. Each AIV has its own UB tile at the same offset.
+                const bool aiv1 = static_cast<uint32_t>(tla::get<0>(dst.coord())) >= L1_TILE_M;
+                const auto ubOffset = dst.layout()(dst.coord()) % MAX_SINGLE_MN;
+                const auto ubTile = tla::MakeTensor(dst.data()[ubOffset], dst.layout(), Catlass::Arch::PositionUB{});
+                Copy{}(ubTile, src, aiv1, unitFlag);
+            } else {
+                Copy{}(dst, src, TargetUBIdx == 1U, unitFlag);
+            }
+        }
+    };
 };
 
 // L0C -> GM specialization for recompute, saved data gradients and dW.

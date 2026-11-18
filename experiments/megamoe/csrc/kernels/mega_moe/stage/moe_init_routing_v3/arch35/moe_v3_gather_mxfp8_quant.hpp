@@ -9,8 +9,8 @@
 #define MOE_V3_GATHER_MXFP8_QUANT_HPP
 
 #include "moe_v3_common.hpp"
-#include "op_kernel/platform_util.hpp"
-#include "op_kernel/math_util.hpp"
+#include "op_common/op_kernel/math_util.h"
+#include "op_common/op_kernel/platform_util.h"
 
 namespace MoeInitRoutingV3 {
 using namespace AscendC;

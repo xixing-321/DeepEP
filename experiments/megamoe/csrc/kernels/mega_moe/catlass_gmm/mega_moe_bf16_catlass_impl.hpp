@@ -28,7 +28,6 @@
 #include "tla/tensor.hpp"
 
 #include "epilogue/block_epilogue_swiglu_bf16.hpp"
-#include "catlass_gmm/copy_l0c_to_ub.hpp"
 #include "catlass/gemm/tile/copy_l0c_to_gm.hpp"
 #include "common/mega_moe_bf16_context.hpp"
 #include "stage/mega_moe_combine_send.hpp"
