@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "mega_moe_pack_bf16.hpp"
 #include "mega_moe_route_compact.hpp"
 #include "mc2_common/mc2_kernel_utils.hpp"
 
@@ -60,59 +61,28 @@ __aicore__ inline void PackTokens(GlobalTensor<int32_t>& rows, GM_ADDR input, GM
                                   uint32_t end, uint32_t topK, uint32_t hidden)
 {
     constexpr uint32_t slotElements = 32768;
-    const uint32_t cols = hidden < slotElements ? hidden : slotElements;
-    const uint32_t stride = (cols + 15U) / 16U * 16U;
-    const uint32_t batch = stride <= slotElements / 4 ? 4 : (stride <= slotElements / 2 ? 2 : 1);
+    const PackTile tile(hidden, slotElements);
     TPipe pipe;
     constexpr uint32_t indexBatch = 256;
     TBuf<> storage, indexStorage;
     pipe.InitBuffer(indexStorage, indexBatch * sizeof(int32_t));
     auto localRows = indexStorage.Get<int32_t>();
-    pipe.InitBuffer(storage, 2 * batch * stride * sizeof(bfloat16_t));
+    pipe.InitBuffer(storage, 2 * tile.rows * tile.stride * sizeof(bfloat16_t));
     auto buf = storage.Get<bfloat16_t>();
     GlobalTensor<bfloat16_t> x, out;
     x.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(input));
     out.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(packed));
-    SetFlag<HardEvent::MTE3_MTE2>(EVENT_ID0);
-    SetFlag<HardEvent::MTE3_MTE2>(EVENT_ID1);
-    uint32_t step = 0;
+    BeginPackRows();
+    uint32_t ping = 0;
     for (uint32_t chunk = begin; chunk < end; chunk += indexBatch) {
         const uint32_t count = end - chunk < indexBatch ? end - chunk : indexBatch;
         DataCopyPad(localRows, rows[chunk], {1U, count * 4U, 0U, 0U, 0U},
                     DataCopyPadExtParams<int32_t>{false, 0U, 0U, 0U});
         SyncFunc<HardEvent::MTE2_S>();
-        for (uint32_t first = chunk; first < chunk + count; first += batch) {
-            const uint32_t n = chunk + count - first < batch ? chunk + count - first : batch;
-            uint64_t source[4];
-            for (uint32_t r = 0; r < n; ++r)
-                source[r] = static_cast<uint64_t>(localRows.GetValue(first - chunk + r) / topK) * hidden;
-            for (uint32_t col = 0; col < hidden; col += cols, ++step) {
-                const uint32_t width = hidden - col < cols ? hidden - col : cols;
-                const uint32_t slot = step % 2;
-                const auto event = slot == 0 ? EVENT_ID0 : EVENT_ID1;
-                auto local = buf[slot * batch * stride];
-                WaitFlag<HardEvent::MTE3_MTE2>(event);
-                for (uint32_t r = 0; r < n; ++r) {
-                    DataCopyPad(local[r * stride], x[source[r] + col], {1U, width * 2U, 0U, 0U, 0U},
-                                DataCopyPadExtParams<bfloat16_t>{false, 0U, 0U, 0U});
-                }
-                SetFlag<HardEvent::MTE2_MTE3>(event);
-                WaitFlag<HardEvent::MTE2_MTE3>(event);
-                if (width == hidden && stride == hidden) {
-                    DataCopyPad(out[static_cast<uint64_t>(first) * hidden], local, {1U, n * width * 2U, 0U, 0U, 0U});
-                } else {
-                    for (uint32_t r = 0; r < n; ++r) {
-                        DataCopyPad(out[static_cast<uint64_t>(first + r) * hidden + col], local[r * stride],
-                                    {1U, width * 2U, 0U, 0U, 0U});
-                    }
-                }
-                SetFlag<HardEvent::MTE3_MTE2>(event);
-            }
-        }
+        PackRows(localRows, x, out[static_cast<uint64_t>(chunk) * hidden], buf, tile, count, hidden, topK, ping);
         SyncFunc<HardEvent::S_MTE2>();
     }
-    WaitFlag<HardEvent::MTE3_MTE2>(EVENT_ID0);
-    WaitFlag<HardEvent::MTE3_MTE2>(EVENT_ID1);
+    DrainPackRows();
     pipe.Destroy();
 }
 

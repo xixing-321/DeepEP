@@ -48,6 +48,8 @@
 #include "mc2_common/mc2_kernel_utils.hpp"
 #include "common/mega_moe_bf16_context.hpp"
 #include "stage/mega_moe_combine_send.hpp"
+#include "stage/mega_moe_pack_bf16.hpp"
+#include "stage/mega_moe_unpermute_bf16.hpp"
 #include "epilogue/block_epilogue_swiglu_bf16_backward.hpp"
 #include "catlass_gmm/mega_moe_bf16_catlass_impl_backward.hpp"
 
@@ -459,66 +461,17 @@ __aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::GatherRoutes()
     GlobalTensor<QuantOutType> ptrA0;
     ptrA0.SetGlobalBuffer((__gm__ QuantOutType*)params_.peermemInfo.ptrA0);
 
-    // Both gather paths copy raw dY in route order. The forward scales h
-    // before W2, so P1 forms dH=FP32(dHp)*FP32(p), not weighted dO here.
-    // Preserve the fixed P0 window above all three P1/P2 work tiles.
-    // Do not borrow their space: P1 may already fixpipe while P0-B runs.
-    const uint32_t capacity = MegaMoeBF16BackwardCatlassImpl::ArchTag::UB_SIZE - BW_STAGE_BASE_BYTES;
-    const uint32_t rowBytes = k_ * sizeof(bfloat16_t);
-
-    const uint32_t batchRows = 8U * rowBytes <= capacity ? 4U : (4U * rowBytes <= capacity ? 2U : 1U);
-    if (batchRows > 1U && batchRows * rowBytes <= 65504U) {
-        const uint32_t slotElements = batchRows * k_;
-        auto arena = StageUb(2U * batchRows * rowBytes);
-        SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0);
-        SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1);
-        uint32_t batch = 0;
-        for (int32_t first = 0; first < coreLen; first += batchRows, ++batch) {
-            const uint32_t rows =
-                static_cast<uint32_t>(coreLen - first) < batchRows ? static_cast<uint32_t>(coreLen - first) : batchRows;
-            int64_t source[4];
-            for (uint32_t i = 0; i < rows; ++i) {
-                source[i] =
-                    static_cast<int64_t>(expandedRowIdx(coreOffset + first + i) / static_cast<int32_t>(topK_)) * k_;
-            }
-            const auto event = batch % 2U == 0U ? EVENT_ID0 : EVENT_ID1;
-            auto slot = arena[(batch % 2U) * slotElements];
-            WaitFlag<AscendC::HardEvent::MTE3_MTE2>(event);
-            SetFlag<AscendC::HardEvent::S_MTE2>(EVENT_ID0);
-            WaitFlag<AscendC::HardEvent::S_MTE2>(EVENT_ID0);
-            for (uint32_t i = 0; i < rows; ++i) {
-                DataCopy(slot[i * k_], gradY[source[i]], k_);
-            }
-            SetFlag<AscendC::HardEvent::MTE2_MTE3>(event);
-            WaitFlag<AscendC::HardEvent::MTE2_MTE3>(event);
-            DataCopy(ptrA0[(static_cast<int64_t>(coreOffset) + first) * k_], slot, rows * k_);
-            SetFlag<AscendC::HardEvent::MTE3_MTE2>(event);
-        }
-        WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0);
-        WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1);
-        return;
+    // P0 packs raw dY. Its two DMA slots sit above the live P1/P2 work tiles.
+    constexpr uint32_t capacity = MegaMoeBF16BackwardCatlassImpl::ArchTag::UB_SIZE - BW_STAGE_BASE_BYTES;
+    const Bf16Route::PackTile tile(k_, capacity / (2 * sizeof(bfloat16_t)));
+    auto slots = StageUb(2 * tile.rows * tile.stride * sizeof(bfloat16_t));
+    uint32_t ping = tile.rows == 1 ? static_cast<uint32_t>(coreOffset) % 2U : 0U;
+    Bf16Route::BeginPackRows();
+    if (coreLen > 0) {
+        Bf16Route::PackRows(expandedRowIdx[coreOffset], gradY, ptrA0[static_cast<uint64_t>(coreOffset) * k_], slots,
+                            tile, coreLen, k_, topK_, ping);
     }
-
-    const uint32_t gatherBytes =
-        Ops::Base::CeilAlign(static_cast<uint32_t>(2 * k_ * sizeof(bfloat16_t)), static_cast<uint32_t>(ALIGN_32));
-    LocalTensor<QuantOutType> dataIn0Bf16 = StageUb(gatherBytes);
-    LocalTensor<QuantOutType> dataIn1Bf16 = dataIn0Bf16[k_];
-
-    SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0);
-    SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1);
-    for (int32_t route = coreOffset; route < coreOffset + coreLen; route++) {
-        int32_t token = expandedRowIdx(route) / static_cast<int32_t>(topK_);
-        auto event = (route % 2 == 0) ? EVENT_ID0 : EVENT_ID1;
-        auto dataInBf16 = (route % 2 == 0) ? dataIn0Bf16 : dataIn1Bf16;
-        WaitFlag<AscendC::HardEvent::MTE3_MTE2>(event);
-        DataCopy(dataInBf16, gradY[token * static_cast<int64_t>(k_)], k_);
-        SetFlag<AscendC::HardEvent::MTE2_MTE3>(event);
-        WaitFlag<AscendC::HardEvent::MTE2_MTE3>(event);
-        DataCopy(ptrA0[route * static_cast<int64_t>(k_)], dataInBf16, k_);
-        SetFlag<AscendC::HardEvent::MTE3_MTE2>(event);
-    }
-    WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0);
-    WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1);
+    Bf16Route::DrainPackRows();
 }
 
 template <typename TopkWeightT>
@@ -1246,17 +1199,15 @@ __aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::UnpermuteBackward()
             auto event = (expId % 2 == 0) ? EVENT_ID0 : EVENT_ID1;
             auto dataInBf16 = (expId % 2 == 0) ? dataIn0Bf16 : dataIn1Bf16;
             auto dataInFp32 = (expId % 2 == 0) ? dataIn0Fp32 : dataIn1Fp32;
-            WaitFlag<AscendC::HardEvent::V_MTE2>(event);
-            DataCopy(dataInBf16, ptrD[rowIdx * static_cast<int64_t>(k_)], k_);
-            SetFlag<AscendC::HardEvent::MTE2_V>(event);
+            MegaMoeBF16Routing::LoadUnpermuteInput(dataInBf16, ptrD, rowIdx, k_, expId % 2);
             WaitFlag<AscendC::HardEvent::MTE2_V>(event);
-            Cast(dataInFp32, dataInBf16, AscendC::RoundMode::CAST_NONE, k_);
-            PipeBarrier<PIPE_V>();
             if (expId == 0) {
+                // dX includes +0.0F in the first slot, including for a negative zero input.
+                Cast(dataInFp32, dataInBf16, AscendC::RoundMode::CAST_NONE, k_);
+                PipeBarrier<PIPE_V>();
                 Adds(dataResFp32, dataInFp32, 0.0F, k_);
             } else {
-                Add(dataResFp32, dataResFp32, dataInFp32, k_);
-                PipeBarrier<PIPE_V>();
+                MegaMoeBF16Routing::AccumulateUnpermuteRoute(dataResFp32, dataInFp32, dataInBf16, k_, false);
             }
             SetFlag<AscendC::HardEvent::V_MTE2>(event);
         }
