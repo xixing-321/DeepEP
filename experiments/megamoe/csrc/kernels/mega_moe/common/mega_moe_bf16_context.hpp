@@ -12,7 +12,6 @@
 #include "lib/std/tuple.h"
 #include "timer/ascend_timer_device.hpp"
 #include "common/mega_moe_bf16_tiling.hpp"
-#include "stage/moe_init_routing_v3/arch35/moe_init_routing_v3_apt.hpp"
 #include "common/mega_moe_bf16_workspace_view.hpp"
 
 using namespace AscendC;

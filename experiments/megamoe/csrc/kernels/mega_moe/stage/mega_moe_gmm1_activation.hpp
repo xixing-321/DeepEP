@@ -868,21 +868,20 @@ __aicore__ inline void RunGmm1Generic(
     uint32_t tileNum = scheduler.GetTileNum();
 
     if (GetSubBlockIdx() != 0) {
-        startBlockIdx = (startBlockIdx + tileNum) % config.blockNum;
+        startBlockIdx = GetGmmNextStartBlock(startBlockIdx, tileNum, config.blockNum);
         return;
     }
     if constexpr (g_coreType == AIV) {
         epilogueOp.UpdateNextProblem({config.m, config.outputN, config.k, 0});
     }
 
-    uint32_t startLoopIdx =
-        (config.blockIdx < startBlockIdx ? config.blockIdx + config.blockNum : config.blockIdx) - startBlockIdx;
+    uint32_t startLoopIdx = GetGmmFirstOwnedTile(config.blockIdx, config.blockNum, startBlockIdx);
     // Sparse/small-M experts can expose fewer tiles than logical AIC groups.
     // Idle groups must only advance the shared cursor; constructing a large-K
     // BlockMmad without a matching sibling AIV task can leave the MIX group in
     // an unmatched synchronization state.
     if (startLoopIdx >= tileNum) {
-        startBlockIdx = (startBlockIdx + tileNum) % config.blockNum;
+        startBlockIdx = GetGmmNextStartBlock(startBlockIdx, tileNum, config.blockNum);
         return;
     }
     using BlockMmad = typename GmmConfig::BlockMmad;
@@ -894,7 +893,7 @@ __aicore__ inline void RunGmm1Generic(
                                                   epilogueOp, vecSetSyncCom, expertBeforeCnt, expertIdx, pingpongIdx,
                                                   typedBlockMmadContext, allowWeightL2Bypass);
 
-    startBlockIdx = (startBlockIdx + tileNum) % config.blockNum;
+    startBlockIdx = GetGmmNextStartBlock(startBlockIdx, tileNum, config.blockNum);
 }
 
 template <typename ElementA, typename EpilogueElementA, typename ElementB, typename ElementC, typename ElementMxScaleA,
@@ -982,10 +981,9 @@ __aicore__ inline void RunGmm1A8W4(BlockEpilogueActivationMxQuant<ElementA, Elem
                                         GmmKernel::BlockScheduler::Params{Te::MakeCoord(
                                             static_cast<int64_t>(config.tileM), static_cast<int64_t>(config.tileN))});
     uint32_t tileNum = scheduler.GetTileNum();
-    uint32_t startLoopIdx =
-        (config.blockIdx < startBlockIdx ? config.blockIdx + config.blockNum : config.blockIdx) - startBlockIdx;
+    uint32_t startLoopIdx = GetGmmFirstOwnedTile(config.blockIdx, config.blockNum, startBlockIdx);
     if (startLoopIdx >= tileNum) {
-        startBlockIdx = (startBlockIdx + tileNum) % config.blockNum;
+        startBlockIdx = GetGmmNextStartBlock(startBlockIdx, tileNum, config.blockNum);
         return;
     }
 
@@ -994,7 +992,7 @@ __aicore__ inline void RunGmm1A8W4(BlockEpilogueActivationMxQuant<ElementA, Elem
         scheduler, params, gmmAddrInfo, config, startLoopIdx, tileNum, gmm1TileReadySequence, activationQuantOp,
         expertBeforeCnt, expertIdx, reinterpret_cast<GmmKernel::CatlassGmm1<decltype(config)>*>(persistentKernel));
 
-    startBlockIdx = (startBlockIdx + tileNum) % config.blockNum;
+    startBlockIdx = GetGmmNextStartBlock(startBlockIdx, tileNum, config.blockNum);
 }
 
 template <typename ElementA, typename ElementB, typename ElementC, typename ElementMxScaleA, typename ElementMxScaleB,

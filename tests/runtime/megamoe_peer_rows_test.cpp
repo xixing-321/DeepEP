@@ -25,6 +25,14 @@ struct Prefix {
 
 int main()
 {
+    // A prefix above 2^32 still rotates the remainder to the correct worker.
+    constexpr uint64_t wavePrefix = (uint64_t{1} << 32) + 1;
+    static_assert(MegaMoeImpl::GetRotatedBalancedTokenRange(8, 2, 3, wavePrefix).count == 3);
+    static_assert(MegaMoeImpl::GetRotatedBalancedTokenRange(8, 1, 3, wavePrefix).start == 6);
+    static_assert(MegaMoeImpl::GetBalancedTokenRange(2, 3, 4).count == 0);
+    static_assert(MegaMoeImpl::GetGmmFirstOwnedTile(0, 4, 1) == 3);
+    static_assert(MegaMoeImpl::GetGmmFirstOwnedTile(0, 4, 1, true) == 2);
+    static_assert(MegaMoeImpl::GetGmmNextStartBlock(3, 3, 4) == 2);
     assert(kGmm1Rows == 256 && kGmm2Rows == 256 && GroupsPerWave(32, 3072, 7168) == 3);
     assert(MetadataFits(128, 4));
     assert(MetadataFits(1024, 2));

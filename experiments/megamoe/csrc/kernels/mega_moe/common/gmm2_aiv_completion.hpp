@@ -27,6 +27,11 @@ struct Gmm2AivCompletion {
         AscendC::WriteGmByPassDCache(submitted, sequence);
     }
 
+    __aicore__ static inline bool HasPending(__gm__ int32_t* submitted, int32_t completed)
+    {
+        return AscendC::ReadGmByPassDCache(submitted) > completed;
+    }
+
     __aicore__ static inline void Wait()
     {
         AscendC::CrossCoreWaitFlag<kMode, PIPE_S>(kFull);
@@ -37,11 +42,11 @@ struct Gmm2AivCompletion {
         AscendC::CrossCoreSetFlag<kMode, PIPE_S>(kEmpty);
     }
 
-    __aicore__ static inline void Drain()
+    __aicore__ static inline void Drain(AscendC::TEventID fenceEvent)
     {
         AscendC::CrossCoreWaitFlag<kMode, PIPE_FIX>(kAiv1 | kEmpty);
-        AscendC::SetFlag<AscendC::HardEvent::FIX_S>(0);
-        AscendC::WaitFlag<AscendC::HardEvent::FIX_S>(0);
+        AscendC::SetFlag<AscendC::HardEvent::FIX_S>(fenceEvent);
+        AscendC::WaitFlag<AscendC::HardEvent::FIX_S>(fenceEvent);
     }
 };
 

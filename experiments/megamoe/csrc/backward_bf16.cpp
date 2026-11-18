@@ -1,21 +1,91 @@
 // Copyright (c) 2026, Lu Lu
 // Modified by guofanfeng 2026
 
-#include "plan/bf16_support.hpp"
+#include "forward.hpp"
+#include "kernel_launch.hpp"
 
-namespace deepep::megamoe::bf16::ops {
-BackwardResult MegaMoeBF16Backward(torch::Tensor context, torch::Tensor gradY, torch::Tensor topkWeights,
-                                   torch::Tensor weight1, torch::Tensor weight2, torch::Tensor expertTokenNums,
-                                   torch::Tensor trainingSavedState, torch::Tensor dispatchOutput,
-                                   int64_t maxRecvTokens, int rank, int worldSize, std::size_t symmetricBufferBytes,
-                                   uint64_t ffts_addr, void* symmetricBuffer, double swigluLimit,
-                                   const std::string& save_gmm1_output, torch::Tensor timer)
+#include <algorithm>
+#include <cstdlib>
+#include <limits>
+
+#include <tiling/platform/platform_ascendc.h>
+#include "kernels/mega_moe/common/mega_moe_bf16_layout.hpp"
+#include "kernels/mega_moe/common/mega_moe_bf16_saved_meta.hpp"
+#include "torch_npu/csrc/core/npu/NPUCachingAllocator.h"
+#include "torch_npu/csrc/core/npu/NPUStream.h"
+
+#include "kernels/mega_moe/common/mega_moe_workspace_backward.hpp"
+
+namespace {
+
+constexpr std::size_t kBackwardTopkPartialUbBytes = 128ULL * 1024ULL;
+constexpr std::size_t kA5Fp32PerVectorRegister = 64ULL;
+
+constexpr std::size_t Bf16Align(std::size_t value, std::size_t alignment)
 {
+    return (value + alignment - 1) / alignment * alignment;
+}
+
+using MegaMoeBF16BackwardWorkspaceLayout = MegaMoeBF16Training::BackwardWorkspaceLayout;
+
+torch::Tensor AllocateBackwardWorkspace(const MegaMoeBF16BackwardWorkspaceLayout& layout, const torch::Tensor& like)
+{
+    // dO, recomputed gate/up, dZ, Hp and dP partials are payload regions.
+    // Their valid packed rows are fully overwritten before any consumer runs.
+    // Atomic dispatch/ready/done counters and the per-producer progress suffix require zero.
+    TORCH_CHECK(layout.controlOffset <= layout.totalBytes &&
+                    layout.totalBytes <= static_cast<std::size_t>(std::numeric_limits<int64_t>::max()),
+                "invalid MegaMoe BF16 backward workspace initialization range");
+    auto workspace = torch::empty({static_cast<int64_t>(layout.totalBytes)}, like.options().dtype(torch::kUInt8));
+    workspace
+        .narrow(0, static_cast<int64_t>(layout.controlOffset),
+                static_cast<int64_t>(layout.totalBytes - layout.controlOffset))
+        .zero_();
+    return workspace;
+}
+
+void LaunchMegaMoeBF16BackwardKernel(torch::Tensor context, torch::Tensor grad_y, torch::Tensor topk_weights,
+                                     torch::Tensor weight1, torch::Tensor weight2, torch::Tensor grad_x,
+                                     torch::Tensor grad_topk_weights, torch::Tensor grad_weight1,
+                                     torch::Tensor grad_weight2, torch::Tensor training_saved_state,
+                                     torch::Tensor dispatch_output, torch::Tensor backward_workspace,
+                                     const MegaMoeBf16TilingData& tiling, uint32_t splitExperts, uint32_t block_dim,
+                                     uint64_t ffts_addr, torch::Tensor timer)
+{
+    auto stream = c10_npu::getCurrentNPUStream().stream();
+    auto ptr = [](const torch::Tensor& t) { return static_cast<uint8_t*>(t.data_ptr()); };
+    if (timer.defined()) {
+        auto kernel = &deepep_train_mega_moe_bf16_backward_timer_kernel_do;
+        kernel(block_dim, stream, ptr(context), ptr(grad_y), ptr(topk_weights), ptr(weight1), ptr(weight2), ptr(grad_x),
+               ptr(grad_topk_weights), ptr(grad_weight1), ptr(grad_weight2), ptr(training_saved_state),
+               ptr(dispatch_output), ptr(backward_workspace), reinterpret_cast<const uint8_t*>(&tiling), ffts_addr,
+               splitExperts, ptr(timer));
+    } else {
+        auto kernel = &deepep_train_mega_moe_bf16_backward_ready_k_kernel_do;
+        kernel(block_dim, stream, ptr(context), ptr(grad_y), ptr(topk_weights), ptr(weight1), ptr(weight2), ptr(grad_x),
+               ptr(grad_topk_weights), ptr(grad_weight1), ptr(grad_weight2), ptr(training_saved_state),
+               ptr(dispatch_output), ptr(backward_workspace), reinterpret_cast<const uint8_t*>(&tiling), ffts_addr,
+               splitExperts);
+    }
+}
+
+}  // namespace
+
+namespace deepep::megamoe::bf16 {
+
+ops::BackwardResult BF16Plan::Backward(torch::Tensor gradY, torch::Tensor topkWeights, torch::Tensor weight1,
+                                       torch::Tensor weight2, torch::Tensor expertTokenNums,
+                                       torch::Tensor trainingSavedState, torch::Tensor dispatchOutput,
+                                       int64_t maxRecvTokens, double swigluLimit, const std::string& save_gmm1_output,
+                                       torch::Tensor timer)
+{
+    auto context = Context(gradY);
+    const int worldSize = world_size_;
     const int64_t m = gradY.size(0);
     const int64_t k = gradY.size(1);
     TORCH_CHECK(weight1.dim() == 3 && weight2.dim() == 3, "weight1 and weight2 must be rank-3 tensors");
     const int64_t expertPerRank = weight1.size(0);
-    const auto weightLayout = ResolveBf16WeightLayout(weight1, weight2, k);
+    const auto weightLayout = ResolveWeightLayout(weight1, weight2, k);
     const int64_t n = weightLayout.n;
     TORCH_CHECK(topkWeights.dim() == 2 && topkWeights.size(0) == m, "topk_weights must have shape [m, topk]");
     const int64_t topk = topkWeights.size(1);
@@ -58,16 +128,8 @@ BackwardResult MegaMoeBF16Backward(torch::Tensor context, torch::Tensor gradY, t
                 "dispatch_output must be an NPU UInt8 tensor with at least ", dispatchOutputLayout.totalBytes,
                 " bytes");
 
-    MegaMoeBf16TilingData tiling{};
-    const auto hostTiling =
-        detail::MakeMegaMoeHostTiling(tiling, m, k, n, topk, worldSize, expertPerRank, maxRecvTokens, rank, true,
-                                      swigluLimit, true, save_gmm1_output, topkWeightType);
-    tiling.transW = weightLayout.transW;
-    tiling.transW2 = weightLayout.transW;
-    const auto earlyWeightBuffers = detail::GetBf16EarlyTopkWeightBufferBytes(tiling);
-    const uint64_t peerBytes = hostTiling.peer_bytes + earlyWeightBuffers.peer_bytes;
-    TORCH_CHECK(peerBytes <= symmetricBufferBytes, "MegaMoe BF16 backward local_mem_size is too small: need ",
-                peerBytes, " bytes, got ", symmetricBufferBytes);
+    const auto tiling = TilingForCall(m, k, n, topk, expertPerRank, maxRecvTokens, swigluLimit, save_gmm1_output,
+                                      topkWeightType, weightLayout.transW);
 
     constexpr std::size_t kTileRows = 128ULL;
     constexpr std::size_t kTileColumns = 256ULL;
@@ -142,14 +204,13 @@ BackwardResult MegaMoeBF16Backward(torch::Tensor context, torch::Tensor gradY, t
     auto gradTopkWeights = torch::empty_like(topkWeights);
     auto gradWeight1 = torch::empty_like(weight1);
     auto gradWeight2 = torch::empty_like(weight2);
-    ClearMegaMoeWindowControlRegion(symmetricBuffer, symmetricBufferBytes, worldSize, expertPerRank,
-                                    tiling.compactTokenCountExchange != 0);
+    ClearWindowControl();
 
     LaunchMegaMoeBF16BackwardKernel(
         context, gradY, topkWeights, weight1, weight2, gradX, gradTopkWeights, gradWeight1, gradWeight2,
         trainingSavedState, dispatchOutput, backwardWorkspace, tiling, splitExperts,
-        static_cast<uint32_t>(platform_ascendc::PlatformAscendCManager::GetInstance()->GetCoreNumAic()),
-        symmetricBuffer, symmetricBufferBytes, rank, worldSize, ffts_addr, timer);
+        static_cast<uint32_t>(platform_ascendc::PlatformAscendCManager::GetInstance()->GetCoreNumAic()), ffts_addr_,
+        timer);
     const auto stream = c10_npu::getCurrentNPUStream();
     for (const auto* tensor :
          {&context, &gradY, &topkWeights, &weight1, &weight2, &expertTokenNums, &trainingSavedState, &dispatchOutput,
@@ -160,9 +221,6 @@ BackwardResult MegaMoeBF16Backward(torch::Tensor context, torch::Tensor gradY, t
     return {gradX, gradTopkWeights, gradWeight1, gradWeight2, timer};
 }
 
-}  // namespace deepep::megamoe::bf16::ops
-
-namespace deepep::megamoe::bf16 {
 ops::BackwardResult BF16Plan::backward(torch::Tensor grad_y, torch::Tensor topk_weights, torch::Tensor weight1,
                                        torch::Tensor weight2, torch::Tensor counts, torch::Tensor saved_state,
                                        torch::Tensor dispatch_output, int64_t max_recv_tokens, double swiglu_limit,
@@ -170,9 +228,8 @@ ops::BackwardResult BF16Plan::backward(torch::Tensor grad_y, torch::Tensor topk_
 {
     TORCH_CHECK(address_ != 0, "training operator has been closed");
     TORCH_CHECK(weight_before_gmm2_, "BF16 backward requires a need_grad=True Plan");
-    return ops::MegaMoeBF16Backward(Context(grad_y), grad_y, topk_weights, weight1, weight2, counts, saved_state,
-                                    dispatch_output, max_recv_tokens, rank_, world_size_, SymmetricBufferBytes(),
-                                    ffts_addr_, SymmetricBuffer(), swiglu_limit, save_gmm1_output);
+    return Backward(grad_y, topk_weights, weight1, weight2, counts, saved_state, dispatch_output, max_recv_tokens,
+                    swiglu_limit, save_gmm1_output, {});
 }
 
 ops::BackwardResult BF16Plan::backward_with_timer(torch::Tensor dy, torch::Tensor weights, torch::Tensor w1,
@@ -182,10 +239,8 @@ ops::BackwardResult BF16Plan::backward_with_timer(torch::Tensor dy, torch::Tenso
 {
     TORCH_CHECK(address_ != 0, "training operator has been closed");
     TORCH_CHECK(weight_before_gmm2_, "BF16 backward requires a need_grad=True Plan");
-    auto timer = AllocateTrainingTimer(dy, weights, w1, w2, maxRecv, 1, mode);
-    return ops::MegaMoeBF16Backward(Context(dy), dy, weights, w1, w2, counts, saved, dispatch, maxRecv, rank_,
-                                    world_size_, SymmetricBufferBytes(), ffts_addr_, SymmetricBuffer(), limit, mode,
-                                    timer);
+    auto timer = AllocateTimer(dy, weights, w1, w2, maxRecv, 1, mode);
+    return Backward(dy, weights, w1, w2, counts, saved, dispatch, maxRecv, limit, mode, timer);
 }
 
 }  // namespace deepep::megamoe::bf16

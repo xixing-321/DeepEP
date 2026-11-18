@@ -32,6 +32,7 @@
 #include "common/mega_moe_bf16_context.hpp"
 #include "stage/mega_moe_combine_send.hpp"
 #include "common/mega_moe_bf16_wave_plan.hpp"
+#include "csrc/kernels/common/mega_moe_wave_math.hpp"
 #include "common/mega_moe_bf16_wave_completion.hpp"
 
 namespace MegaMoeBF16ForwardCatlassImpl {
@@ -183,7 +184,7 @@ public:
                                   Catlass::Arch::PositionGM{});
         WaveBlockScheduler scheduler({slice.rows, f, h}, Catlass::MakeCoord(kRows, kPairedColumns));
         const uint32_t tasks = scheduler.GetCoreLoops();
-        const uint32_t first = (core < startBlock ? core + cores : core) - startBlock;
+        const uint32_t first = MegaMoeImpl::GetGmmFirstOwnedTile(core, cores, startBlock);
         bool ready = false;
         for (uint32_t task = first; task < tasks; task += cores) {
             const auto coord = scheduler.GetBlockCoord(task);
@@ -209,7 +210,7 @@ public:
             blockMmad(tileA, pairedWeight, output, Catlass::GemmCoord{shape.m(), 2U * shape.n(), shape.k()});
             GateUpCompletion::Publish(sequence++);
         }
-        startBlock = (startBlock + tasks) % cores;
+        startBlock = MegaMoeImpl::GetGmmNextStartBlock(startBlock, tasks, cores);
     }
 
     __aicore__ inline bool Down(const Bf16Params& params, const MegaMoeBF16Training::Wave::Slice& slice, GM_ADDR output,
@@ -232,7 +233,7 @@ public:
         WaveBlockScheduler scheduler({slice.rows, h, f},
                                      Catlass::MakeCoord(kDownRows, MegaMoeBF16Training::Wave::kTileColumns));
         const uint32_t tasks = scheduler.GetCoreLoops();
-        const uint32_t first = (core < startBlock ? core + cores : core) - startBlock;
+        const uint32_t first = MegaMoeImpl::GetGmmFirstOwnedTile(core, cores, startBlock);
         const bool owns = first < tasks;
         uint32_t readyM = 0xffffffffU;
         for (uint32_t task = first; task < tasks; task += cores) {
@@ -257,7 +258,7 @@ public:
             auto tileC = tla::GetTile(tc, tla::MakeCoord(m, n), tla::MakeShape(rows, columns));
             blockMmad(tileA, tileB, tileC, Catlass::GemmCoord{rows, columns, f});
         }
-        startBlock = (startBlock + tasks) % cores;
+        startBlock = MegaMoeImpl::GetGmmNextStartBlock(startBlock, tasks, cores);
         return owns;
     }
 };

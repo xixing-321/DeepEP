@@ -7,10 +7,9 @@
  * for BF16 MMAD; it does not call the CATCCOS DispatchFFNCombine operator.
  */
 #include "kernel_operator.h"
-#include "common/mega_moe_quant_constants.hpp"
 #include "common/mega_moe_bf16_tiling.hpp"
 #include "mega_moe_bf16.hpp"
-#include "launch/kernel_launch.hpp"
+#include "kernel_launch.hpp"
 
 using namespace AscendC;
 using namespace MegaMoeImpl;

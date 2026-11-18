@@ -2,8 +2,8 @@
 // Modified by SimpleBright_Man 2026
 
 #include "csrc/kernels/common/mega_moe_wave_math.hpp"
-#include "plan/quantized.hpp"
-#include "launch/kernel_launch.hpp"
+#include "forward.hpp"
+#include "kernel_launch.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -295,6 +295,15 @@ void CheckTensor(const torch::Tensor& t, int64_t dims, const char* name)
 
 }  // namespace
 
+void FillPeerAddresses(uint64_t* addresses, void* window, int64_t world)
+{
+    for (int64_t peer = 0; peer < world; ++peer) {
+        void* address = aclshmem_ptr(window, static_cast<int32_t>(peer));
+        TORCH_CHECK(address != nullptr, "MegaMoE cannot resolve SHMEM peer ", peer);
+        addresses[peer] = reinterpret_cast<uint64_t>(address);
+    }
+}
+
 Plan::Plan(torch::Tensor example, int64_t intermediate, int64_t topk, int64_t experts, int64_t world,
            int64_t max_tokens, bool is_a8w4, int64_t shared_experts, int64_t ranks_per_node, uint64_t ffts,
            uint64_t symmetric_address, int64_t symmetric_bytes)
@@ -331,11 +340,7 @@ Plan::Plan(torch::Tensor example, int64_t intermediate, int64_t topk, int64_t ex
                 "/", world);
     context.epRankId = static_cast<uint32_t>(rank);
     context.rankSizePerServer = static_cast<uint32_t>(world);
-    for (int64_t peer = 0; peer < world; ++peer) {
-        void* address = aclshmem_ptr(reinterpret_cast<void*>(symmetric_address), static_cast<int32_t>(peer));
-        TORCH_CHECK(address != nullptr, "rank=", rank, " prepare: cannot resolve peer=", peer);
-        context.epHcclBuffer_[peer] = reinterpret_cast<uint64_t>(address);
-    }
+    FillPeerAddresses(context.epHcclBuffer_, reinterpret_cast<void*>(symmetric_address), world);
     ASCEND_DEEPEP_CHECK_ACL(
         aclrtMemcpy(context_.data_ptr(), sizeof(context), &context, sizeof(context), ACL_MEMCPY_HOST_TO_DEVICE));
 }

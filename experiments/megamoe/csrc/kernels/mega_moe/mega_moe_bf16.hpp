@@ -19,8 +19,11 @@
 #include "tla/layout.hpp"
 #include "epilogue/block_epilogue_swiglu_bf16.hpp"
 #include "catlass_gmm/mega_moe_bf16_catlass_impl.hpp"
+#include "common/gmm2_aiv_completion.hpp"
+#include "csrc/kernels/common/mega_moe_wave_math.hpp"
 #include "stage/peer_row_view.hpp"
 #include "common/mega_moe_forward_save.hpp"
+#include "stage/mega_moe_route_bf16.hpp"
 #include "stage/mega_moe_topk_weight_gather.hpp"
 #include "stage/mega_moe_unpermute_bf16.hpp"
 
@@ -29,6 +32,7 @@ using namespace AscendC;
 namespace MegaMoeImpl {
 using TupleShape = AscendC::Shape<int64_t, int64_t, int64_t, int64_t>;
 
+constexpr uint32_t kBf16OverflowModeBit = 60;
 constexpr uint32_t TOPK_WEIGHT_COPY_BUFFER_BYTES = MegaMoeBF16Training::ForwardDispatchUbLayout::kTopkWeightBytes;
 
 template <typename TopkWeightT = bfloat16_t>
@@ -38,7 +42,6 @@ public:
                   "TopK weights must be BF16 or FP32");
     using TopkWeightBitsT = std::conditional_t<sizeof(TopkWeightT) == sizeof(uint16_t), uint16_t, uint32_t>;
     static constexpr uint32_t TOPK_WEIGHT_COPY_ELEMENTS = TOPK_WEIGHT_COPY_BUFFER_BYTES / sizeof(TopkWeightT);
-    using QuantOutType = bfloat16_t;
     using QuantScaleOutType = float;
     __aicore__ inline MegaMoeBF16Forward(){};
     __aicore__ inline void Init(GM_ADDR context, GM_ADDR x, GM_ADDR topkIds, GM_ADDR topkWeights, GM_ADDR weight1,
@@ -740,15 +743,16 @@ __aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::ProcessWithSaveMode()
     if constexpr (g_coreType == AscendC::AIV) {
         CrossRankSyncInWorldSize();
     }
-    int64_t oriOverflowMode = GetCtrlSpr<OVERFLOW_MODE_CTRL, OVERFLOW_MODE_CTRL>();
+    int64_t oriOverflowMode = GetCtrlSpr<kBf16OverflowModeBit, kBf16OverflowModeBit>();
     // 1. Initialize routing and pack BF16 tokens without quantization.
     {
         MegaMoeTrainTimerFixedScope timerStage(timer_, MegaMoeTrainTimer::AIV_INIT_ROUTING);
-        moe_init_routing_v3<bfloat16_t, QuantOutType>(
-            params_.aGmAddr, params_.expertIdxGmAddr, nullptr, nullptr, params_.peermemInfo.ptrA0,
-            params_.workspaceInfo.expandedRowIdx, tokenPerExpertCurRankAddr_, nullptr,
-            params_.workspaceInfo.expandedRowIdxGather, params_.workspaceInfo.ptrA,
-            &params_.tilingData->moeInitRoutingTilingData, params_.tilingData->moeInitRoutingTilingData.tilingKey);
+        if constexpr (g_coreType == AscendC::AIV) {
+            InitBf16Routes(params_.expertIdxGmAddr, params_.aGmAddr, params_.peermemInfo.ptrA0,
+                           tokenPerExpertCurRankAddr_, params_.workspaceInfo.expandedRowIdx,
+                           params_.workspaceInfo.expandedRowIdxGather, m_ * topK_, topK_, k_,
+                           worldSize_ * expertPerRank_, aivCoreIdx_, blockAivNum_);
+        }
     }
 
     // Finish and release the optional gather-only UB phase before Dispatch
@@ -890,11 +894,11 @@ __aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::DispatchWave(const WaveR
     const WaveCounts counts{waveExpertRows_};
     // Match inference: partition the complete Wave across all AIV1 workers,
     // then project each owned interval onto expert/source intersections.
-    const uint64_t rows = range.end.packed - range.begin.packed;
-    const uint32_t owner = (blockIdx_ + blockNum_ - range.begin.packed % blockNum_) % blockNum_;
-    const uint64_t quotient = rows / blockNum_, remainder = rows % blockNum_;
-    const uint64_t ownBegin = range.begin.packed + owner * quotient + (owner < remainder ? owner : remainder);
-    const uint64_t ownEnd = ownBegin + quotient + (owner < remainder ? 1U : 0U);
+    // A Wave is bounded by its group budget; packed addresses span all Waves.
+    const uint32_t rows = static_cast<uint32_t>(range.end.packed - range.begin.packed);
+    const auto owned = GetRotatedBalancedTokenRange(rows, blockIdx_, blockNum_, range.begin.packed);
+    const uint64_t ownBegin = range.begin.packed + owned.start;
+    const uint64_t ownEnd = ownBegin + owned.count;
     auto cursor = range.begin;
     uint32_t groups = waveGroups_;
     WaveSlice slice{};
@@ -963,7 +967,7 @@ __aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::SwigluWave(const WaveRan
         const uint32_t columns = kPairedColumns;
         WaveBlockScheduler scheduler({slice.rows, f, k_}, Catlass::MakeCoord(kGmm1Rows, columns));
         const uint32_t tasks = scheduler.GetCoreLoops();
-        const uint32_t first = (blockIdx_ + blockNum_ - startBlock) % blockNum_;
+        const uint32_t first = GetGmmFirstOwnedTile(blockIdx_, blockNum_, startBlock);
         for (uint32_t task = first; task < tasks; task += blockNum_) {
             const auto coord = scheduler.GetBlockCoord(task);
             const auto shape = scheduler.GetActualBlockShape(coord);
@@ -985,7 +989,7 @@ __aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::SwigluWave(const WaveRan
                                                 {static_cast<int64_t>(m) * f + n, 0, 0, 0, 0, 0});
             GateUpCompletion::Release(sequence++);
         }
-        startBlock = (startBlock + tasks) % blockNum_;
+        startBlock = GetGmmNextStartBlock(startBlock, tasks, blockNum_);
     }
 }
 
@@ -1005,7 +1009,7 @@ __aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::Gmm2Wave(
                    ReadySlot(slice.packed - slice.row, slice.expert, slice.row);
         const bool owns =
             matmul.Down(params_, slice, waveOutputBase_ + slice.packed * k_ * sizeof(bfloat16_t), hp, startBlock);
-        if (owns) DownCompletion::Publish(waveIssued_ + blockIdx_ * INT_CACHELINE, ++issued);
+        if (owns) Gmm2AivCompletion::Submit(waveIssued_ + blockIdx_ * INT_CACHELINE, ++issued);
     }
 }
 
@@ -1025,8 +1029,8 @@ __aicore__ inline bool MegaMoeBF16Forward<TopkWeightT>::NextDownCompletion(MegaM
     using namespace MegaMoeBF16Training::Wave;
     while (NextWaveSlice(cursor, groups, slice)) {
         const uint32_t tasks = Ops::Base::CeilDiv(slice.rows, kGmm2Rows) * Ops::Base::CeilDiv(k_, kTileColumns);
-        const uint32_t first = (blockIdx_ + blockNum_ - startBlock) % blockNum_;
-        startBlock = (startBlock + tasks) % blockNum_;
+        const uint32_t first = GetGmmFirstOwnedTile(blockIdx_, blockNum_, startBlock);
+        startBlock = GetGmmNextStartBlock(startBlock, tasks, blockNum_);
         if (first < tasks) return true;
     }
     return false;
@@ -1037,16 +1041,16 @@ __aicore__ inline bool MegaMoeBF16Forward<TopkWeightT>::PollDownCompletion()
 {
     using namespace MegaMoeBF16Training::Wave;
     auto& state = waveCompletion_;
-    if (!state.pending || !DownCompletion::IsIssued(waveIssued_ + blockIdx_ * INT_CACHELINE, state.completed + 1))
+    if (!state.pending || !Gmm2AivCompletion::HasPending(waveIssued_ + blockIdx_ * INT_CACHELINE, state.completed))
         return false;
     // issued only queues a notification. FULL establishes the actual FIX completion boundary.
     const auto& slice = state.slice;
     MegaMoeTrainTimerPassiveScope completion(timer_, MegaMoeTrainTimer::AIV_COMBINE_WAIT, slice.expert, slice.row,
                                              slice.rows, uint32_t(-1), kGmm2Rows, kTileColumns,
                                              params_.tilingData->n / 2U, k_, 1U);
-    DownCompletion::Receive();
+    Gmm2AivCompletion::Wait();
     AtomicAdd(waveDownReady_ + ReadySlot(slice.packed - slice.row, slice.expert, slice.row), int32_t(1));
-    DownCompletion::Release();
+    Gmm2AivCompletion::Release();
     ++state.completed;
     state.pending = NextDownCompletion(state.cursor, state.groups, state.startBlock, state.slice);
     return true;
@@ -1056,9 +1060,9 @@ template <typename TopkWeightT>
 __aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::CombineSlice(const WaveSlice& slice)
 {
     SyncFunc<HardEvent::S_MTE2>();
-    const uint32_t quotient = slice.rows / blockNum_, remainder = slice.rows % blockNum_;
-    const uint64_t begin = slice.packed + blockIdx_ * quotient + (blockIdx_ < remainder ? blockIdx_ : remainder);
-    const uint64_t end = begin + quotient + (blockIdx_ < remainder ? 1U : 0U);
+    const auto owned = GetBalancedTokenRange(slice.rows, blockIdx_, blockNum_);
+    const uint64_t begin = slice.packed + owned.start;
+    const uint64_t end = begin + owned.count;
     MegaMoeTrainTimerPassiveScope combine(timer_, MegaMoeTrainTimer::AIV_COMBINE, slice.expert,
                                           slice.row + static_cast<uint32_t>(begin - slice.packed), end - begin);
     const uint64_t expertBase = slice.packed - slice.row;
@@ -1158,7 +1162,7 @@ __aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::ProcessWave(TPipe& first
             DataCopyPad(waveSourcePrefix_, preSumBeforeRankWorkSpace_, copy,
                         DataCopyPadExtParams<int32_t>{false, 0U, 0U, 0});
             SyncFunc<HardEvent::MTE2_S>();
-            DownCompletion::InitConsumer();
+            Gmm2AivCompletion::InitConsumer();
             waveCompletion_ = {};
             waveCompletion_.cursor = waveFirst_;
             waveCompletion_.groups = waveGroups_;
@@ -1260,7 +1264,7 @@ __aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::ProcessWave(TPipe& first
         }
         if (lag && pending.valid) Gmm2Wave<TransW>(pending, matmul, downStart, issued);
         GateUpCompletion::Drain();
-        DownCompletion::Drain();
+        Gmm2AivCompletion::Drain(GetTPipePtr()->FetchEventID(HardEvent::FIX_S));
     }
     PipeBarrier<PIPE_ALL>();
     if (timer_ != nullptr && combineDrainIndex >= 0) {
@@ -1284,7 +1288,7 @@ __aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::FinishForward(int64_t or
         // soon as it leaves this barrier without racing a slower peer.
         CrossRankSyncInWorldSize();
     }
-    SetCtrlSpr<OVERFLOW_MODE_CTRL, OVERFLOW_MODE_CTRL>(oriOverflowMode);
+    SetCtrlSpr<kBf16OverflowModeBit, kBf16OverflowModeBit>(oriOverflowMode);
 }
 
 }  // namespace MegaMoeImpl

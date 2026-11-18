@@ -38,37 +38,4 @@ struct GateUpCompletion {
         AscendC::SyncFunc<AscendC::HardEvent::FIX_S>();
     }
 };
-
-// One FIX completion notification per producing core and expert slice.
-// Scalar issued means queued; AIV1 must receive FULL before publishing ready.
-struct DownCompletion {
-    static constexpr uint32_t kMode = 4, kFull = 0, kEmpty = 1, kAiv1 = 16;
-    __aicore__ static inline void InitConsumer()
-    {
-        AscendC::CrossCoreSetFlag<kMode, PIPE_S>(kEmpty);
-    }
-    __aicore__ static inline void Publish(__gm__ int32_t* issued, int32_t sequence)
-    {
-        AscendC::CrossCoreWaitFlag<kMode, PIPE_FIX>(kAiv1 | kEmpty);
-        AscendC::CrossCoreSetFlag<kMode, PIPE_FIX>(kAiv1 | kFull);
-        AscendC::WriteGmByPassDCache(issued, sequence);
-    }
-    __aicore__ static inline bool IsIssued(__gm__ int32_t* issued, int32_t sequence)
-    {
-        return AscendC::ReadGmByPassDCache(issued) >= sequence;
-    }
-    __aicore__ static inline void Receive()
-    {
-        AscendC::CrossCoreWaitFlag<kMode, PIPE_S>(kFull);
-    }
-    __aicore__ static inline void Release()
-    {
-        AscendC::CrossCoreSetFlag<kMode, PIPE_S>(kEmpty);
-    }
-    __aicore__ static inline void Drain()
-    {
-        AscendC::CrossCoreWaitFlag<kMode, PIPE_FIX>(kAiv1 | kEmpty);
-        AscendC::SyncFunc<AscendC::HardEvent::FIX_S>();
-    }
-};
 }  // namespace MegaMoeBF16Training::Wave

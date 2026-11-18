@@ -6,10 +6,9 @@
 | --- | --- | --- |
 | Python | api.py | 共同buffer、输入字段与公开接口 |
 | BF16调用 | _bf16.py、_autograd.py | 校验、Plan缓存及每次调用独立的反向状态 |
-| Host | csrc/forward_bf16.cpp、backward.cpp | 前反向校验、分配和启动 |
-| Plan | csrc/plan/ | 借用根通信窗口，准备临时 workspace |
-| Tiling | csrc/tiling/ | 计算 BF16 Host tiling 和缓冲区大小 |
-| Launch | csrc/launch/ | 设备入口声明和 Host 启动封装 |
+| Host | csrc/forward_bf16.cpp、csrc/backward_bf16.cpp | 前反向校验、分配和启动 |
+| Plan | csrc/forward.hpp、csrc/forward_bf16.cpp | 借用根通信窗口，按配置准备基础 tiling 和前向 workspace。每次调用复制 tiling 并填入权重布局 |
+| Launch | csrc/kernel_launch.hpp | Host 和设备共用的启动符号声明 |
 | 前向 | mega_moe_bf16.hpp | 同一实现组织交错及分阶段流程 |
 | 反向 | mega_moe_bf16_backward.hpp | dY分发、dHp、激活梯度、dX回传及dW |
 | stage | 路由、peer映射、通信、Unpermute及ready | 数据移动和完成条件 |
@@ -27,7 +26,7 @@
 
 ## 路由与payload边界
 
-量化路径生成compact route表，BF16路径用InitRoutingV3生成原TopK slot映射。
+BF16 与量化直发路径共用按专家提取 route 的逻辑，同一专家内按原 token、TopK slot 顺序排列。量化路径把列表发到对端；BF16 在源卡按专家计数取前缀，生成排序行与原始 slot 的双向映射，再按排序行打包 X 和权重。
 两者共用peer配额、prefix cut和行区间工具。量化token/scale、BF16 token/p各自保留对应载荷布局。
 BF16的保存、解码及反向状态由保存策略管理，激活数学和有序归并使用共同基础函数。
 

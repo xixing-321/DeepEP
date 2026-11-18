@@ -229,8 +229,8 @@ __aicore__ inline bool MegaMoeA8W4Wave<TemplateMegaMoeA8W4WaveTypeFunc>::NextAiv
             return true;
         }
         cursor.tileCount = GetMGroupCountForRows(rows, GMM1_TILE_M) * gmm1N;
-        cursor.nextTile = (job.jobIndex + job.totalJobs - cursor.startBlockIdx) % job.totalJobs;
-        cursor.startBlockIdx = (cursor.startBlockIdx + cursor.tileCount) % job.totalJobs;
+        cursor.nextTile = GetGmmFirstOwnedTile(job.jobIndex, job.totalJobs, cursor.startBlockIdx);
+        cursor.startBlockIdx = GetGmmNextStartBlock(cursor.startBlockIdx, cursor.tileCount, job.totalJobs);
         if (cursor.nextTile < cursor.tileCount) {
             return true;
         }
@@ -342,7 +342,7 @@ __aicore__ inline bool MegaMoeA8W4Wave<TemplateMegaMoeA8W4WaveTypeFunc>::NextGmm
         const uint32_t rows = cursor.slice.end.globalTokenIndex - cursor.slice.begin.globalTokenIndex;
         const uint32_t tiles = GetMGroupCountForRows(rows, GMM1_TILE_M) * cols;
         const uint32_t first = GetGmmFirstOwnedTile(job.jobIndex, job.totalJobs, cursor.startBlockIdx, true);
-        cursor.startBlockIdx = (cursor.startBlockIdx + tiles) % job.totalJobs;
+        cursor.startBlockIdx = GetGmmNextStartBlock(cursor.startBlockIdx, tiles, job.totalJobs);
         if (first < tiles) return true;
     }
     return false;
@@ -355,7 +355,7 @@ __aicore__ inline bool MegaMoeA8W4Wave<TemplateMegaMoeA8W4WaveTypeFunc>::TryRece
     const auto& job = gmmExecutionConfig_.blockJob;
     auto* submitted = reinterpret_cast<__gm__ int32_t*>(params_.workspaceInfo.gmm2SubmittedPtr) +
                       uint64_t(job.jobIndex) * INT_CACHELINE;
-    if (AscendC::ReadGmByPassDCache(submitted) <= completedSequence) return false;
+    if (!Gmm2AivCompletion::HasPending(submitted, completedSequence)) return false;
 
     // The FIX event follows all output stores issued by this AIC for the slice.
     Gmm2AivCompletion::Wait();
@@ -621,7 +621,7 @@ __aicore__ inline void MegaMoeA8W4Wave<TemplateMegaMoeA8W4WaveTypeFunc>::Process
     }
     if (UsesAivGmm2Completion()) {
         if constexpr (g_coreType == AIC) {
-            Gmm2AivCompletion::Drain();
+            Gmm2AivCompletion::Drain(0);
             gmm1CatlassContext_.End(true);
         } else if (GetSubBlockIdx() == 0U) {
             gmm1CatlassContext_.End();

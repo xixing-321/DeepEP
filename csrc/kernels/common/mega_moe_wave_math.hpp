@@ -20,5 +20,48 @@ MEGA_MOE_WAVE_MATH_HD constexpr uint32_t WaveGroups(uint32_t cores, uint64_t gmm
     const uint64_t second = constrainGmm2 ? (uint64_t(cores) + gmm2Tiles - 1U) / gmm2Tiles : 1U;
     return static_cast<uint32_t>(first > second ? first : second);
 }
+
+struct WorkRange {
+    uint32_t start = 0;
+    uint32_t count = 0;
+};
+
+// Reverse only the logical owner; the physical AIC/AIV pairing stays fixed.
+MEGA_MOE_WAVE_MATH_HD constexpr uint32_t GetGmmFirstOwnedTile(uint32_t physicalBlockIdx, uint32_t blockNum,
+                                                              uint32_t startBlockIdx, bool reverseBlocks = false)
+{
+    const uint32_t logicalBlockIdx = reverseBlocks ? blockNum - 1U - physicalBlockIdx : physicalBlockIdx;
+    return (logicalBlockIdx < startBlockIdx ? logicalBlockIdx + blockNum : logicalBlockIdx) - startBlockIdx;
+}
+
+MEGA_MOE_WAVE_MATH_HD constexpr uint32_t GetGmmNextStartBlock(uint32_t startBlockIdx, uint32_t tiles, uint32_t blockNum)
+{
+    return (startBlockIdx + tiles) % blockNum;
+}
+
+// Give the first remainder workers one extra row.
+MEGA_MOE_WAVE_MATH_HD constexpr WorkRange GetBalancedTokenRange(uint32_t totalTokens, uint32_t workerIdx,
+                                                                uint32_t workerCount)
+{
+    if (workerCount == 0U || workerIdx >= workerCount) {
+        return {};
+    }
+    uint32_t base = totalTokens / workerCount;
+    uint32_t remainder = totalTokens % workerCount;
+    uint32_t extraBefore = workerIdx < remainder ? workerIdx : remainder;
+    return {workerIdx * base + extraBefore, base + static_cast<uint32_t>(workerIdx < remainder)};
+}
+
+// Rotate the owner of the first extra row by the absolute packed-row prefix.
+MEGA_MOE_WAVE_MATH_HD constexpr WorkRange GetRotatedBalancedTokenRange(uint32_t totalTokens, uint32_t workerIdx,
+                                                                       uint32_t workerCount, uint64_t globalRowPrefix)
+{
+    if (workerCount == 0U || workerIdx >= workerCount) {
+        return {};
+    }
+    uint32_t firstOwner = static_cast<uint32_t>(globalRowPrefix % workerCount);
+    uint32_t logicalWorkerIdx = workerIdx >= firstOwner ? workerIdx - firstOwner : workerIdx + workerCount - firstOwner;
+    return GetBalancedTokenRange(totalTokens, logicalWorkerIdx, workerCount);
+}
 }  // namespace MegaMoeImpl
 #undef MEGA_MOE_WAVE_MATH_HD

@@ -11,15 +11,12 @@
 
 #include <cstdint>
 #include "kernel_tiling/kernel_tiling.h"
-#include "stage/moe_init_routing_v3/arch35/moe_init_routing_v3_arch35_tiling_def.hpp"
 
 using namespace AscendC;
 
-// P1 GMM2-grad writes one FP32 partial per [packed row, 256-wide F tile]
-// instead of materializing the full FP32 dHp*H matrix; P6 performs the small
-// final reduction.  Defined here (host-safe) so the kernel workspace layout
-// (layout/mega_moe_workspace_view.hpp) and the host-side workspace layout
-// (csrc/bf16/training.cpp) agree on the same per-tile stride.
+// P1 GMM2-grad writes one FP32 dP partial per packed row and F tile.
+// P6 reduces the partials for each row.
+// Host workspace sizing and the device epilogue use the same F-tile width.
 constexpr uint32_t BACKWARD_DP_PARTIAL_TILE_N = 256U;
 
 // SwiGLU activation clamp limit (dsv4 swiglu_limit): gate = min(gate, L),
@@ -27,7 +24,6 @@ constexpr uint32_t BACKWARD_DP_PARTIAL_TILE_N = 256U;
 static constexpr float kMegaMoeSwigluLimitDisabled = 3.402823466e+38F;
 
 struct MegaMoeBf16TilingData {
-    MoeInitRoutingV3Arch35TilingData moeInitRoutingTilingData;
     uint32_t expertPerRank;
     uint32_t m;
     uint32_t k;

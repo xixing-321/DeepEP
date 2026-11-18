@@ -867,12 +867,11 @@ __aicore__ inline void RunGmm2Generic(const AscendC::Shape<int64_t, int64_t, int
     uint32_t tileNum = scheduler.GetTileNum();
 
     if constexpr (CombineQuantMode == COMBINE_NO_QUANT && g_coreType == AscendC::AIV && !NotifyCombineTileReady) {
-        startBlockIdx = (startBlockIdx + tileNum) % config.blockNum;
+        startBlockIdx = GetGmmNextStartBlock(startBlockIdx, tileNum, config.blockNum);
         return;
     }
 
-    uint32_t startLoopIdx =
-        (config.blockIdx < startBlockIdx ? config.blockIdx + config.blockNum : config.blockIdx) - startBlockIdx;
+    uint32_t startLoopIdx = GetGmmFirstOwnedTile(config.blockIdx, config.blockNum, startBlockIdx);
     using BlockMmad = typename GmmConfig::BlockMmad;
     using MmadContext = GmmKernel::BlockMmadContext<BlockMmad>;
     auto* typedBlockMmadContext = reinterpret_cast<MmadContext*>(blockMmadContext);
@@ -880,7 +879,7 @@ __aicore__ inline void RunGmm2Generic(const AscendC::Shape<int64_t, int64_t, int
         scheduler, gmmAddrInfo, config, startLoopIdx, tileNum, typedBlockMmadContext, allowWeightL2Bypass,
         rowOffsetInExpert, params, gmTileSequence);
 
-    startBlockIdx = (startBlockIdx + tileNum) % config.blockNum;
+    startBlockIdx = GetGmmNextStartBlock(startBlockIdx, tileNum, config.blockNum);
 }
 
 template <uint8_t CombineQuantMode, typename ElementA, typename ElementB, typename ElementC, typename ElementMxScaleA,
@@ -932,7 +931,7 @@ __aicore__ inline void RunGmm2A8W4(const AscendC::Shape<int64_t, int64_t, int64_
     uint32_t tileNum = scheduler.GetTileNum();
     uint32_t startLoopIdx = GetGmmFirstOwnedTile(config.blockIdx, config.blockNum, startBlockIdx, reverseBlocks);
     if (startLoopIdx >= tileNum) {
-        startBlockIdx = (startBlockIdx + tileNum) % config.blockNum;
+        startBlockIdx = GetGmmNextStartBlock(startBlockIdx, tileNum, config.blockNum);
         return;
     }
 
@@ -941,7 +940,7 @@ __aicore__ inline void RunGmm2A8W4(const AscendC::Shape<int64_t, int64_t, int64_
                                                                          tileNum, expertTokenCount, rowOffsetInExpert,
                                                                          params, gmTileSequence);
 
-    startBlockIdx = (startBlockIdx + tileNum) % config.blockNum;
+    startBlockIdx = GetGmmNextStartBlock(startBlockIdx, tileNum, config.blockNum);
 }
 
 template <typename ElementA, typename ElementB, typename ElementC, typename ElementMxScaleA, typename ElementMxScaleB,

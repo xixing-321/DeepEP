@@ -1,0 +1,164 @@
+// Copyright (c) 2026, Lu Lu
+// Modified by xixing 2026
+
+#pragma once
+
+#include "mega_moe_route_compact.hpp"
+#include "mc2_common/mc2_kernel_utils.hpp"
+
+namespace MegaMoeImpl {
+namespace Bf16Route {
+
+using namespace AscendC;
+
+constexpr uint32_t kBatch = 4096;
+
+struct CompactScratch {
+    LocalTensor<int32_t> ids;
+    LocalTensor<int32_t> indices;
+    LocalTensor<int32_t> routes;
+    LocalTensor<uint8_t> mask;
+};
+
+// The first pass publishes source counts. The second places each stable list in
+// its exact expert interval without reserving a worst-case list per expert.
+template <bool Store>
+__aicore__ inline uint32_t ScanExpert(CompactScratch& ub, GlobalTensor<int32_t>& ids, GlobalTensor<int32_t>& rows,
+                                      int32_t expert, uint32_t items, uint32_t firstRow)
+{
+    uint32_t count = 0;
+    for (uint32_t first = 0; first < items; first += kBatch) {
+        const uint32_t n = items - first < kBatch ? items - first : kBatch;
+        DataCopyPad(ub.ids, ids[first], {1U, n * 4U, 0U, 0U, 0U}, DataCopyPadExtParams<int32_t>{false, 0U, 0U, 0U});
+        SyncFunc<HardEvent::MTE2_V>();
+        CreateVecIndex(ub.indices, static_cast<int32_t>(first), n);
+        const uint32_t found = CompactExpertRoutes(ub.routes, ub.ids, ub.indices, ub.mask, expert, n);
+        SyncFunc<HardEvent::V_S>();
+        if constexpr (Store) {
+            if (found != 0) {
+                SyncFunc<HardEvent::V_MTE3>();
+                DataCopyPad(rows[firstRow + count], ub.routes, {1U, found * 4U, 0U, 0U, 0U});
+                SyncFunc<HardEvent::MTE3_V>();
+            }
+        }
+        count += found;
+        SyncFunc<HardEvent::V_MTE2>();
+    }
+    return count;
+}
+
+__simt_vf__ __aicore__ LAUNCH_BOUND(256) inline void InvertRows(__gm__ int32_t* rows, __gm__ int32_t* inverse,
+                                                                uint32_t begin, uint32_t end)
+{
+    for (uint32_t i = begin + Simt::GetThreadIdx(); i < end; i += Simt::GetThreadNum()) {
+        inverse[rows[i]] = i;
+    }
+}
+
+// Two DMA slots batch up to four complete token rows. Wide rows use bounded column tiles.
+__aicore__ inline void PackTokens(GlobalTensor<int32_t>& rows, GM_ADDR input, GM_ADDR packed, uint32_t begin,
+                                  uint32_t end, uint32_t topK, uint32_t hidden)
+{
+    constexpr uint32_t slotElements = 32768;
+    const uint32_t cols = hidden < slotElements ? hidden : slotElements;
+    const uint32_t stride = (cols + 15U) / 16U * 16U;
+    const uint32_t batch = stride <= slotElements / 4 ? 4 : (stride <= slotElements / 2 ? 2 : 1);
+    TPipe pipe;
+    constexpr uint32_t indexBatch = 256;
+    TBuf<> storage, indexStorage;
+    pipe.InitBuffer(indexStorage, indexBatch * sizeof(int32_t));
+    auto localRows = indexStorage.Get<int32_t>();
+    pipe.InitBuffer(storage, 2 * batch * stride * sizeof(bfloat16_t));
+    auto buf = storage.Get<bfloat16_t>();
+    GlobalTensor<bfloat16_t> x, out;
+    x.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(input));
+    out.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(packed));
+    SetFlag<HardEvent::MTE3_MTE2>(EVENT_ID0);
+    SetFlag<HardEvent::MTE3_MTE2>(EVENT_ID1);
+    uint32_t step = 0;
+    for (uint32_t chunk = begin; chunk < end; chunk += indexBatch) {
+        const uint32_t count = end - chunk < indexBatch ? end - chunk : indexBatch;
+        DataCopyPad(localRows, rows[chunk], {1U, count * 4U, 0U, 0U, 0U},
+                    DataCopyPadExtParams<int32_t>{false, 0U, 0U, 0U});
+        SyncFunc<HardEvent::MTE2_S>();
+        for (uint32_t first = chunk; first < chunk + count; first += batch) {
+            const uint32_t n = chunk + count - first < batch ? chunk + count - first : batch;
+            uint64_t source[4];
+            for (uint32_t r = 0; r < n; ++r)
+                source[r] = static_cast<uint64_t>(localRows.GetValue(first - chunk + r) / topK) * hidden;
+            for (uint32_t col = 0; col < hidden; col += cols, ++step) {
+                const uint32_t width = hidden - col < cols ? hidden - col : cols;
+                const uint32_t slot = step % 2;
+                const auto event = slot == 0 ? EVENT_ID0 : EVENT_ID1;
+                auto local = buf[slot * batch * stride];
+                WaitFlag<HardEvent::MTE3_MTE2>(event);
+                for (uint32_t r = 0; r < n; ++r) {
+                    DataCopyPad(local[r * stride], x[source[r] + col], {1U, width * 2U, 0U, 0U, 0U},
+                                DataCopyPadExtParams<bfloat16_t>{false, 0U, 0U, 0U});
+                }
+                SetFlag<HardEvent::MTE2_MTE3>(event);
+                WaitFlag<HardEvent::MTE2_MTE3>(event);
+                if (width == hidden && stride == hidden) {
+                    DataCopyPad(out[static_cast<uint64_t>(first) * hidden], local, {1U, n * width * 2U, 0U, 0U, 0U});
+                } else {
+                    for (uint32_t r = 0; r < n; ++r) {
+                        DataCopyPad(out[static_cast<uint64_t>(first + r) * hidden + col], local[r * stride],
+                                    {1U, width * 2U, 0U, 0U, 0U});
+                    }
+                }
+                SetFlag<HardEvent::MTE3_MTE2>(event);
+            }
+        }
+        SyncFunc<HardEvent::S_MTE2>();
+    }
+    WaitFlag<HardEvent::MTE3_MTE2>(EVENT_ID0);
+    WaitFlag<HardEvent::MTE3_MTE2>(EVENT_ID1);
+    pipe.Destroy();
+}
+
+}  // namespace Bf16Route
+
+__aicore__ inline void InitBf16Routes(GM_ADDR idsAddr, GM_ADDR x, GM_ADDR packed, GM_ADDR countsAddr, GM_ADDR rowsAddr,
+                                      GM_ADDR inverseAddr, uint32_t items, uint32_t topK, uint32_t hidden,
+                                      uint32_t experts, uint32_t core, uint32_t cores)
+{
+    using namespace AscendC;
+    using namespace Bf16Route;
+    const auto owned = SplitRouteExperts(experts, core, cores);
+    auto* counts = reinterpret_cast<__gm__ int32_t*>(countsAddr);
+    auto* rowPtr = reinterpret_cast<__gm__ int32_t*>(rowsAddr);
+    auto* inverse = reinterpret_cast<__gm__ int32_t*>(inverseAddr);
+    GlobalTensor<int32_t> ids, rows;
+    ids.SetGlobalBuffer(reinterpret_cast<__gm__ int32_t*>(idsAddr));
+    rows.SetGlobalBuffer(rowPtr);
+    {
+        TPipe pipe;
+        TBuf<> storage;
+        pipe.InitBuffer(storage, 3 * kBatch * sizeof(int32_t) + kBatch / 8);
+        auto data = storage.Get<int32_t>();
+        CompactScratch scratch{data, data[kBatch], data[2 * kBatch], data[3 * kBatch].ReinterpretCast<uint8_t>()};
+        for (int32_t e = owned.begin; e < owned.begin + owned.count; ++e) {
+            WriteGmByPassDCache(counts + e, static_cast<int32_t>(ScanExpert<false>(scratch, ids, rows, e, items, 0)));
+        }
+        SyncAll();
+        uint32_t firstRow = 0;
+        if (owned.count > 0) {
+            for (int32_t e = 0; e < owned.begin; ++e) firstRow += ReadGmByPassDCache(counts + e);
+        }
+        for (int32_t e = owned.begin; e < owned.begin + owned.count; ++e) {
+            firstRow += ScanExpert<true>(scratch, ids, rows, e, items, firstRow);
+        }
+        PipeBarrier<PIPE_ALL>();
+        SyncAll();
+        pipe.Destroy();
+    }
+    const uint32_t begin = (static_cast<uint64_t>(items) * core) / cores;
+    const uint32_t end = (static_cast<uint64_t>(items) * (core + 1)) / cores;
+    if (begin < end) {
+        Simt::VF_CALL<InvertRows>(Simt::Dim3{256, 1, 1}, rowPtr, inverse, begin, end);
+        PackTokens(rows, x, packed, begin, end, topK, hidden);
+    }
+    PipeBarrier<PIPE_ALL>();
+}
+
+}  // namespace MegaMoeImpl

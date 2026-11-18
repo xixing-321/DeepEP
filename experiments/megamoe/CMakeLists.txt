@@ -123,7 +123,7 @@ add_library(megamoe_kernel SHARED IMPORTED)
 set_target_properties(megamoe_kernel PROPERTIES IMPORTED_LOCATION "${kernel_library}")
 
 pybind11_add_module(megamoe_ext csrc/bindings.cpp csrc/forward.cpp
-    csrc/launch/bf16.cpp csrc/tiling/bf16.cpp csrc/forward_bf16.cpp csrc/backward.cpp)
+    csrc/forward_bf16.cpp csrc/backward_bf16.cpp)
 set_target_properties(megamoe_ext PROPERTIES OUTPUT_NAME _C
     INSTALL_RPATH "$ORIGIN" INSTALL_RPATH_USE_LINK_PATH FALSE)
 target_include_directories(megamoe_ext PRIVATE ${quantized_include_dirs} ${bf16_include_dirs}

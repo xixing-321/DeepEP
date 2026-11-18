@@ -154,6 +154,20 @@ def test_queued_graphs_snapshot_plan_dtype_and_save_type(buffer):
         assert p.grad.dtype == p.dtype and torch.equal(x.grad, torch.ones_like(x))
 
 
+def test_token_count_exchange_selects_a_new_plan(buffer, monkeypatch):
+    b, _, plans = buffer
+    _, _, w1, w2 = inputs(b)
+    monkeypatch.setenv("MEGAMOE_BF16_TOKEN_COUNT_EXCHANGE", "dense")
+    first = call(b, w1, w2)
+    call(b, w1, w2)
+    assert len(plans) == 1
+    monkeypatch.setenv("MEGAMOE_BF16_TOKEN_COUNT_EXCHANGE", "compact")
+    second = call(b, w1, w2)
+    assert len(plans) == 2
+    second.sum().backward()
+    first.sum().backward()
+
+
 def test_prepared_plan_is_reused_and_no_grad_keeps_preweight_semantics(buffer):
     b, calls, plans = buffer
     x, p, w1, w2 = inputs(b)
