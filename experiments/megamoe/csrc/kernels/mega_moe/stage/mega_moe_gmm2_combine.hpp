@@ -1183,9 +1183,8 @@ __aicore__ inline __gm__ int32_t* GetTokenCombineReadyCounter(const Params& para
 __aicore__ inline uint32_t GetTokenCombineProducerCount(const MoeStageCommonConfig& common, const AivJobContext& job,
                                                         uint32_t rowCount)
 {
-    uint32_t tiles = GetMGroupCountForRows(rowCount, L1_TILE_M_256) *
-                     Ops::Base::CeilDiv(common.tokenHiddenDim, static_cast<uint32_t>(L1_TILE_N));
-    return tiles < job.totalJobs ? tiles : job.totalJobs;
+    const uint32_t tiles = GetGmm2SliceTiles<L1_TILE_M_256, L1_TILE_N>(rowCount, common.tokenHiddenDim);
+    return GetGmm2ProducerCount(tiles, job.totalJobs);
 }
 
 // 由调用方保证仅实际生产核、每 slice 调用一次。先完成 FIX 写出，再发布完成计数。

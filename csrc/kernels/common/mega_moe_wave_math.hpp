@@ -39,6 +39,21 @@ MEGA_MOE_WAVE_MATH_HD constexpr uint32_t GetGmmNextStartBlock(uint32_t startBloc
     return (startBlockIdx + tiles) % blockNum;
 }
 
+// Each GMM2 output tile belongs to one AIC. Only AICs with tiles signal Combine.
+template <uint32_t TileM, uint32_t TileN>
+MEGA_MOE_WAVE_MATH_HD constexpr uint32_t GetGmm2SliceTiles(uint32_t rows, uint32_t columns)
+{
+    static_assert(TileM > 0 && TileN > 0);
+    const uint32_t mTiles = rows / TileM + (rows % TileM != 0);
+    const uint32_t nTiles = columns / TileN + (columns % TileN != 0);
+    return mTiles * nTiles;
+}
+
+MEGA_MOE_WAVE_MATH_HD constexpr uint32_t GetGmm2ProducerCount(uint32_t tiles, uint32_t cores)
+{
+    return tiles < cores ? tiles : cores;
+}
+
 // Replay the producer assignment for one slice, even when this AIC owns no tiles.
 MEGA_MOE_WAVE_MATH_HD constexpr bool AdvanceGmmSlice(uint32_t blockIdx, uint32_t blockNum, uint32_t& startBlock,
                                                      uint32_t tiles, bool reverseBlocks = false)

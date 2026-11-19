@@ -725,8 +725,8 @@ __aicore__ inline void MegaMoe<TemplateMegaMoeTypeFunc>::RunGmm2CombineForExpert
     constexpr bool tokenCombine = ENABLE_A8W4 && CombineQuantMode == COMBINE_NO_QUANT;
     constexpr bool pairwiseCombine = !tokenCombine && CombineQuantMode == COMBINE_NO_QUANT;
     uint32_t expertTokenCount = static_cast<uint32_t>(Get<M_VALUE>(state.problemShape));
-    uint32_t gmm2NTileCount = Ops::Base::CeilDiv(commonConfig_.tokenHiddenDim, static_cast<uint32_t>(L1_TILE_N));
-    uint32_t problemTileCount = GetMGroupCountForRows(sliceTokenCount, GMM1_TILE_M) * gmm2NTileCount;
+    const uint32_t problemTileCount =
+        GetGmm2SliceTiles<GMM1_TILE_M, L1_TILE_N>(sliceTokenCount, commonConfig_.tokenHiddenDim);
     if (!HandleWaveProblemWithoutWork(problemTileCount, gmmExecutionConfig_.blockJob, startBlockIdx, reverseBlocks)) {
         UpdateMoeExpertGmm2GlobalBuffer<Weight1Type, ActivationQuantOutType, QuantScaleOutType>(
             gmmExecutionConfig_, syncWorkspaceLayout_, params_.workspaceInfo, moeWeightTensorListAddrs_, gmmAddrInfo,

@@ -337,10 +337,9 @@ template <TemplateMegaMoeA8W4WaveTypeClass>
 __aicore__ inline bool MegaMoeA8W4Wave<TemplateMegaMoeA8W4WaveTypeFunc>::NextGmm2Completion(AivTaskCursor& cursor)
 {
     const auto& job = gmmExecutionConfig_.blockJob;
-    const uint32_t cols = Ops::Base::CeilDiv(commonConfig_.tokenHiddenDim, uint32_t(L1_TILE_N));
     while (NextAivSlice(cursor, false, false)) {
         const uint32_t rows = cursor.slice.end.globalTokenIndex - cursor.slice.begin.globalTokenIndex;
-        const uint32_t tiles = GetMGroupCountForRows(rows, GMM1_TILE_M) * cols;
+        const uint32_t tiles = GetGmm2SliceTiles<GMM1_TILE_M, L1_TILE_N>(rows, commonConfig_.tokenHiddenDim);
         if (AdvanceGmmSlice(job.jobIndex, job.totalJobs, cursor.startBlockIdx, tiles, true)) return true;
     }
     return false;

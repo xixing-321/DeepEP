@@ -106,6 +106,30 @@ int main()
         assert(std::adjacent_find(slots.begin(), slots.end()) == slots.end());
         assert(slots.empty() || slots.back() < (base + 127U) / 128U + 8U);
     }
+    // A tail may have fewer producing AICs than the wave's full slices.
+    for (uint32_t rows : {0U, 1U, 255U, 256U, 257U, 768U}) {
+        const uint32_t tiles = MegaMoeImpl::GetGmm2SliceTiles<256, 256>(rows, 7168);
+        const uint32_t expectedTiles = ((rows + 255) / 256) * 28;
+        assert(tiles == expectedTiles);
+        for (uint32_t start : {0U, 7U, 31U}) {
+            for (bool reverse : {false, true}) {
+                uint32_t producers = 0;
+                for (uint32_t core = 0; core < 32; ++core) {
+                    uint32_t cursor = start;
+                    bool expected = false;
+                    for (uint32_t tile = 0; tile < expectedTiles; ++tile) {
+                        const uint32_t owner = (start + tile) % 32;
+                        expected |= core == (reverse ? 31 - owner : owner);
+                    }
+                    const bool owned = MegaMoeImpl::AdvanceGmmSlice(core, 32, cursor, tiles, reverse);
+                    assert(owned == expected && cursor == (start + tiles) % 32);
+                    producers += owned;
+                }
+                assert(MegaMoeImpl::GetGmm2ProducerCount(tiles, 32) == producers);
+            }
+        }
+    }
+    static_assert(MegaMoeImpl::GetGmm2SliceTiles<128, 64>(129, 65) == 4);
     std::mt19937 rng(20261116);
     uint64_t cases = 0, checkedRows = 0, sourceBands = 0;
     for (uint32_t test = 0; test < 180; ++test) {

@@ -1028,7 +1028,7 @@ __aicore__ inline bool MegaMoeBF16Forward<TopkWeightT>::NextDownCompletion(MegaM
 {
     using namespace MegaMoeBF16Training::Wave;
     while (NextWaveSlice(cursor, groups, slice)) {
-        const uint32_t tasks = Ops::Base::CeilDiv(slice.rows, kGmm2Rows) * Ops::Base::CeilDiv(k_, kTileColumns);
+        const uint32_t tasks = GetGmm2SliceTiles<kGmm2Rows, kTileColumns>(slice.rows, k_);
         if (AdvanceGmmSlice(blockIdx_, blockNum_, startBlock, tasks)) return true;
     }
     return false;
@@ -1180,13 +1180,11 @@ __aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::ProcessWave(TPipe& first
             bool preferCombine = true;
             while (dispatch.valid || hasCombine || waveCompletion_.pending) {
                 bool progressed = PollDownCompletion();
-                const uint32_t tasks =
-                    hasCombine ? Ops::Base::CeilDiv(combine.rows, kGmm2Rows) * Ops::Base::CeilDiv(k_, kTileColumns) : 0;
-                const uint32_t producers = tasks < blockNum_ ? tasks : blockNum_;
                 const bool ready =
                     hasCombine &&
-                    ReadGmByPassDCache(waveDownReady_ + ReadySlot(combine.packed - combine.row, combine.expert,
-                                                                  combine.row)) >= producers;
+                    ReadGmByPassDCache(waveDownReady_ +
+                                       ReadySlot(combine.packed - combine.row, combine.expert, combine.row)) >=
+                        GetGmm2ProducerCount(GetGmm2SliceTiles<kGmm2Rows, kTileColumns>(combine.rows, k_), blockNum_);
                 if (ready && ((params_.tilingData->forwardSchedule == 0U && preferCombine) || !dispatch.valid)) {
                     CombineSlice(combine);
                     hasCombine = NextWaveSlice(combineCursor, combineGroups, combine);
