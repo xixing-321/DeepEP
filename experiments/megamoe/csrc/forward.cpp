@@ -240,7 +240,7 @@ PlatformInfo GetPlatformInfo()
 }
 
 MegaMoeTilingData MakeTiling(int64_t bs, int64_t h, int64_t hidden_dim, int64_t topk, int64_t local_experts,
-                             int64_t world, int64_t max_tokens, int64_t max_recv, bool is_a8w4, int64_t shared_experts,
+                             int64_t world, int64_t max_tokens, bool is_a8w4, int64_t shared_experts,
                              const PlatformInfo& p)
 {
     MegaMoeTilingData t{};
@@ -251,8 +251,7 @@ MegaMoeTilingData MakeTiling(int64_t bs, int64_t h, int64_t hidden_dim, int64_t 
     t.epWorldSize = static_cast<uint32_t>(world);
     t.blockNumPerEP = std::max(1U, p.aic / t.epWorldSize);
     t.numMaxTokensPerRank = static_cast<uint32_t>(max_tokens == 0 ? bs : max_tokens);
-    t.maxOutputSize = static_cast<uint32_t>(
-        max_recv == 0 ? t.numMaxTokensPerRank * t.epWorldSize * std::min<uint32_t>(topk, local_experts) : max_recv);
+    t.maxOutputSize = InferenceMaxRecvTokens(t.numMaxTokensPerRank, t.epWorldSize, topk, local_experts);
     t.topK = static_cast<uint32_t>(topk);
     t.aicNum = p.aic;
     t.blockAivNum = p.aiv;
@@ -301,6 +300,12 @@ void CheckTensor(const torch::Tensor& t, int64_t dims, const char* name)
 
 }  // namespace
 
+uint32_t InferenceMaxRecvTokens(uint32_t max_tokens, uint32_t world, uint32_t topk, uint32_t local_experts)
+{
+    // Each source token can select each local expert at most once.
+    return max_tokens * world * std::min(topk, local_experts);
+}
+
 void FillPeerAddresses(uint64_t* addresses, void* window, int64_t world)
 {
     for (int64_t peer = 0; peer < world; ++peer) {
@@ -328,8 +333,8 @@ Plan::Plan(torch::Tensor example, int64_t intermediate, int64_t topk, int64_t ex
     TORCH_CHECK(symmetric_address != 0 && symmetric_bytes >= required, "MegaMoE symmetric buffer needs ", required,
                 " bytes, got ", symmetric_bytes);
     platform_ = GetPlatformInfo();
-    tiling_ = MakeTiling(example.size(0), example.size(1), intermediate * 2, topk, experts, world, max_tokens, 0,
-                         is_a8w4, shared_experts, platform_);
+    tiling_ = MakeTiling(example.size(0), example.size(1), intermediate * 2, topk, experts, world, max_tokens, is_a8w4,
+                         shared_experts, platform_);
     tiling_.dispatchRanksPerNode = static_cast<uint32_t>(ranks_per_node);
     static_assert(sizeof(MegaMoeTilingData) == 224, "MegaMoE tiling ABI changed");
     const MegaMoeImpl::WorkspaceInfo info(nullptr, &tiling_);

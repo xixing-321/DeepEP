@@ -13,7 +13,7 @@
  *
  * Stage pipeline (saved modes compute each expert's dW2 immediately before P2):
  *
- *   P0-A  route gather           raw grad_y -> peermem.ptrA0 (AIV), without p
+ *   P0-A  route gather           publish source-token dY and saved route indices (AIV)
  *   P0-B  restore count table + Dispatch dO from peers -> ptrDO (AIV0)
  *   P0-C  save=none recompute    Z = Xpacked @ W1.T -> gate/up GM planes (AIC)
  *   P1    GMM2 Grad + epilogue   dHp = dO @ W2; h, Hp, dp partials, dh -> dZ
@@ -107,8 +107,8 @@ private:
     template <class Prefix>
     __aicore__ inline void DispatchWaveTokensBackward(GM_ADDR dstBase, uint32_t expertIdx, uint32_t ordinal,
                                                       const Prefix& prefix);
-    __aicore__ inline void CopyGMToGMPerTokenV2(GlobalTensor<QuantOutType> dst, GlobalTensor<QuantOutType> src,
-                                                int32_t rows, int32_t hiddenSize, int32_t& pingpongId);
+    __aicore__ inline void CopyDispatchedGradRows(GlobalTensor<QuantOutType> dst, uint32_t source, uint32_t sourceRow,
+                                                  uint32_t rows, int32_t& ping);
     __aicore__ inline bool UpdateGroupParams(uint32_t expertIdx);
     __aicore__ inline void UpdateGlobalBuffer(Bf16GMMAddrInfo& gmmAddrInfo, uint32_t phase, uint32_t expertIdx);
     __aicore__ inline void UnpermuteBackward();
@@ -211,7 +211,6 @@ private:
     uint32_t groupListType_ = 0;
     uint32_t savedGateUpMode_ = MegaMoeBF16Training::kSaveNone;
     uint64_t maxOutputSize_ = 0;
-    int32_t dispatchRows_ = 0;
     uint32_t dispatchBlockNumPerEP_ = 0;
     int32_t perRankStridesInTokenPerExpert_ = 0;
     uint32_t blockNum_ = GetBlockNum();
@@ -220,7 +219,6 @@ private:
     uint32_t aivCoreIdx_ = GetBlockIdx();
     uint32_t subBlockIdx_ = GetSubBlockIdx();
     int32_t dispatchCopyElementsPerPing_ = 0;
-    uint32_t dispatchPingRows_ = 0;
     __aicore__ inline bool UseDispatchRowReady(uint32_t ordinal) const
     {
         return MegaMoeBF16Training::UseBackwardDispatchRowReady(savedGateUpMode_, ordinal, splitExperts_,
@@ -275,7 +273,6 @@ __aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::Init(GM_ADDR context, G
     worldSize_ = tilingData->epWorldSize;
     expertPerRank_ = tilingData->expertPerRank;
     dispatchBlockNumPerEP_ = tilingData->blockNumPerEP;
-    dispatchRows_ = tilingData->dispatchRows;
     groupListType_ = tilingData->groupListType;
     maxOutputSize_ = tilingData->maxOutputSize;
     rankId_ = tilingData->rankId;
@@ -350,15 +347,11 @@ __aicore__ inline AscendC::LocalTensor<bfloat16_t> MegaMoeBF16Backward<TopkWeigh
 template <typename TopkWeightT>
 __aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::InitStageLayout()
 {
-    // Allow for both ping slots and their alignment padding within the staging window.
-    const uint32_t stageBytes = MegaMoeBF16BackwardCatlassImpl::ArchTag::UB_SIZE - BW_STAGE_BASE_BYTES;
-    const uint32_t maxPingRows = stageBytes > 256 ? (stageBytes - 256) / 2 / (k_ * sizeof(bfloat16_t)) : 0;
-    dispatchPingRows_ = static_cast<uint32_t>(dispatchRows_) < maxPingRows ? static_cast<uint32_t>(dispatchRows_)
-                                                                           : (maxPingRows > 0 ? maxPingRows : 1);
-    if (MegaMoeBF16Training::UseGmForBackwardDataGrad(savedGateUpMode_)) {
-        dispatchPingRows_ = 1;  // GM data-gradient paths use single-row DMA, including splitExperts_=0.
-    }
-    dispatchCopyElementsPerPing_ = Ops::Base::CeilAlign(dispatchPingRows_ * k_, static_cast<uint32_t>(ALIGN_32));
+    constexpr uint32_t available = MegaMoeBF16BackwardCatlassImpl::ArchTag::UB_SIZE - BW_STAGE_BASE_BYTES;
+    constexpr uint32_t indexBytes = Bf16Route::kIndexBatch * sizeof(int32_t);
+    constexpr uint32_t cols = (available - indexBytes) / (2U * sizeof(QuantOutType)) / 32U * 32U;
+    static_assert(cols > 0 && available >= MegaMoeForwardSave::kCopyBufferBytes);
+    dispatchCopyElementsPerPing_ = k_ < cols ? k_ : cols;
 }
 
 template <typename TopkWeightT>
@@ -390,26 +383,10 @@ __aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::GatherRoutes()
     if constexpr (g_coreType == AscendC::AIC) {
         return;
     }
-    int32_t coreLen, coreOffset;
-    TilingByCore(static_cast<int32_t>(m_) * static_cast<int32_t>(topK_), coreLen, coreOffset, 1);
-    GlobalTensor<int32_t> expandedRowIdx;
-    expandedRowIdx.SetGlobalBuffer((__gm__ int32_t*)params_.workspaceInfo.expandedRowIdx);
-    GlobalTensor<QuantOutType> gradY;
-    gradY.SetGlobalBuffer((__gm__ QuantOutType*)params_.aGmAddr);
-    GlobalTensor<QuantOutType> ptrA0;
-    ptrA0.SetGlobalBuffer((__gm__ QuantOutType*)params_.peermemInfo.ptrA0);
-
-    // P0 packs raw dY. Its two DMA slots sit above the live P1/P2 work tiles.
-    constexpr uint32_t capacity = MegaMoeBF16BackwardCatlassImpl::ArchTag::UB_SIZE - BW_STAGE_BASE_BYTES;
-    const Bf16Route::PackTile tile(k_, capacity / (2 * sizeof(bfloat16_t)));
-    auto slots = StageUb(2 * tile.rows * tile.stride * sizeof(bfloat16_t));
-    uint32_t ping = tile.rows == 1 ? static_cast<uint32_t>(coreOffset) % 2U : 0U;
-    Bf16Route::BeginPackRows();
-    if (coreLen > 0) {
-        Bf16Route::PackRows(expandedRowIdx[coreOffset], gradY, ptrA0[static_cast<uint64_t>(coreOffset) * k_], slots,
-                            tile, coreLen, k_, topK_, ping);
-    }
-    Bf16Route::DrainPackRows();
+    auto scratch = StageUb(MegaMoeForwardSave::kCopyBufferBytes).template ReinterpretCast<uint8_t>();
+    Bf16Route::PublishDispatchInput(params_.aGmAddr, params_.peermemInfo.sourceTokens,
+                                    params_.workspaceInfo.expandedRowIdx, params_.peermemInfo.routeIndices, m_, k_,
+                                    topK_, aivCoreIdx_, blockAivNum_, scratch);
 }
 
 template <typename TopkWeightT>
@@ -497,33 +474,35 @@ __aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::ResetTokenPerExpert()
 }
 
 template <typename TopkWeightT>
-__aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::CopyGMToGMPerTokenV2(GlobalTensor<QuantOutType> dst,
-                                                                              GlobalTensor<QuantOutType> src,
-                                                                              int32_t rows, int32_t hiddenSize,
-                                                                              int32_t& pingpongId)
+__aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::CopyDispatchedGradRows(GlobalTensor<QuantOutType> dst,
+                                                                                uint32_t source, uint32_t sourceRow,
+                                                                                uint32_t rows, int32_t& ping)
 {
-    constexpr int32_t BufferNum = 2;
-    const uint32_t ringBytes = 2 * dispatchCopyElementsPerPing_ * sizeof(QuantOutType);
-    LocalTensor<QuantOutType> tmpBuffer1 = StageUb(ringBytes);
-    LocalTensor<QuantOutType> tmpBuffer2 = tmpBuffer1[dispatchCopyElementsPerPing_];
-    auto processCount = Ops::Base::CeilDiv(rows, static_cast<int32_t>(dispatchPingRows_));
-    for (uint32_t processIndex = 0; processIndex < processCount; ++processIndex) {
-        pingpongId = (pingpongId + 1) % BufferNum;
-        TEventID eventId = pingpongId == 0 ? EVENT_ID0 : EVENT_ID1;
-        LocalTensor<QuantOutType> buf = pingpongId == 0 ? tmpBuffer1 : tmpBuffer2;
-        int32_t rowNum = static_cast<int32_t>(dispatchPingRows_);
-        if (processIndex == processCount - 1) {
-            rowNum = rows - processIndex * static_cast<int32_t>(dispatchPingRows_);
+    const auto& peer = params_.peermemInfo;
+    GlobalTensor<int32_t> routeIds;
+    routeIds.SetGlobalBuffer(
+        reinterpret_cast<__gm__ int32_t*>(GetRankWinAddrWithOffset(source, peer.routeIndices - peer.ptrBase)) +
+        sourceRow);
+    GlobalTensor<QuantOutType> input;
+    input.SetGlobalBuffer(reinterpret_cast<__gm__ QuantOutType*>(GetRankWinAddrWithOffset(source, peer.payloadOffset)));
+    const uint32_t cols = dispatchCopyElementsPerPing_;
+    const uint32_t ringBytes = 2U * cols * sizeof(QuantOutType);
+    auto slots = StageUb(ringBytes);
+    LocalTensor<int32_t> indices{TPosition::VECIN, BW_STAGE_BASE_BYTES + ringBytes, Bf16Route::kIndexBatch};
+    Bf16Route::ForEachSourceToken(routeIds, indices, rows, topK_, [&](uint32_t row, uint32_t token) __aicore__ {
+        for (uint32_t col = 0; col < k_; col += cols) {
+            const uint32_t count = k_ - col < cols ? k_ - col : cols;
+            ping ^= 1;
+            const auto event = ping ? EVENT_ID1 : EVENT_ID0;
+            auto buf = slots[ping * cols];
+            WaitFlag<HardEvent::MTE3_MTE2>(event);
+            DataCopy(buf, input[static_cast<uint64_t>(token) * k_ + col], count);
+            SetFlag<HardEvent::MTE2_MTE3>(event);
+            WaitFlag<HardEvent::MTE2_MTE3>(event);
+            DataCopy(dst[static_cast<uint64_t>(row) * k_ + col], buf, count);
+            SetFlag<HardEvent::MTE3_MTE2>(event);
         }
-        const int64_t elementOffset = static_cast<int64_t>(processIndex) * dispatchPingRows_ * hiddenSize;
-        const int64_t elementCount = static_cast<int64_t>(rowNum) * hiddenSize;
-        WaitFlag<AscendC::HardEvent::MTE3_MTE2>(eventId);
-        DataCopy(buf, src[elementOffset], elementCount);
-        SetFlag<AscendC::HardEvent::MTE2_MTE3>(eventId);
-        WaitFlag<AscendC::HardEvent::MTE2_MTE3>(eventId);
-        DataCopy(dst[elementOffset], buf, elementCount);
-        SetFlag<AscendC::HardEvent::MTE3_MTE2>(eventId);
-    }
+    });
 }
 
 template <typename TopkWeightT>
@@ -550,9 +529,7 @@ __aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::DispatchWaveTokensBackw
         const uint32_t ownBegin = producer * bandRows;
         const uint32_t ownEnd = ownBegin + bandRows < rows ? ownBegin + bandRows : rows;
         const uint32_t sourceBase = preSumBeforeRankWorkSpace_(source * expertPerRank_ + expertIdx);
-        GlobalTensor<QuantOutType> input, output;
-        input.SetGlobalBuffer(reinterpret_cast<__gm__ QuantOutType*>(
-            GetRankWinAddrWithOffset(source, params_.peermemInfo.payloadOffset)));
+        GlobalTensor<QuantOutType> output;
         output.SetGlobalBuffer(reinterpret_cast<__gm__ QuantOutType*>(dstBase));
         PeerRowCursor cursor(counts, worldSize_, rankId_, params_.peerRowsGroups, info.rows, info.firstSliceRows, 0U,
                              ownBegin < ownEnd ? info.rows : 0U);
@@ -566,8 +543,8 @@ __aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::DispatchWaveTokensBackw
             for (uint32_t row = begin; row < end; row += readyRows) {
                 const uint32_t take = end - row < readyRows ? end - row : readyRows;
                 const uint32_t target = transfer.destinationRow + row - transfer.sourceOrdinalBegin;
-                CopyGMToGMPerTokenV2(output[static_cast<uint64_t>(target) * k_],
-                                     input[static_cast<uint64_t>(sourceBase + row) * k_], take, k_, ping);
+                CopyDispatchedGradRows(output[static_cast<uint64_t>(target) * k_], source, sourceBase + row, take,
+                                       ping);
                 SetFlag<HardEvent::MTE3_S>(EVENT_ID2);
                 WaitFlag<HardEvent::MTE3_S>(EVENT_ID2);
                 if (rowReady.enabled) AtomicAdd(rowReady.Slot(idx), static_cast<int32_t>(take));
@@ -635,28 +612,23 @@ __aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::DispatchTokensBackward(
                 rowsPerCore = rowStartInDst + rowsCopyCnt - rowDstOffsetPerCore;
             }
             if (rowsPerCore > 0) {
-                GlobalTensor<QuantOutType> gmRemoteA, aGlobalTensor;
+                GlobalTensor<QuantOutType> aGlobalTensor;
                 int64_t gmOffsetA = rowDstOffsetPerCore * widthA;
-                int64_t gmOffsetPeer = rowSrcOffsetPerCore * widthA;
-
-                gmRemoteA.SetGlobalBuffer(reinterpret_cast<__gm__ QuantOutType*>(
-                    GetRankWinAddrWithOffset(dstRankIdx, params_.peermemInfo.payloadOffset)));
                 aGlobalTensor.SetGlobalBuffer(reinterpret_cast<__gm__ QuantOutType*>(dstBase));
                 if (UseDispatchRowReady(ordinal)) {
                     const auto ready = MakeDispatchRowReady(expertIdx, ordinal);
                     constexpr int32_t chunkRows = DEEPEP_MEGAMOE_BF16_BACKWARD_SLICES ? 128 : 256;
                     for (int32_t done = 0; done < rowsPerCore; done += chunkRows) {
                         const int32_t count = rowsPerCore - done < chunkRows ? rowsPerCore - done : chunkRows;
-                        CopyGMToGMPerTokenV2(aGlobalTensor[gmOffsetA + static_cast<int64_t>(done) * widthA],
-                                             gmRemoteA[gmOffsetPeer + static_cast<int64_t>(done) * widthA], count,
-                                             widthA, pingpongId);
+                        CopyDispatchedGradRows(aGlobalTensor[gmOffsetA + static_cast<int64_t>(done) * widthA],
+                                               dstRankIdx, rowSrcOffsetPerCore + done, count, pingpongId);
                         SetFlag<AscendC::HardEvent::MTE3_S>(EVENT_ID0);
                         WaitFlag<AscendC::HardEvent::MTE3_S>(EVENT_ID0);
                         AtomicAdd(ready.Slot(idx), count);
                     }
                 } else {
-                    CopyGMToGMPerTokenV2(aGlobalTensor[gmOffsetA], gmRemoteA[gmOffsetPeer], rowsPerCore, widthA,
-                                         pingpongId);
+                    CopyDispatchedGradRows(aGlobalTensor[gmOffsetA], dstRankIdx, rowSrcOffsetPerCore, rowsPerCore,
+                                           pingpongId);
                 }
             }
         }
@@ -1391,7 +1363,7 @@ __aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::Process()
     // aclshmem_barrier_all.
     CrossRankSyncInWorldSize();
 
-    // ---- P0-A: gather raw grad_y into route order -> ptrA0 (all AIV) ----
+    // ---- P0-A: publish source-token dY and this microbatch's route table (all AIV) ----
     if constexpr (g_coreType == AscendC::AIV) {
         GatherRoutes();
 

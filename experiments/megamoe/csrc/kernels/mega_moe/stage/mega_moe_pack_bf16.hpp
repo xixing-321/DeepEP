@@ -4,77 +4,36 @@
 
 #pragma once
 
-#include <type_traits>
-#include "kernel_operator.h"
+#include "common/mega_moe_forward_save.hpp"
 
 namespace MegaMoeImpl::Bf16Route {
 using namespace AscendC;
 
-struct PackTile {
-    uint32_t columns, stride, rows;
+constexpr uint32_t kIndexBatch = 64;
 
-    __aicore__ PackTile(uint32_t hidden, uint32_t slotElements)
-    {
-        columns = hidden < slotElements ? hidden : slotElements;
-        stride = (columns + 15U) / 16U * 16U;  // BF16 elements per 32-byte DMA block
-        rows = stride <= slotElements / 4 ? 4 : (stride <= slotElements / 2 ? 2 : 1);
-    }
-};
-
-__aicore__ inline void BeginPackRows()
+// Publish this call's route table, including when backward follows a newer microbatch.
+__aicore__ inline void PublishDispatchInput(GM_ADDR input, GM_ADDR sourceTokens, GM_ADDR rows, GM_ADDR routeIndices,
+                                            uint32_t m, uint32_t hidden, uint32_t topK, uint32_t core, uint32_t cores,
+                                            LocalTensor<uint8_t> scratch)
 {
-    SetFlag<HardEvent::MTE3_MTE2>(EVENT_ID0);
-    SetFlag<HardEvent::MTE3_MTE2>(EVENT_ID1);
+    MegaMoeForwardSave::CopyContiguous(sourceTokens, input, uint64_t(m) * hidden * sizeof(bfloat16_t), core, cores,
+                                       scratch);
+    MegaMoeForwardSave::CopyContiguous(routeIndices, rows, uint64_t(m) * topK * sizeof(int32_t), core, cores, scratch);
 }
 
-__aicore__ inline void DrainPackRows()
+template <class Visit>
+__aicore__ inline void ForEachSourceToken(GlobalTensor<int32_t> routeIds, LocalTensor<int32_t> indices, uint32_t rows,
+                                          uint32_t topK, Visit visit)
 {
-    WaitFlag<HardEvent::MTE3_MTE2>(EVENT_ID0);
-    WaitFlag<HardEvent::MTE3_MTE2>(EVENT_ID1);
-}
-
-// rowMap and packed start at the same routed row. The caller owns the two UB slots.
-template <class RowMap>
-__aicore__ inline void PackRows(RowMap rowMap, GlobalTensor<bfloat16_t> input, GlobalTensor<bfloat16_t> packed,
-                                LocalTensor<bfloat16_t> slots, const PackTile& tile, uint32_t count, uint32_t hidden,
-                                uint32_t topK, uint32_t& ping)
-{
-    for (uint32_t first = 0; first < count; first += tile.rows) {
-        const uint32_t n = count - first < tile.rows ? count - first : tile.rows;
-        uint64_t source[4];
-        for (uint32_t r = 0; r < n; ++r) {
-            source[r] = static_cast<uint64_t>(rowMap.GetValue(first + r) / topK) * hidden;
+    for (uint32_t begin = 0; begin < rows; begin += kIndexBatch) {
+        const uint32_t count = rows - begin < kIndexBatch ? rows - begin : kIndexBatch;
+        DataCopyPad(indices, routeIds[begin], {1U, count * uint32_t(sizeof(int32_t)), 0U, 0U, 0U},
+                    DataCopyPadExtParams<int32_t>{false, 0U, 0U, 0U});
+        MegaMoeForwardSave::SyncCopyStage<HardEvent::MTE2_S>();
+        for (uint32_t i = 0; i < count; ++i) {
+            visit(begin + i, static_cast<uint32_t>(indices.GetValue(i)) / topK);
         }
-        for (uint32_t col = 0; col < hidden; col += tile.columns) {
-            const uint32_t width = hidden - col < tile.columns ? hidden - col : tile.columns;
-            const auto event = ping == 0 ? EVENT_ID0 : EVENT_ID1;
-            auto local = slots[ping * tile.rows * tile.stride];
-            WaitFlag<HardEvent::MTE3_MTE2>(event);
-            if constexpr (std::is_same_v<RowMap, GlobalTensor<int32_t>>) {
-                // Backward obtains source offsets through scalar GM loads.
-                if (tile.rows > 1) {
-                    SetFlag<HardEvent::S_MTE2>(EVENT_ID0);
-                    WaitFlag<HardEvent::S_MTE2>(EVENT_ID0);
-                }
-            }
-            for (uint32_t r = 0; r < n; ++r) {
-                DataCopyPad(local[r * tile.stride], input[source[r] + col], {1U, width * 2U, 0U, 0U, 0U},
-                            DataCopyPadExtParams<bfloat16_t>{false, 0U, 0U, 0U});
-            }
-            SetFlag<HardEvent::MTE2_MTE3>(event);
-            WaitFlag<HardEvent::MTE2_MTE3>(event);
-            if (n == 1 || tile.stride == hidden) {
-                DataCopyPad(packed[static_cast<uint64_t>(first) * hidden + col], local,
-                            {1U, n * width * 2U, 0U, 0U, 0U});
-            } else {
-                for (uint32_t r = 0; r < n; ++r) {
-                    DataCopyPad(packed[static_cast<uint64_t>(first + r) * hidden + col], local[r * tile.stride],
-                                {1U, width * 2U, 0U, 0U, 0U});
-                }
-            }
-            SetFlag<HardEvent::MTE3_MTE2>(event);
-            ping ^= 1U;
-        }
+        MegaMoeForwardSave::SyncCopyStage<HardEvent::S_MTE2>();
     }
 }
 }  // namespace MegaMoeImpl::Bf16Route

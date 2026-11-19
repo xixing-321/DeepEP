@@ -269,7 +269,8 @@ struct Bf16PeermemInfo {
     GM_ADDR ptrCompactTokenCount;
     GM_ADDR ptrCompactTokenCountBlockSums;
     GM_ADDR ptrTokenPerExpert;
-    GM_ADDR ptrA0;  // initrouting结果，包括data+scale
+    GM_ADDR sourceTokens;
+    GM_ADDR routeIndices;
     GM_ADDR ptrRoutedTopkWeights;
     GM_ADDR ptrD;
     uint64_t tokenCountsOffset;
@@ -288,17 +289,14 @@ struct Bf16PeermemInfo {
         ptrCompactTokenCountBlockSums = countLayout.enabled ? base + countLayout.blockSumsOffset : nullptr;
         tokenCountsOffset = countLayout.tokenCountsOffset;
         payloadOffset = countLayout.payloadOffset;
-        int64_t offset = static_cast<int64_t>(tokenCountsOffset);
-        ptrTokenPerExpert = base + offset;
-        offset = static_cast<int64_t>(payloadOffset);
-        ptrA0 = base + offset;
-        offset += static_cast<uint64_t>(tilingData->m) * tilingData->topK * tilingData->k * sizeof(bfloat16_t);
-        ptrRoutedTopkWeights = base + offset;
-        offset += Ops::Base::CeilAlign(
-            static_cast<int64_t>(tilingData->m) * tilingData->topK *
-                static_cast<int64_t>(MegaMoeBF16Training::TopkWeightBytes(tilingData->topkWeightType)),
-            static_cast<int64_t>(ALIGN_512));
-        ptrD = base + offset;
+        const MegaMoeBF16Training::PeerPayloadLayout layout(
+            payloadOffset, tilingData->m, tilingData->k, tilingData->topK,
+            MegaMoeBF16Training::TopkWeightBytes(tilingData->topkWeightType));
+        ptrTokenPerExpert = base + tokenCountsOffset;
+        sourceTokens = base + payloadOffset;
+        routeIndices = base + layout.routeIndexOffset;
+        ptrRoutedTopkWeights = base + layout.weightOffset;
+        ptrD = base + layout.returnOffset;
     }
 };
 

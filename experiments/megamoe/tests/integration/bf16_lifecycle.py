@@ -33,8 +33,10 @@ def main():
     size = dist.get_world_size()
     torch.manual_seed(20260825)
     device = f"npu:{torch.npu.current_device()}"
-    m, h, f, e, topk = 129, 256, 512, 2, 4
+    m, h, f, e, topk = 129, 256, 512, 3, 4
     ids = (torch.arange(m * topk, dtype=torch.int32).reshape(m, topk) % (size * e)).to(device)
+    # Different token-to-expert maps expose reuse of a newer forward's route table.
+    alternate_ids = (ids + 1) % (size * e)
     templates = [
         (torch.randn(m, h) * 0.1).to(device=device, dtype=torch.bfloat16),
         torch.full((m, topk), 0.25, dtype=torch.bfloat16, device=device),
@@ -53,7 +55,7 @@ def main():
         values[1] = values[1].to(dtype)
         values = [value.requires_grad_() for value in values]
         x, weights, w1, w2 = values
-        op.x, op.topk_idx, op.topk_weights = x, ids, weights
+        op.x, op.topk_idx, op.topk_weights = x, (ids if mode == "bf16" else alternate_ids), weights
         op.gmm1_save_type = mode
         y = torch.empty_like(x, requires_grad=False)
         counts = torch.zeros(e, dtype=torch.int32, device=device)

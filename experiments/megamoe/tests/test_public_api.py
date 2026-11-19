@@ -6,6 +6,7 @@
 import contextlib
 import sys
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import numpy as np
 import pytest
@@ -150,6 +151,9 @@ def backend(monkeypatch):
             events.append("close")
             self.closed = True
 
+        def barrier(self):
+            events.append("barrier")
+
     monkeypatch.setattr(api, "_MegaRuntime", Runtime)
 
     class Plan:
@@ -177,6 +181,33 @@ def backend(monkeypatch):
     buffer.topk_weights.data[:] = [0.4, 0.6]
     yield SimpleNamespace(buffer=buffer, events=events, ext=ext, dist=dist)
     buffer.destroy()
+
+
+@pytest.mark.parametrize("need_grad,capacity", [(False, None), (False, 80), (True, 80), (True, None)])
+def test_bf16_receive_capacity(backend, need_grad, capacity):
+    args = (backend.buffer.group, 8, 17, 3, 1024, 256)
+    backend.ext.bf16_enabled = True
+    backend.ext._inference_max_recv_tokens = Mock(return_value=102)
+    backend.ext.bf16_buffer_size = Mock(return_value=2 << 20)
+    options = {} if capacity is None else {"max_recv_tokens": capacity}
+    if need_grad and capacity is None:
+        with pytest.raises(ValueError, match="max_recv_tokens"):
+            api.SymmBuffer(*args, mma_type="bf16xbf16", need_grad=True, **options)
+        backend.ext._inference_max_recv_tokens.assert_not_called()
+        backend.ext.bf16_buffer_size.assert_not_called()
+        return
+
+    buf = api.SymmBuffer(*args, mma_type="bf16xbf16", need_grad=need_grad, **options)
+    try:
+        if capacity is None:
+            backend.ext._inference_max_recv_tokens.assert_called_once_with(17, 2, 3, 4)
+            assert buf.max_recv_tokens == 102
+        else:
+            backend.ext._inference_max_recv_tokens.assert_not_called()
+            assert buf.max_recv_tokens == capacity
+        backend.ext.bf16_buffer_size.assert_called_once_with(17, 1024, 256, 3, 2, 4, buf.max_recv_tokens)
+    finally:
+        buf.destroy()
 
 
 def weights():
