@@ -201,6 +201,9 @@ private:
     GM_ADDR waveOutputBase_{nullptr};
     WaveCompletionState waveCompletion_{};
     uint32_t waveCombineSequence_ = 0;
+    // Dispatch and Combine can visit different experts in the same forward.
+    MegaMoeImpl::PeerRowLimitsCache dispatchPeerLimits_{};
+    MegaMoeImpl::PeerRowLimitsCache combinePeerLimits_{};
     LocalTensor<int32_t> waveCumsum_;
     LocalTensor<int32_t> waveSourcePrefix_;
 };
@@ -911,7 +914,8 @@ __aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::DispatchWave(const WaveR
                                                    static_cast<uint32_t>(begin - expertBase), end - begin);
             const PeerCounts<UbPeerPrefix> peerCounts{UbPeerPrefix{waveCumsum_}, expertPerRank_, slice.expert,
                                                       slice.fullRows};
-            const auto limits = MegaMoeImpl::GetPeerRowLimits(peerCounts, worldSize_);
+            const auto& limits =
+                MegaMoeImpl::GetCachedPeerRowLimits(dispatchPeerLimits_, peerCounts, slice.expert, worldSize_);
             MegaMoeImpl::PeerTransferCursor<PeerCounts<UbPeerPrefix>> peers(
                 peerCounts, limits, slice.row, slice.row + slice.rows, static_cast<uint32_t>(begin - expertBase),
                 static_cast<uint32_t>(end - expertBase), worldSize_, rankId_);
@@ -1067,7 +1071,7 @@ __aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::CombineSlice(const WaveS
                                           {TPosition::VECIN, rowElements * uint32_t(sizeof(bfloat16_t)), rowElements}};
     using namespace MegaMoeBF16Training::Wave;
     const PeerCounts<UbPeerPrefix> peerCounts{UbPeerPrefix{waveCumsum_}, expertPerRank_, slice.expert, slice.fullRows};
-    const auto limits = MegaMoeImpl::GetPeerRowLimits(peerCounts, worldSize_);
+    const auto& limits = MegaMoeImpl::GetCachedPeerRowLimits(combinePeerLimits_, peerCounts, slice.expert, worldSize_);
     MegaMoeImpl::PeerTransferCursor<PeerCounts<UbPeerPrefix>> peers(
         peerCounts, limits, slice.row, slice.row + slice.rows, static_cast<uint32_t>(begin - expertBase),
         static_cast<uint32_t>(end - expertBase), worldSize_, rankId_);

@@ -133,11 +133,13 @@ int main()
     std::mt19937 rng(20261116);
     uint64_t cases = 0, checkedRows = 0, sourceBands = 0;
     for (uint32_t test = 0; test < 180; ++test) {
-        const uint32_t peers = test == 0       ? 8
-                               : test == 1     ? 128
-                               : test % 7 == 0 ? 128
-                               : test % 5 == 0 ? 64
-                                               : 2 + rng() % 15;
+        constexpr uint32_t epSizes[] = {8, 16, 32, 64, 128, 256};
+        const uint32_t peers = test >= 2 && test < 8 ? epSizes[test - 2]
+                               : test == 0           ? 8
+                               : test == 1           ? 128
+                               : test % 7 == 0       ? 128
+                               : test % 5 == 0       ? 64
+                                                     : 2 + rng() % 15;
         const uint32_t experts = 4, groups = test < 2 ? 3 : 1 + rng() % 6;
         std::vector<uint32_t> counts(peers * experts), prefix(peers * experts);
         for (uint32_t e = 0; e < experts; ++e) {
@@ -167,6 +169,7 @@ int main()
             position = range.end;
         }
         for (const uint32_t rank : {0U, peers / 2, peers - 1}) {
+            MegaMoeImpl::PeerRowLimitsCache cache{};
             for (uint32_t e = 0; e < experts; ++e) {
                 const auto info = DescribePeerExpert(Prefix{prefix}, peers, experts, e, capacity, groups);
                 if (slices[e].empty()) {
@@ -198,7 +201,10 @@ int main()
                     expected.insert(expected.end(), begin, end);
                     const auto actualSlice = PeerSliceAt(slice.row, info.rows, info.firstSliceRows, groups);
                     assert(actualSlice.begin == slice.row && actualSlice.end == slice.row + slice.rows);
-                    const auto limits = MegaMoeImpl::GetPeerRowLimits(pc, peers);
+                    const auto& limits = MegaMoeImpl::GetCachedPeerRowLimits(cache, pc, e, peers);
+                    const auto direct = MegaMoeImpl::GetPeerRowLimits(pc, peers);
+                    assert(limits.minimum == direct.minimum && limits.maximum == direct.maximum &&
+                           limits.total == direct.total);
                     std::vector<uint32_t> coverage(slice.rows);
                     for (uint32_t owner = 0; owner < 32; ++owner) {
                         const uint32_t q = slice.rows / 32, r = slice.rows % 32;
