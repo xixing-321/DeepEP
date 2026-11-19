@@ -154,7 +154,7 @@ uint64_t HostFlagElements(const MegaMoeTilingData& t)
             count += 4ULL * t.aicNum * MegaMoeImpl::INT_CACHELINE;
         }
     }
-    return count;
+    return count + uint64_t(t.scratchWaveSlots) * MegaMoeImpl::INT_CACHELINE;
 }
 
 void SetSendMaskConfigs(MegaMoeTilingData& t, uint32_t ub)
@@ -278,6 +278,12 @@ MegaMoeTilingData MakeTiling(int64_t bs, int64_t h, int64_t hidden_dim, int64_t 
         const uint64_t gmm1_tiles = CeilDiv<uint64_t>(t.hiddenDim, 256U);
         const uint64_t gmm2_tiles = CeilDiv<uint64_t>(t.h, 256U);
         t.mGroupsPerWave = MegaMoeImpl::WaveGroups(p.aic, gmm1_tiles, gmm2_tiles, 4U);
+    }
+    // Routed MTE Combine returns the slot after all send lanes finish the Wave.
+    if (is_a8w4 && shared_experts == 0 &&
+        MegaMoeImpl::WaveScratchRows(t.maxOutputSize, t.mGroupsPerWave * MegaMoeImpl::L1_TILE_M_256) <
+            t.maxOutputSize) {
+        t.scratchWaveSlots = MegaMoeImpl::kWaveScratchSlots;
     }
     t.isPerExpertWeightTensor = false;
     t.dispatchBufferConfig = DispatchConfig(t, p.ub);

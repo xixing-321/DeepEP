@@ -971,14 +971,15 @@ __aicore__ inline void UpdateMoeExpertGmm2GlobalBuffer(const GmmExecutionConfig&
     constexpr uint32_t activationOutputElementsPerByte = PackedElementTraits<ActivationOutType>::ELEMENTS_PER_BYTE;
     uint64_t gmm1OutputDim = static_cast<uint64_t>(Get<N_VALUE>(state.problemShape));
     uint64_t tokenHiddenDim = static_cast<uint64_t>(Get<K_VALUE>(state.problemShape));
-    uint64_t globalTokenStartIndex = static_cast<uint64_t>(state.globalTokenStartIndex) + rowOffsetInExpert;
+    uint64_t logicalRow = static_cast<uint64_t>(state.globalTokenStartIndex) + rowOffsetInExpert;
+    uint64_t globalTokenStartIndex = logicalRow + workspace.waveRowDelta;
     uint32_t expertMGroupOffset = rowOffsetInExpert / L1_TILE_M_256;
     uint64_t activationOutputWidth = gmm1OutputDim / ACTIVATION_N_HALF;
     uint64_t activationScaleWidth =
         Ops::Base::CeilDiv(activationOutputWidth, static_cast<uint64_t>(MXFP_DIVISOR_SIZE)) * MXFP_MULTI_BASE_SIZE;
 
     gmmAddrInfo.gmm2OutGlobal = workspace.gmm2MmadResPtr + globalTokenStartIndex * tokenHiddenDim * sizeof(bfloat16_t);
-    gmmAddrInfo.metaInfoGlobal = workspace.metaInfoPtr + globalTokenStartIndex * META_INFO_SIZE * sizeof(int32_t);
+    gmmAddrInfo.metaInfoGlobal = workspace.metaInfoPtr + logicalRow * META_INFO_SIZE * sizeof(int32_t);
     gmmAddrInfo.aGlobal = workspace.activationQuantDataPtr + globalTokenStartIndex * activationOutputWidth /
                                                                  activationOutputElementsPerByte *
                                                                  sizeof(ActivationOutType);
@@ -1221,8 +1222,8 @@ __aicore__ inline void RunTokenCombineSlice(const MoeStageCommonConfig& common, 
     auto buffers = common.tokenNum <= W4A8_SMALL_BATCH_MAX_TOKENS
                        ? InitWaveCombineBuffers<COMBINE_NO_QUANT>(common, scratch)
                        : InitWaveCombineBuffers<COMBINE_NO_QUANT, false, 2U>(common, scratch);
-    GM_ADDR sliceOutput =
-        params.workspaceInfo.gmm2MmadResPtr + globalRowStart * common.tokenHiddenDim * sizeof(bfloat16_t);
+    GM_ADDR sliceOutput = params.workspaceInfo.gmm2MmadResPtr + (globalRowStart + params.workspaceInfo.waveRowDelta) *
+                                                                    common.tokenHiddenDim * sizeof(bfloat16_t);
     uint32_t rowSequence = 0U;
     timer.SetSlice(state.expertIdx, rowStart, rowCount);
     for (uint32_t done = 0U; done < owned.count;) {

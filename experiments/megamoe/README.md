@@ -99,6 +99,8 @@ Token Combine 按实际单卡 B 选择：B≤256 使用六槽，B>256 使用两�
 输出握手再推进一次；大 BS 使用输入/输出跨卡握手。共享 GMM1 后无需全核屏障。
 共享 SwiGLU 在 AIV1 上优先于 Combine，共享 GMM2 按本核路由完成及共享激活就绪推进。
 S=0 的 W4A8 小 BS 也使用上述量化完成/count 就绪协议；W8A8 使用输入/输出跨卡握手。
+
+W4A8 路由专家（S=0）的接收容量超过 8 个 Wave 时，Dispatch、量化激活及 GMM 输出使用 8 个循环槽。每个槽在该 Wave 的所有 Combine 发送完成后归还。专家计数、路由映射和通信窗口按原容量分配。
 tiling ABI 为 224 字节。
 CATLASS GMM 的布局和同步机制见 [GMM 说明](csrc/kernels/mega_moe/catlass_gmm/README.md)。
 

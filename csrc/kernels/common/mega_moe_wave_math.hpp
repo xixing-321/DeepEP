@@ -21,6 +21,21 @@ MEGA_MOE_WAVE_MATH_HD constexpr uint32_t WaveGroups(uint32_t cores, uint64_t gmm
     return static_cast<uint32_t>(first > second ? first : second);
 }
 
+constexpr uint32_t kWaveScratchSlots = 8U;
+
+// Keep a dense layout when it fits. Wave tails can span several expert slices.
+MEGA_MOE_WAVE_MATH_HD constexpr uint64_t WaveScratchRows(uint64_t capacity, uint32_t rowsPerWave)
+{
+    const uint64_t ring = uint64_t(kWaveScratchSlots) * rowsPerWave;
+    return ring && ring < capacity ? ring : capacity;
+}
+
+MEGA_MOE_WAVE_MATH_HD constexpr uint64_t WaveScratchRow(uint32_t wave, uint64_t first, uint64_t packed,
+                                                        uint32_t slotRows)
+{
+    return slotRows ? uint64_t(wave % kWaveScratchSlots) * slotRows + (packed - first) : packed;
+}
+
 struct WorkRange {
     uint32_t start = 0;
     uint32_t count = 0;
