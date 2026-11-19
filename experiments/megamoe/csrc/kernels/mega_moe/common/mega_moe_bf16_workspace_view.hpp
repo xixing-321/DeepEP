@@ -177,8 +177,8 @@ struct ForwardWorkspaceInfo {
         InitSavedState(savedStateBase, tilingData, false);
         const MegaMoeBF16Training::DispatchOutputLayout dispatchLayout(
             tilingData->k, tilingData->maxOutputSize, MegaMoeBF16Training::TopkWeightBytes(tilingData->topkWeightType));
-        ptrA = dispatchOutputBase + dispatchLayout.tokensOffset;
-        ptrDispatchedTopkWeights = dispatchOutputBase + dispatchLayout.topkWeightsOffset;
+        ptrA = dispatchOutputBase;
+        ptrDispatchedTopkWeights = dispatchOutputBase ? dispatchOutputBase + dispatchLayout.topkWeightsOffset : nullptr;
         const MegaMoeBF16Training::ForwardTransientWorkspaceLayout transientLayout(
             tilingData->n, tilingData->expertPerRank, tilingData->maxOutputSize);
         ptrA2 = transientWorkspaceBase + transientLayout.ptrA2Offset;
@@ -215,7 +215,6 @@ struct BackwardWorkspaceInfo {
     GM_ADDR ptrGradZ;
     GM_ADDR ptrHp;
     GM_ADDR ptrDpProducts;
-    GM_ADDR ptrSavedRowMap;
     GM_ADDR ptrDX;
     GM_ADDR ptrBwFlagDOReleased;
     GM_ADDR ptrBwFlagDZReady;
@@ -246,7 +245,6 @@ struct BackwardWorkspaceInfo {
         ptrBwFlagDHpReady = base + layout.dhpReadyOffset;
         ptrBwFlagDZReady = base + layout.dzReadyOffset;
         ptrBwFlagDXReady = base + layout.dxReadyOffset;
-        ptrSavedRowMap = layout.mapped ? base + layout.savedRowMapOffset : nullptr;
         ptrRecomputeGate = layout.recompute ? base + layout.recomputeGateOffset : nullptr;
         ptrRecomputeUp = layout.recompute ? base + layout.recomputeUpOffset : nullptr;
         ptrDX = layout.gmDataGrad ? ptrDO : nullptr;

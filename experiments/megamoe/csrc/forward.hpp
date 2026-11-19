@@ -99,7 +99,8 @@ public:
 
     ops::ForwardResult forward_out(torch::Tensor out, torch::Tensor x, torch::Tensor topk_ids,
                                    torch::Tensor topk_weights, torch::Tensor weight1, torch::Tensor weight2,
-                                   int64_t max_recv_tokens, double swiglu_limit, const std::string& save_gmm1_output);
+                                   int64_t max_recv_tokens, double swiglu_limit, const std::string& save_gmm1_output,
+                                   bool save_dispatched_x = true);
 
     ops::BackwardResult backward(torch::Tensor grad_y, torch::Tensor topk_weights, torch::Tensor weight1,
                                  torch::Tensor weight2, torch::Tensor counts, torch::Tensor saved_state,
@@ -109,7 +110,7 @@ public:
     ops::ForwardResult forward_with_timer(torch::Tensor x, torch::Tensor topk_ids, torch::Tensor topk_weights,
                                           torch::Tensor weight1, torch::Tensor weight2, int64_t max_recv_tokens,
                                           double swiglu_limit, const std::string& save_gmm1_output,
-                                          c10::optional<torch::Tensor> out);
+                                          c10::optional<torch::Tensor> out, bool save_dispatched_x = true);
     ops::BackwardResult backward_with_timer(torch::Tensor grad_y, torch::Tensor topk_weights, torch::Tensor weight1,
                                             torch::Tensor weight2, torch::Tensor counts, torch::Tensor saved_state,
                                             torch::Tensor dispatch_output, int64_t max_recv_tokens, double swiglu_limit,
@@ -122,14 +123,14 @@ private:
     };
     static WeightLayout ResolveWeightLayout(const torch::Tensor& w1, const torch::Tensor& w2, int64_t k);
     void ClearWindowControl() const;
-    static torch::Tensor AllocateTimer(const torch::Tensor& like, const torch::Tensor& weights, const torch::Tensor& w1,
-                                       const torch::Tensor& w2, int64_t max_recv, int phase, const std::string& mode);
+    torch::Tensor AllocateTimer(const torch::Tensor& like, const torch::Tensor& weights, const torch::Tensor& w1,
+                                const torch::Tensor& w2, int64_t max_recv, int phase, const std::string& mode);
     MegaMoeBf16TilingData TilingForCall(int64_t m, int64_t k, int64_t n, int64_t topk, int64_t experts,
                                         int64_t max_recv, double limit, const std::string& mode, uint32_t weight_type,
                                         bool trans_w);
     ops::ForwardResult Forward(torch::Tensor x, torch::Tensor ids, torch::Tensor p, torch::Tensor w1, torch::Tensor w2,
                                int64_t max_recv, double limit, const std::string& mode, torch::Tensor out,
-                               torch::Tensor timer);
+                               torch::Tensor timer, bool save_dispatched_x);
     ops::BackwardResult Backward(torch::Tensor dy, torch::Tensor p, torch::Tensor w1, torch::Tensor w2,
                                  torch::Tensor counts, torch::Tensor saved, torch::Tensor dispatch, int64_t max_recv,
                                  double limit, const std::string& mode, torch::Tensor timer);

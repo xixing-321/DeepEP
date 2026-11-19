@@ -54,7 +54,7 @@
 #include "tla/tensor.hpp"
 
 #include "epilogue/block_epilogue_swiglu_bf16_backward.hpp"
-#include "catlass_gmm/copy_saved_rows_to_l1.hpp"
+#include "catlass/gemm/tile/tile_copy.hpp"
 #include "common/mega_moe_bf16_context.hpp"
 #include "stage/mega_moe_dispatch_ready_backward.hpp"
 #include "stage/mega_moe_dispatch_schedule_backward.hpp"
@@ -96,10 +96,9 @@ struct BackwardBF16TileCopy : Catlass::Gemm::Tile::PackedTileCopyTla<ArchTag, bf
         template <class TensorDst, class TensorSrc>
         CATLASS_DEVICE void operator()(TensorDst const& dst, TensorSrc const& src, uint8_t unitFlag = 0)
         {
-            using Copy =
-                Catlass::Gemm::Tile::CopyL0CToUBTla<ArchTag, TensorL0C, TensorC,
-                                                    Catlass::Gemm::Tile::CopyL0CToUBMode::NO_SPLIT,
-                                                    Catlass::Gemm::Tile::ScaleGranularity::NO_QUANT, false>;
+            using Copy = Catlass::Gemm::Tile::CopyL0CToUBTla<ArchTag, TensorL0C, TensorC,
+                                                             Catlass::Gemm::Tile::CopyL0CToUBMode::NO_SPLIT,
+                                                             Catlass::Gemm::Tile::ScaleGranularity::NO_QUANT, false>;
             if constexpr (TargetUBIdx == DUAL_AIV_TARGET) {
                 // The second logical M band selects AIV1. Each AIV has its own UB tile at the same offset.
                 const bool aiv1 = static_cast<uint32_t>(tla::get<0>(dst.coord())) >= L1_TILE_M;
@@ -125,10 +124,6 @@ struct BackwardBF16TileCopy<LayoutA, LayoutB, TargetUBIdx, true>
     template <class TensorC>
     using CopyL0CToDst = Catlass::Gemm::Tile::CopyL0CToGmTla<ArchTag, TensorL0C, TensorC,
                                                              Catlass::Gemm::Tile::ScaleGranularity::NO_QUANT, false>;
-    template <class TensorA>
-    using CopyGmToL1A = CopySavedRowsToL1<TensorA, typename Base::TensorL1A>;
-    template <class TensorB>
-    using CopyGmToL1B = CopySavedRowsToL1<TensorB, typename Base::TensorL1B>;
 };
 
 template <class LayoutA, class LayoutB, uint32_t TargetUBIdx = 0, bool GmOutput = false>
@@ -659,16 +654,11 @@ __aicore__ inline void GMM1DW(BackwardGroupMatmulParam<ColumnMajor, RowMajor, 0,
     const uint32_t n = static_cast<uint32_t>(Get<N_VALUE>(problemShape));  // canonical K / legacy N
     const uint32_t k = static_cast<uint32_t>(Get<K_VALUE>(problemShape));  // Me
 
-    SavedRowGlobalTensor aGlobal;
-    SavedRowGlobalTensor bGlobal;
+    AscendC::GlobalTensor<bfloat16_t> aGlobal, bGlobal;
     AscendC::GlobalTensor<bfloat16_t> cGlobal;
     aGlobal.SetGlobalBuffer((__gm__ bfloat16_t*)gmmAddrInfo.aGlobal);
     bGlobal.SetGlobalBuffer((__gm__ bfloat16_t*)gmmAddrInfo.bGlobal);
     cGlobal.SetGlobalBuffer((__gm__ bfloat16_t*)gmmAddrInfo.cGlobal);
-    auto* map = reinterpret_cast<__gm__ uint32_t*>(gmmAddrInfo.savedRowMap);
-    aGlobal.rowMap = gmmAddrInfo.savedRowsInA ? map : nullptr;
-    bGlobal.rowMap = gmmAddrInfo.savedRowsInA ? nullptr : map;
-    aGlobal.rowBase = bGlobal.rowBase = gmmAddrInfo.savedRowBase;
 
     // A is canonical dZ.T or legacy Xpacked.T, viewed as ColumnMajor.
     auto layoutA = tla::MakeLayout<bfloat16_t, Catlass::layout::ColumnMajor>(m, k);

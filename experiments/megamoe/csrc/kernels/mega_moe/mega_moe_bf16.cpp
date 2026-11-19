@@ -18,8 +18,8 @@ template <typename TopkWeightT>
 __mix__(1, 2) __global__ __aicore__
     void mega_moe_bf16_forward(GM_ADDR context, GM_ADDR x, GM_ADDR topkIds, GM_ADDR topkWeights, GM_ADDR weight1,
                                GM_ADDR weight2, GM_ADDR yOut, GM_ADDR expertTokenNumsOut, GM_ADDR trainingSavedStateGM,
-                               GM_ADDR dispatchOutputGM, GM_ADDR forwardTransientWorkspaceGM,
-                               MegaMoeBf16TilingData tilingData, GM_ADDR timerAddr)
+                               GM_ADDR dispatchOutputGM, GM_ADDR forwardTransientWorkspaceGM, GM_ADDR timerAddr,
+                               MegaMoeBf16TilingData tilingData)
 {
     InitSocState();
     MegaMoeTrainTimerDevice timer;
@@ -47,11 +47,11 @@ extern "C" ASCEND_MEGAMOE_EXPORT void deepep_train_mega_moe_bf16_forward_kernel_
     if (tiling.topkWeightType == 1U) {
         mega_moe_bf16_forward<float><<<block_dim, nullptr, stream>>>(
             context, x, topk_ids, topk_weights, weight1, weight2, y, expert_token_nums, training_saved_state,
-            dispatch_output, forward_transient_workspace, tiling, nullptr);
+            dispatch_output, forward_transient_workspace, nullptr, tiling);
     } else {
         mega_moe_bf16_forward<bfloat16_t><<<block_dim, nullptr, stream>>>(
             context, x, topk_ids, topk_weights, weight1, weight2, y, expert_token_nums, training_saved_state,
-            dispatch_output, forward_transient_workspace, tiling, nullptr);
+            dispatch_output, forward_transient_workspace, nullptr, tiling);
     }
 }
 
@@ -66,11 +66,11 @@ extern "C" ASCEND_MEGAMOE_EXPORT void deepep_train_mega_moe_bf16_forward_timer_k
     if (tiling.topkWeightType == 1U) {
         mega_moe_bf16_forward<float><<<block_dim, nullptr, stream>>>(
             context, x, topk_ids, topk_weights, weight1, weight2, y, expert_token_nums, training_saved_state,
-            dispatch_output, forward_transient_workspace, tiling, timer);
+            dispatch_output, forward_transient_workspace, timer, tiling);
     } else {
         mega_moe_bf16_forward<bfloat16_t><<<block_dim, nullptr, stream>>>(
             context, x, topk_ids, topk_weights, weight1, weight2, y, expert_token_nums, training_saved_state,
-            dispatch_output, forward_transient_workspace, tiling, timer);
+            dispatch_output, forward_transient_workspace, timer, tiling);
     }
 }
 

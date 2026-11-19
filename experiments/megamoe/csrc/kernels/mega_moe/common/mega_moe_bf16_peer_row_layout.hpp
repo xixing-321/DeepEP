@@ -24,6 +24,17 @@ struct PeerRowLayout {
     Prefix countsPrefix, sourcePrefix;
     uint32_t peers, experts, rank;
 
+    MEGA_MOE_PEER_HOST_DEVICE inline uint32_t SourceRow(const Slice& s, const MegaMoeImpl::PeerTransfer& t) const
+    {
+        return sourcePrefix.Get(t.sourceRank * experts + s.expert) + t.sourceOrdinalBegin;
+    }
+
+    MEGA_MOE_PEER_HOST_DEVICE inline uint64_t SavedRow(const Slice& s, const MegaMoeImpl::PeerTransfer& t) const
+    {
+        const uint32_t before = t.sourceRank ? countsPrefix.Get((t.sourceRank - 1) * experts + s.expert) : 0;
+        return s.packed - s.row + before + t.sourceOrdinalBegin;
+    }
+
     template <class Visit>
     MEGA_MOE_PEER_HOST_DEVICE inline void ForEachSpan(const Slice& slice, uint64_t begin, uint64_t end,
                                                       MegaMoeImpl::PeerRowLimitsCache& cache, Visit visit) const
@@ -36,9 +47,7 @@ struct PeerRowLayout {
             static_cast<uint32_t>(end - expertBase), peers, rank);
         MegaMoeImpl::PeerTransfer transfer{};
         while (cursor.Next(transfer)) {
-            const uint32_t sourceRow =
-                sourcePrefix.Get(transfer.sourceRank * experts + slice.expert) + transfer.sourceOrdinalBegin;
-            visit(transfer.sourceRank, sourceRow, expertBase + transfer.destinationRow, transfer.rowCount);
+            visit(transfer, expertBase + transfer.destinationRow);
         }
     }
 };

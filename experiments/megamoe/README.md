@@ -337,17 +337,19 @@ max_recv_tokens是本rank接收route行数的显式上限，按路由峰值设�
 | need_grad=True | Hp=BF16(SiLU_FP32(Gate)×Up×FP32(p))，随后GMM2 | 按实际梯度需求建立图 |
 | need_grad=False | 不乘权的BF16 H进入GMM2，源端在FP32逐route乘p后归并 | 仅推理，输入要求梯度时明确报错 |
 
-`torch.no_grad()` 不改变need_grad=True的前乘语义，只跳过构图及Gate/Up保存。
+`torch.no_grad()` 不改变need_grad=True的前乘语义，跳过构图以及 X/p、Gate/Up 的跨调用保存。
 gmm1_save_type取bf16、mxfp8、none，默认bf16，分别保存原始Gate/Up、量化保存、反向重算。
 MXFP8沿用每32列量化与clipping掩码；none在反向重算GMM1。
 activation_clamp为None或0时不截断；正值采用Gate上界及Up双侧截断。
 dP乘积与归约为FP32，最后转换为p的dtype；GMM的Hp、dZ保持BF16。
 
 临时workspace由Host Plan持有，相同shape/type/保存配置复用。
-每次前向的counts、dispatch X/p和保存状态由对应autograd context持有，支持多前向后逆序反向。
+训练时 `SymmBuffer(..., save_dispatched_x=True)` 默认将专家端 X 和 TopK weight 保存在本次前向的 autograd context 中。行序依次为本地专家、源 EP rank、源内 token/TopK slot。BF16、MXFP8 的 Gate/Up 也按此顺序保存，MXFP8 的 scale 和 clipping 掩码与对应行对齐。
+
+框架自行重建时设置 `save_dispatched_x=False`，并在每次前向前设置 `sym_buffer.dispatch_rebuilder` 为该 microbatch 的无参函数。反向调用该函数取得连续的设备端 UInt8 缓冲。缓冲依次存放 `[max_recv_tokens, H]` BF16 X 和 `[max_recv_tokens]` 原 dtype 的 p，两段分别按 512 字节对齐。异步重建时，回调须让调用流等待生产端事件。每个前向独立记录回调，支持多前向后逆序反向。直接调用原生 Plan 的框架可以在 `forward_out(..., save_dispatched_x=False)` 后将重建张量传入 `backward`。
 跨rank使用相同调用顺序、p dtype及配置。debug_collectives=True可开启跨rank dtype/阶段诊断，默认关闭。
 
-前向采用同一实现，由内部编译定义 `DEEPEP_MEGAMOE_BF16_FORWARD_SCHEDULE` 选择0交错或1分阶段，默认0。
+BF16 推理（`need_grad=False`）固定使用模式 0，按 Wave 交错执行 GMM1 和 GMM2，与 W4A8 的调度方式一致。BF16 训练（`need_grad=True`）默认也使用模式 0；编译时设置 `DEEPEP_MEGAMOE_BF16_FORWARD_SCHEDULE=1` 可切换为分阶段调度。
 BF16主函数和buffer不暴露调度及Timer参数。Timer由 `DEEPEP_MEGAMOE_TIMER=ON` 编译，
 通过 `deep_ep_experimental.megamoe.timer.bf16.capture.TimerCapture` 采集，独立于常规性能测量。
 

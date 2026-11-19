@@ -4,6 +4,7 @@
 
 #pragma once
 #include "mega_moe_bf16_layout.hpp"
+#include "mega_moe_bf16_wave_plan.hpp"
 #if defined(__NPU_DEVICE__) || defined(__ASC_NPU_HOST__)
 #define MEGA_MOE_WORKSPACE_HD __host_aicore__
 #else
@@ -13,17 +14,16 @@
 namespace MegaMoeBF16Training {
 // Byte offsets shared by Host allocation and Device addressing.
 struct BackwardWorkspaceLayout {
-    uint64_t doOffset, savedRowMapOffset, recomputeGateOffset, recomputeUpOffset;
+    uint64_t doOffset, recomputeGateOffset, recomputeUpOffset;
     uint64_t dzOffset, hpOffset, dpOffset, dispatchReadyOffset, aivReadyOffset, hDoneOffset;
     uint64_t dhpReadyOffset, dzReadyOffset, dxReadyOffset, doReleasedOffset, progressOffset;
     uint64_t controlOffset, totalBytes;
     uint64_t sliceSlots, dhpSlicesOffset, recomputeSlicesOffset, dxSlicesOffset;
-    bool mapped, gmDataGrad, recompute;
+    bool gmDataGrad, recompute;
     MEGA_MOE_WORKSPACE_HD constexpr BackwardWorkspaceLayout(uint64_t e, uint64_t r, uint64_t h, uint64_t n,
                                                             uint64_t world, uint64_t producers, uint32_t splitExperts,
-                                                            uint32_t savedMode, uint32_t groups)
+                                                            uint32_t savedMode)
         : doOffset(0),
-          savedRowMapOffset(0),
           recomputeGateOffset(0),
           recomputeUpOffset(0),
           dzOffset(0),
@@ -43,13 +43,10 @@ struct BackwardWorkspaceLayout {
           dhpSlicesOffset(0),
           recomputeSlicesOffset(0),
           dxSlicesOffset(0),
-          mapped(UseMappedBackwardInputs(savedMode, n / 2, groups)),
           gmDataGrad(UseGmForBackwardDataGrad(savedMode)),
           recompute(savedMode == kSaveNone)
     {
         uint64_t offset = AlignUp(2 * r * h, 512);
-        savedRowMapOffset = offset;
-        if (mapped) offset += AlignUp(2 * sizeof(uint32_t) * r, 512);
         recomputeGateOffset = offset;
         if (recompute) offset += AlignUp(r * n, 512);
         recomputeUpOffset = offset;
@@ -90,7 +87,7 @@ struct BackwardWorkspaceLayout {
     template <typename Tiling>
     MEGA_MOE_WORKSPACE_HD explicit BackwardWorkspaceLayout(const Tiling& t, uint32_t splitExperts)
         : BackwardWorkspaceLayout(t.expertPerRank, t.maxOutputSize, t.k, t.n, t.epWorldSize, t.blockNumPerEP,
-                                  splitExperts, t.savedGateUpMode, t.mGroupsPerWave)
+                                  splitExperts, t.savedGateUpMode)
     {
     }
 };

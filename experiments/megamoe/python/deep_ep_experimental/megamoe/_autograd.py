@@ -14,12 +14,19 @@ class BF16Function(torch.autograd.Function):
     def forward(ctx, owner, plan, config, x, ids, p, w1, w2, out):
         capture = getattr(owner, "_timer_capture", None)
         ctx.capture = capture
+        ctx.rebuild_dispatch = None if owner.save_dispatched_x else owner.dispatch_rebuilder
+        if not owner.save_dispatched_x and not callable(ctx.rebuild_dispatch):
+            raise ValueError("Set sym_buffer.dispatch_rebuilder for this microbatch when save_dispatched_x=False")
         if capture is not None:
             capture.claim()
-            result = plan.forward_with_timer(x, ids, p, w1, w2, config.max_recv, config.limit, config.save_type, out)
+            result = plan.forward_with_timer(
+                x, ids, p, w1, w2, config.max_recv, config.limit, config.save_type, out, owner.save_dispatched_x
+            )
             capture.forward = result.timer
         else:
-            result = plan.forward_out(out, x, ids, p, w1, w2, config.max_recv, config.limit, config.save_type)
+            result = plan.forward_out(
+                out, x, ids, p, w1, w2, config.max_recv, config.limit, config.save_type, owner.save_dispatched_x
+            )
         saved = result.saved_state
         saved.gmm1_save_type = config.save_type
         ctx.owner, ctx.plan, ctx.config = owner, plan, config
@@ -38,6 +45,8 @@ class BF16Function(torch.autograd.Function):
             runtime.ensure_alive()
             runtime.validate_topk_weight_type(p.dtype, 1)
             caller = npu_api().current_stream(runtime.device)
+            if dispatched is None:
+                dispatched = ctx.rebuild_dispatch()
             runtime.stream.wait_stream(caller)
             with npu_api().stream(runtime.stream):
                 if capture is not None:

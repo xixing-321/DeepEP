@@ -100,7 +100,6 @@ private:
     __aicore__ inline void TopkGradBuffInit(TPipe* tPipe);
     __aicore__ inline void GatherRoutes();
     __aicore__ inline void RestoreTokenPerExpert();
-    __aicore__ inline void BuildSavedRowMap();
     __aicore__ inline void ResetTokenPerExpert();
     __aicore__ inline void ClearEmptyExpertGradWeights();
     __aicore__ inline void ClearGradWeightPlane(GM_ADDR base, uint64_t planeElements, uint32_t expertIdx);
@@ -296,16 +295,11 @@ __aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::Init(GM_ADDR context, G
     params_.workspaceInfo = savedState_;
     params_.peermemInfo = Bf16PeermemInfo(winRankAddr_[rankId_], tilingData, true);
     params_.tilingData = tilingData;
-    params_.peerRowsGroups = tilingData->mGroupsPerWave;
+    params_.peerRowsGroups = 0;
     gradWeight1GmAddr_ = gradWeight1;
     gradWeight2GmAddr_ = gradWeight2;
     gradTopkWeightsGmAddr_ = gradTopkWeights;
     bwWs_ = BackwardWorkspaceInfo(backwardWorkspace, tilingData, splitExperts_);
-    if (bwWs_.ptrSavedRowMap != nullptr) {
-        // New backward intermediates use source-rank/route order; saved
-        // forward tensors retain their Wave layout and are read through the map.
-        params_.peerRowsGroups = 0;
-    }
     bwFlagDispatch_ = (__gm__ int32_t*)bwWs_.ptrBwFlagDispatchToGmm2Grad;
     bwFlagAiv1Ready_ = (__gm__ int32_t*)bwWs_.ptrBwFlagAiv1Ready;
     bwFlagHDone_ = (__gm__ int32_t*)bwWs_.ptrBwFlagHDone;
@@ -326,63 +320,7 @@ __aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::Init(GM_ADDR context, G
                       savedState_.ptrSavedGateHigh, savedState_.ptrSavedUpLow, savedState_.ptrSavedUpHigh,
                       bwWs_.ptrGradZ, bwWs_.ptrHp, bwWs_.ptrDpProducts, params_.workspaceInfo.ptrDispatchedTopkWeights,
                       0, 0, tilingData->swigluLimit, savedGateUpMode_});
-    epilogueOp_.SetSavedRowMap(bwWs_.ptrSavedRowMap);
     epilogueOp_.UpdateNextProblem({0, n_, 0, 0});
-}
-
-template <typename TopkWeightT>
-__aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::BuildSavedRowMap()
-{
-    using namespace MegaMoeBF16Training::Wave;
-    // Each entry holds the saved physical row and the remaining contiguous
-    // run. This keeps UB and L1 loads segmented without copying payloads in GM.
-    const uint32_t countElements = worldSize_ * expertPerRank_;
-    LocalTensor<int32_t> prefixUb{TPosition::VECIN, 0, (countElements + 7U) / 8U * 8U};
-    DataCopyPad(prefixUb, cumsumInWorkSpace_,
-                DataCopyExtParams{1U, countElements * uint32_t{sizeof(int32_t)}, 0U, 0U, 0U},
-                DataCopyPadExtParams<int32_t>{false, 0U, 0U, 0U});
-    SetFlag<HardEvent::MTE2_S>(EVENT_ID6);
-    WaitFlag<HardEvent::MTE2_S>(EVENT_ID6);
-    // Row partitioning repeatedly reads counts; keep that table in private UB.
-    const UbPeerPrefix prefix{prefixUb};
-    constexpr uint32_t chunkRows = 1024;
-    LocalTensor<uint32_t> scratch{TPosition::VECIN, BW_STAGE_BASE_BYTES, 2U * chunkRows};
-    GlobalTensor<uint32_t> mapping;
-    mapping.SetGlobalBuffer(reinterpret_cast<__gm__ uint32_t*>(bwWs_.ptrSavedRowMap));
-    const uint32_t groups = params_.tilingData->mGroupsPerWave;
-    for (uint32_t expert = 0; expert < expertPerRank_; ++expert) {
-        const auto descriptor = DescribePeerExpert(prefix, worldSize_, expertPerRank_, expert, maxOutputSize_, groups);
-        const PeerCounts<UbPeerPrefix> counts{prefix, expertPerRank_, expert, descriptor.rows};
-        const uint32_t perCore = (descriptor.rows + 2U * blockNum_ - 1U) / (2U * blockNum_);
-        const uint32_t begin = aivCoreIdx_ * perCore;
-        const uint32_t end = begin + perCore < descriptor.rows ? begin + perCore : descriptor.rows;
-        PeerRowCursor cursor(counts, worldSize_, rankId_, groups, descriptor.rows, descriptor.firstSliceRows, begin,
-                             descriptor.rows);
-        PeerTransfer transfer{};
-        while (cursor.Next(transfer) && transfer.destinationRow < end) {
-            // Ownership limits writes, while the run spans the full physical segment.
-            const uint32_t ownedRows =
-                transfer.rowCount < end - transfer.destinationRow ? transfer.rowCount : end - transfer.destinationRow;
-            const uint64_t sourceBegin =
-                transfer.sourceRank ? prefix.Get((transfer.sourceRank - 1U) * expertPerRank_ + expert) : 0U;
-            const uint64_t oldRow = descriptor.base + transfer.destinationRow;
-            const uint64_t newRow = descriptor.base + sourceBegin + transfer.sourceOrdinalBegin;
-            for (uint32_t offset = 0; offset < ownedRows; offset += chunkRows) {
-                const uint32_t take = ownedRows - offset < chunkRows ? ownedRows - offset : chunkRows;
-                SetFlag<HardEvent::MTE3_S>(EVENT_ID6);
-                WaitFlag<HardEvent::MTE3_S>(EVENT_ID6);
-                for (uint32_t row = 0; row < take; ++row) {
-                    scratch.SetValue(2U * row, static_cast<uint32_t>(oldRow + offset + row));
-                    scratch.SetValue(2U * row + 1U, transfer.rowCount - offset - row);
-                }
-                SetFlag<HardEvent::S_MTE3>(EVENT_ID6);
-                WaitFlag<HardEvent::S_MTE3>(EVENT_ID6);
-                DataCopyPad(mapping[2U * (newRow + offset)], scratch,
-                            DataCopyExtParams{1U, static_cast<uint32_t>(2U * take * sizeof(uint32_t)), 0U, 0U, 0U});
-            }
-        }
-    }
-    PipeBarrier<PIPE_ALL>();
 }
 
 // Fixed-position P0 staging window at the top of UB, above the P1/P2 tile
@@ -842,9 +780,6 @@ __aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::UpdateGlobalBuffer(Bf16
                                                                             uint32_t phase, uint32_t expertIdx)
 {
     gmmAddrInfo.timer = timer_;
-    gmmAddrInfo.savedRowMap = bwWs_.ptrSavedRowMap;
-    gmmAddrInfo.savedRowBase = cumMRows_;
-    gmmAddrInfo.savedRowsInA = !params_.tilingData->transW;
     const int64_t base = cumMRows_;
     const uint64_t bf16 = sizeof(bfloat16_t);
     if (phase == BW_PHASE_RECOMPUTE) {
@@ -857,11 +792,12 @@ __aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::UpdateGlobalBuffer(Bf16
         gmmAddrInfo.aGlobal = bwWs_.ptrGradZ + base * n_ * bf16;
         gmmAddrInfo.bGlobal = params_.bGmAddr + static_cast<uint64_t>(expertIdx) * n_ * k_ * bf16;
     } else if (phase == BW_PHASE_DW1) {
+        GM_ADDR x = params_.workspaceInfo.ptrA;
         if (params_.tilingData->transW) {
             gmmAddrInfo.aGlobal = bwWs_.ptrGradZ + base * n_ * bf16;
-            gmmAddrInfo.bGlobal = params_.workspaceInfo.ptrA + base * k_ * bf16;
+            gmmAddrInfo.bGlobal = x + base * k_ * bf16;
         } else {
-            gmmAddrInfo.aGlobal = params_.workspaceInfo.ptrA + base * k_ * bf16;
+            gmmAddrInfo.aGlobal = x + base * k_ * bf16;
             gmmAddrInfo.bGlobal = bwWs_.ptrGradZ + base * n_ * bf16;
         }
         gmmAddrInfo.cGlobal = gradWeight1GmAddr_ + static_cast<uint64_t>(expertIdx) * n_ * k_ * bf16;
@@ -1464,10 +1400,6 @@ __aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::Process()
 
         RestoreTokenPerExpert();
         SyncAll<true>();
-        if (bwWs_.ptrSavedRowMap != nullptr) {
-            BuildSavedRowMap();
-            SyncAll<true>();
-        }
         if (MegaMoeBF16Training::UseGmForBackwardDataGrad(savedGateUpMode_) && splitExperts_ > 0 && aivCoreIdx_ == 0) {
             // Word1 of expert0's dHp flag cacheline signals that every AIV
             // has finished count-table restore and producer metadata setup.

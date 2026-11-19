@@ -60,10 +60,6 @@ public:
     {
         reductionRows_ = rows;
     }
-    __aicore__ inline void SetSavedRowMap(GM_ADDR mapping)
-    {
-        savedRowMap_ = reinterpret_cast<__gm__ uint32_t*>(mapping);
-    }
     __aicore__ inline uint32_t SavedMode() const
     {
         return params_.savedGateUpMode;
@@ -169,20 +165,14 @@ public:
             const uint32_t take = rows - row < batchRows ? rows - row : batchRows;
             ready.Wait(row, take, (f + 255U) / 256U);
             recomputeReady.Wait(row, take, (f + 255U) / 256U);
-            // dP results may alias the p-gather scratch. Retire MTE3 before
-            // scalar index writes or input DMA reuse either UB region.
+            // Retire the previous dP write before reusing the batch buffers.
             SyncFunc<AscendC::HardEvent::MTE3_S>();
             LoadPackedWeights(take, row);
             const AscendC::DataCopyExtParams copy{1U, take * rowBytes, 0U, 0U, 0U};
             AscendC::DataCopyPad(d, dhp[static_cast<uint64_t>(row) * f], copy, {});
-            for (uint32_t offset = 0; offset < take;) {
-                const uint32_t run = SavedContiguousRows(rowBase_ + row + offset, take - offset);
-                const uint64_t physical = SavedPhysicalRow(rowBase_ + row + offset);
-                const AscendC::DataCopyExtParams savedCopy{1U, run * rowBytes, 0U, 0U, 0U};
-                AscendC::DataCopyPad(g[offset * f], gatePlaneGm_[physical * f], savedCopy, {});
-                AscendC::DataCopyPad(u[offset * f], upPlaneGm_[physical * f], savedCopy, {});
-                offset += run;
-            }
+            const uint64_t first = (rowBase_ + row) * f;
+            AscendC::DataCopyPad(g, gatePlaneGm_[first], copy, {});
+            AscendC::DataCopyPad(u, upPlaneGm_[first], copy, {});
             SyncFunc<AscendC::HardEvent::MTE2_V>();
             auto* dp = reinterpret_cast<__ubuf__ bfloat16_t*>(d.GetPhyAddr());
             auto* gp = reinterpret_cast<__ubuf__ bfloat16_t*>(g.GetPhyAddr());
@@ -493,23 +483,8 @@ private:
     static constexpr uint32_t kWeightBytes = (kTileRows * sizeof(TopkWeightT) + 31U) / 32U * 32U;
     static constexpr uint32_t kWeightOffset = Catlass::Arch::Ascend950::UB_SIZE - kWeightBytes;
     static_assert(kWeightOffset >= kMxScratchEnd, "Prefetched weights must not alias live MXFP8 decode or clip masks");
-    static constexpr uint32_t kWeightIndexBytes = kTileRows * sizeof(uint32_t);
-    static constexpr uint32_t kWeightStageBytes = kTileRows * AscendC::ONE_BLK_SIZE;
-    static constexpr uint32_t kWeightIndexOffset = kWeightOffset - kWeightStageBytes - kWeightIndexBytes;
-    static constexpr uint32_t kWeightStageOffset = kWeightIndexOffset + kWeightIndexBytes;
-    static_assert(kWeightIndexOffset >= kMxScratchEnd + kTileRows * 8U * sizeof(float),
-                  "Weight gather scratch must not alias the SwiGLU dP scratch");
-
-    __aicore__ inline uint64_t SavedPhysicalRow(uint64_t logical) const
-    {
-        return savedRowMap_ == nullptr ? logical : AscendC::ReadGmByPassDCache(savedRowMap_ + 2U * logical);
-    }
-    __aicore__ inline uint32_t SavedContiguousRows(uint64_t logical, uint32_t limit) const
-    {
-        if (savedRowMap_ == nullptr) return limit;
-        const uint32_t run = AscendC::ReadGmByPassDCache(savedRowMap_ + 2U * logical + 1U);
-        return run < limit ? run : limit;
-    }
+    static_assert(kWeightOffset >= kMxScratchEnd + kTileRows * 8U * sizeof(float),
+                  "Prefetched weights must not alias the SwiGLU dP scratch");
 
     __aicore__ inline void LoadPackedWeights(uint32_t rows, uint32_t mLoc)
     {
@@ -517,42 +492,6 @@ private:
         // save=none, paired AIC Fixpipe targets only the first work tile.
         SyncFunc<AscendC::HardEvent::V_MTE2>();
         SyncFunc<AscendC::HardEvent::MTE3_MTE2>();
-        if (savedRowMap_ != nullptr) {
-            using Bits = std::conditional_t<sizeof(TopkWeightT) == 2, uint16_t, uint32_t>;
-            AscendC::GlobalTensor<Bits> source;
-            source.SetGlobalBuffer(reinterpret_cast<__gm__ Bits*>(params_.packedTopkWeightsGmAddr));
-            if (!MegaMoeBF16Training::UseWholeRowTopkGrad(params_.savedGateUpMode, outputF_)) {
-                auto target = packedWeightUb_.template ReinterpretCast<Bits>();
-                for (uint32_t row = 0; row < rows; ++row)
-                    target.SetValue(row, source.GetValue(SavedPhysicalRow(rowBase_ + mLoc + row)));
-                SyncFunc<AscendC::HardEvent::S_V>();
-                return;
-            }
-            // Stage each physical segment at a 32-byte boundary. Gather
-            // packs their raw bits into one dense p tile, including short tails.
-            AscendC::LocalTensor<Bits> staged{AscendC::TPosition::VECIN, kWeightStageOffset,
-                                              kWeightStageBytes / sizeof(Bits)};
-            AscendC::LocalTensor<uint32_t> indices{AscendC::TPosition::VECIN, kWeightIndexOffset, kTileRows};
-            auto target = packedWeightUb_.template ReinterpretCast<Bits>();
-            // S refills indices only after the previous Gather has retired.
-            SyncFunc<AscendC::HardEvent::V_S>();
-            uint32_t byteOffset = 0;
-            for (uint32_t row = 0; row < rows;) {
-                const uint32_t take = SavedContiguousRows(rowBase_ + mLoc + row, rows - row);
-                const uint64_t physical = SavedPhysicalRow(rowBase_ + mLoc + row);
-                const uint32_t bytes = take * sizeof(Bits);
-                AscendC::DataCopyPad(staged[byteOffset / sizeof(Bits)], source[physical],
-                                     AscendC::DataCopyExtParams{1U, bytes, 0U, 0U, 0U}, {});
-                for (uint32_t offset = 0; offset < take; ++offset)
-                    indices.SetValue(row + offset, byteOffset + offset * sizeof(Bits));
-                row += take;
-                byteOffset += (bytes + AscendC::ONE_BLK_SIZE - 1U) / AscendC::ONE_BLK_SIZE * AscendC::ONE_BLK_SIZE;
-            }
-            SyncFunc<AscendC::HardEvent::MTE2_V>();
-            SyncFunc<AscendC::HardEvent::S_V>();
-            AscendC::Gather(target, staged, indices, 0U, rows);
-            return;
-        }
         AscendC::DataCopyExtParams p{1U, static_cast<uint32_t>(rows * sizeof(TopkWeightT)), 0U, 0U, 0U};
         AscendC::DataCopyPadExtParams<TopkWeightT> pad{false, 0U, 0U, 0U};
         AscendC::DataCopyPad(packedWeightUb_, packedTopkWeightsGm_[rowBase_ + mLoc], p, pad);
@@ -569,18 +508,6 @@ private:
                              gateDst, true);
             DecodeMxFp8Plane(upMxFp8Gm_, upScaleGm_, upLowGm_, upHighGm_, rowStart, nLoc, singleM, singleN, upDst,
                              false);
-            return;
-        }
-        if (savedRowMap_ != nullptr) {
-            for (uint32_t row = 0; row < singleM;) {
-                const uint32_t take = SavedContiguousRows(rowStart + row, singleM - row);
-                const uint64_t index = SavedPhysicalRow(rowStart + row) * outputF_ + nLoc;
-                auto gateTile = gateDst[row * singleN];
-                auto upTile = upDst[row * singleN];
-                CopyPlaneTileToUb(gatePlaneGm_, index, take, singleN, outputF_, gateTile);
-                CopyPlaneTileToUb(upPlaneGm_, index, take, singleN, outputF_, upTile);
-                row += take;
-            }
             return;
         }
         const int64_t index = static_cast<int64_t>(rowStart) * outputF_ + nLoc;
@@ -1235,7 +1162,6 @@ private:
     AscendC::GlobalTensor<bfloat16_t> hpGm_;
     AscendC::GlobalTensor<float> dpPartialsGm_;
     AscendC::GlobalTensor<TopkWeightT> packedTopkWeightsGm_;
-    __gm__ uint32_t* savedRowMap_{nullptr};
     uint64_t reductionRows_{0};
     int64_t rowBase_{0};
     Params params_{};

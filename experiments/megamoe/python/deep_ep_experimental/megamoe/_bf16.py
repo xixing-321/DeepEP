@@ -50,6 +50,8 @@ def prepare(b, bs, limit, save_type):
 
     validate_buffer_inputs(b, bs)
     mode = b.gmm1_save_type if save_type is None else save_type
+    if not b.need_grad:
+        mode = "none"
     key = (
         bs,
         b.hidden,
@@ -149,10 +151,10 @@ def run(y, w1, w2, b, shared_w1, shared_w2, stats, activation, clamp, fast_math)
             else:
                 capture = getattr(b, "_timer_capture", None)
                 if capture is None:
-                    result = plan.forward_out(y, x, ids, p, w1, w2, config.max_recv, limit, mode)
+                    result = plan.forward_out(y, x, ids, p, w1, w2, config.max_recv, limit, mode, False)
                 else:
                     capture.claim()
-                    result = plan.forward_with_timer(x, ids, p, w1, w2, config.max_recv, limit, mode, y)
+                    result = plan.forward_with_timer(x, ids, p, w1, w2, config.max_recv, limit, mode, y, False)
                     capture.forward = result.timer
                 result_y, counts = result.y, result.counts
             if stats is not None:

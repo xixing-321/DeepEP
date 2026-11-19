@@ -134,7 +134,7 @@ private:
 };
 using MegaMoeTrainTimerSpanScope = BasicAscendTimerSpanScope<MegaMoeTrainTimerDevice>;
 
-// Timed scopes on the GM pipeline retain its native asynchronous dependencies.
+// Record GM pipeline issue intervals. SwiGLU's input wait ends at MTE2 completion.
 class MegaMoeTrainTimerPassiveScope {
 public:
     __aicore__ inline MegaMoeTrainTimerPassiveScope(MegaMoeTrainTimerDevice* timer,
@@ -152,7 +152,17 @@ public:
     }
     __aicore__ inline ~MegaMoeTrainTimerPassiveScope()
     {
-        if (timer_ != nullptr) timer_->EndPassiveInterval(type_, index_);
+        if (timer_ == nullptr) return;
+#ifdef DEEPEP_MEGAMOE_TIMER
+        if constexpr (g_coreType == AscendC::AIV) {
+            // GateUpCompletion::Wait and both GM loads run on MTE2. The Scalar clock
+            // must observe their completion before the SwiGLU interval can start.
+            if (type_ == MegaMoeTrainTimer::AIV_SWIGLU_WAIT) {
+                AscendC::SyncFunc<AscendC::HardEvent::MTE2_S>();
+            }
+        }
+#endif
+        timer_->EndPassiveInterval(type_, index_);
     }
 
 private:

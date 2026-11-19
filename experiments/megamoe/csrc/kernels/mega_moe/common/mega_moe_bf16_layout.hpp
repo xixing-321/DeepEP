@@ -171,11 +171,6 @@ MEGA_MOE_BF16_HOST_DEVICE constexpr uint64_t BackwardTopkPartialCount(uint32_t m
 {
     return UseWholeRowTopkGrad(mode, f) ? 1U : (f + 255U) / 256U;
 }
-MEGA_MOE_BF16_HOST_DEVICE constexpr bool UseMappedBackwardInputs(uint32_t mode, uint64_t f, uint32_t groups)
-{
-    return mode != kSaveNone && groups != 0 && UseWholeRowTopkGrad(mode, f);
-}
-
 MEGA_MOE_BF16_HOST_DEVICE constexpr bool UseGmForBackwardDataGrad(uint32_t savedMode)
 {
     return DEEPEP_MEGAMOE_BF16_BACKWARD_SLICES || savedMode != kSaveNone;

@@ -159,7 +159,7 @@ public:
 
     __aicore__ inline WaveMatmul() : blockMmad(resource) {}
 
-    __aicore__ inline void GateUp(const Bf16Params& params, const MegaMoeBF16Training::Wave::Slice& slice,
+    __aicore__ inline void GateUp(const Bf16Params& params, const MegaMoeBF16Training::Wave::Slice& slice, GM_ADDR x,
                                   __gm__ int32_t* dispatchReady, uint32_t& startBlock, uint32_t& sequence)
     {
         using namespace MegaMoeBF16Training::Wave;
@@ -167,21 +167,13 @@ public:
         const uint32_t cores = AscendC::GetBlockNum();
         const uint32_t core = AscendC::GetBlockIdx() / AscendC::GetTaskRation();
         AscendC::GlobalTensor<bfloat16_t> a, b, gate, up;
-        a.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(params.workspaceInfo.ptrA) + slice.packed * h);
+        a.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(x));
         b.SetGlobalBuffer(
             reinterpret_cast<__gm__ bfloat16_t*>(params.bGmAddr) + static_cast<uint64_t>(slice.expert) * 2U * f * h,
             2ULL * f * h);
-        gate.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(params.forwardRawGate) + slice.packed * f);
-        up.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(params.forwardRawUp) + slice.packed * f);
-        gate.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
-        up.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
         auto ta = tla::MakeTensor(a, tla::MakeLayout<bfloat16_t, Catlass::layout::RowMajor>(slice.rows, h),
                                   Catlass::Arch::PositionGM{});
         auto tb = tla::MakeTensor(b, tla::MakeLayout<bfloat16_t, WeightLayout>(h, 2U * f), Catlass::Arch::PositionGM{});
-        auto tg = tla::MakeTensor(gate, tla::MakeLayout<bfloat16_t, Catlass::layout::RowMajor>(slice.rows, f),
-                                  Catlass::Arch::PositionGM{});
-        auto tu = tla::MakeTensor(up, tla::MakeLayout<bfloat16_t, Catlass::layout::RowMajor>(slice.rows, f),
-                                  Catlass::Arch::PositionGM{});
         bool ready = false;
         ForEachGateUpTile<WaveBlockScheduler>(
             slice.rows, f, h, core, cores, startBlock, [&](uint32_t m, uint32_t n, const auto& shape) __aicore__ {
@@ -199,8 +191,17 @@ public:
                 auto tileA = tla::GetTile(ta, tla::MakeCoord(m, 0U), tla::MakeShape(shape.m(), shape.k()));
                 auto tileB = tla::GetTile(tb, tla::MakeCoord(0U, 2U * n), tla::MakeShape(shape.k(), 2U * shape.n()));
                 WaveGateUpWeight<decltype(tileB)> pairedWeight(tileB);
-                auto tileGate = tla::GetTile(tg, tla::MakeCoord(m, n), tla::MakeShape(shape.m(), shape.n()));
-                auto tileUp = tla::GetTile(tu, tla::MakeCoord(m, n), tla::MakeShape(shape.m(), shape.n()));
+                static_assert(kRawStages == GateUpCompletion::kStages);
+                const uint64_t slot = RawTileOffset(core, sequence);
+                gate.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(params.forwardRawGate) + slot);
+                up.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(params.forwardRawUp) + slot);
+                gate.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
+                up.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
+                auto layout = tla::MakeLayout<bfloat16_t, Catlass::layout::RowMajor>(kRows, kPairedColumns);
+                auto tg = tla::MakeTensor(gate, layout, Catlass::Arch::PositionGM{});
+                auto tu = tla::MakeTensor(up, layout, Catlass::Arch::PositionGM{});
+                auto tileGate = tla::GetTile(tg, tla::MakeCoord(0U, 0U), tla::MakeShape(shape.m(), shape.n()));
+                auto tileUp = tla::GetTile(tu, tla::MakeCoord(0U, 0U), tla::MakeShape(shape.m(), shape.n()));
                 WaveGateUpOutput<decltype(tileGate)> output(tileGate, tileUp);
                 blockMmad(tileA, pairedWeight, output, Catlass::GemmCoord{shape.m(), 2U * shape.n(), shape.k()});
                 GateUpCompletion::Publish(sequence++);

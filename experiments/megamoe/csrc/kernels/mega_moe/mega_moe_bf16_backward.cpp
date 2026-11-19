@@ -17,7 +17,7 @@ __mix__(1, 2) __global__ __aicore__
     void mega_moe_bf16_backward(GM_ADDR context, GM_ADDR gradY, GM_ADDR topkWeights, GM_ADDR weight1, GM_ADDR weight2,
                                 GM_ADDR gradX, GM_ADDR gradTopkWeights, GM_ADDR gradWeight1, GM_ADDR gradWeight2,
                                 GM_ADDR trainingSavedState, GM_ADDR dispatchOutput, GM_ADDR backwardWorkspace,
-                                MegaMoeBf16TilingData tilingData, uint32_t splitExperts, GM_ADDR timerAddr)
+                                GM_ADDR timerAddr, MegaMoeBf16TilingData tilingData)
 {
     InitSocState();
     MegaMoeTrainTimerDevice timer;
@@ -25,7 +25,7 @@ __mix__(1, 2) __global__ __aicore__
     timer.Start(MegaMoeTrainTimer::KERNEL_TIMING);
     MegaMoeBF16Backward<TopkWeightT> op;
     op.Init(context, gradY, topkWeights, weight1, weight2, gradX, gradTopkWeights, gradWeight1, gradWeight2,
-            trainingSavedState, dispatchOutput, backwardWorkspace, &tilingData, splitExperts);
+            trainingSavedState, dispatchOutput, backwardWorkspace, &tilingData, tilingData.backwardSplitExperts);
     op.SetTimer(timer.Enabled() ? &timer : nullptr);
     op.Process();
     if (timer.Enabled()) AscendC::PipeBarrier<PIPE_ALL>();
@@ -40,15 +40,16 @@ extern "C" ASCEND_MEGAMOE_EXPORT void deepep_train_mega_moe_bf16_backward_ready_
     uint64_t ffts_addr, uint32_t split_experts)
 {
     (void)ffts_addr;
-    const auto& tiling = *reinterpret_cast<const MegaMoeBf16TilingData*>(tiling_host);
+    auto tiling = *reinterpret_cast<const MegaMoeBf16TilingData*>(tiling_host);
+    tiling.backwardSplitExperts = split_experts;
     if (tiling.topkWeightType == 1U) {
         mega_moe_bf16_backward<float><<<block_dim, nullptr, stream>>>(
             context, grad_y, topk_weights, weight1, weight2, grad_x, grad_topk_weights, grad_weight1, grad_weight2,
-            training_saved_state, dispatch_output, backward_workspace, tiling, split_experts, nullptr);
+            training_saved_state, dispatch_output, backward_workspace, nullptr, tiling);
     } else {
         mega_moe_bf16_backward<bfloat16_t><<<block_dim, nullptr, stream>>>(
             context, grad_y, topk_weights, weight1, weight2, grad_x, grad_topk_weights, grad_weight1, grad_weight2,
-            training_saved_state, dispatch_output, backward_workspace, tiling, split_experts, nullptr);
+            training_saved_state, dispatch_output, backward_workspace, nullptr, tiling);
     }
 }
 
@@ -59,14 +60,15 @@ extern "C" ASCEND_MEGAMOE_EXPORT void deepep_train_mega_moe_bf16_backward_timer_
     uint64_t ffts_addr, uint32_t split_experts, uint8_t* timer)
 {
     (void)ffts_addr;
-    const auto& tiling = *reinterpret_cast<const MegaMoeBf16TilingData*>(tiling_host);
+    auto tiling = *reinterpret_cast<const MegaMoeBf16TilingData*>(tiling_host);
+    tiling.backwardSplitExperts = split_experts;
     if (tiling.topkWeightType == 1U) {
         mega_moe_bf16_backward<float><<<block_dim, nullptr, stream>>>(
             context, grad_y, topk_weights, weight1, weight2, grad_x, grad_topk_weights, grad_weight1, grad_weight2,
-            training_saved_state, dispatch_output, backward_workspace, tiling, split_experts, timer);
+            training_saved_state, dispatch_output, backward_workspace, timer, tiling);
     } else {
         mega_moe_bf16_backward<bfloat16_t><<<block_dim, nullptr, stream>>>(
             context, grad_y, topk_weights, weight1, weight2, grad_x, grad_topk_weights, grad_weight1, grad_weight2,
-            training_saved_state, dispatch_output, backward_workspace, tiling, split_experts, timer);
+            training_saved_state, dispatch_output, backward_workspace, timer, tiling);
     }
 }

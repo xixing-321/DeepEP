@@ -37,14 +37,14 @@ def buffer(monkeypatch):
         def prepare(self, *args):
             self.spec = args
 
-        def forward_out(self, out, x, ids, p, w1, w2, capacity, limit, mode):
+        def forward_out(self, out, x, ids, p, w1, w2, capacity, limit, mode, save_dispatched_x=True):
             calls.append((p.dtype, mode, self.before, limit))
             out.copy_(x)
             return SimpleNamespace(
                 y=out,
                 counts=torch.full((2,), 7, dtype=torch.int32),
                 saved_state=torch.zeros(1, dtype=torch.uint8),
-                dispatch_output=torch.zeros(1, dtype=torch.uint8),
+                dispatch_output=torch.zeros(1, dtype=torch.uint8) if save_dispatched_x else None,
             )
 
         def backward(self, dy, p, w1, w2, counts, saved, dispatch, capacity, limit, mode):
@@ -53,8 +53,8 @@ def buffer(monkeypatch):
                 dx=dy, dtopk_weights=torch.full_like(p, 2), dw1=torch.full_like(w1, 3), dw2=torch.full_like(w2, 4)
             )
 
-        def forward_with_timer(self, x, ids, p, w1, w2, capacity, limit, mode, out):
-            result = self.forward_out(out, x, ids, p, w1, w2, capacity, limit, mode)
+        def forward_with_timer(self, x, ids, p, w1, w2, capacity, limit, mode, out, save_dispatched_x=True):
+            result = self.forward_out(out, x, ids, p, w1, w2, capacity, limit, mode, save_dispatched_x)
             result.timer = torch.zeros(1, dtype=torch.int64)
             return result
 
@@ -75,6 +75,8 @@ def buffer(monkeypatch):
     b.hidden = 8
     b.intermediate_hidden = 4
     b.max_recv_tokens = 32
+    b.save_dispatched_x = True
+    b.dispatch_rebuilder = None
     b.need_grad = True
     b.gmm1_save_type = "bf16"
     b.mma_type = "bf16xbf16"
@@ -110,6 +112,7 @@ def call(b, w1, w2, **kwargs):
 
 
 def test_public_signature_and_export():
+    assert inspect.signature(api.SymmBuffer).parameters["save_dispatched_x"].default is True
     assert list(inspect.signature(api.bf16_mega_moe).parameters) == [
         "y",
         "l1_weights",
@@ -154,6 +157,30 @@ def test_queued_graphs_snapshot_plan_dtype_and_save_type(buffer):
         assert p.grad.dtype == p.dtype and torch.equal(x.grad, torch.ones_like(x))
 
 
+def test_external_dispatch_is_bound_per_microbatch(buffer):
+    b, _, _ = buffer
+    b.save_dispatched_x = False
+    _, _, w1, w2 = inputs(b)
+    with pytest.raises(ValueError, match="dispatch_rebuilder"):
+        call(b, w1, w2)
+
+    seen = []
+
+    def graph(index):
+        def rebuild():
+            seen.append(index)
+            return torch.full((1,), index, dtype=torch.uint8)
+
+        b.dispatch_rebuilder = rebuild
+        return call(b, w1, w2)
+
+    first, second = graph(1), graph(2)
+    b.dispatch_rebuilder = None
+    second.sum().backward()
+    first.sum().backward()
+    assert seen == [2, 1]
+
+
 def test_token_count_exchange_selects_a_new_plan(buffer, monkeypatch):
     b, _, plans = buffer
     _, _, w1, w2 = inputs(b)
@@ -182,10 +209,14 @@ def test_prepared_plan_is_reused_and_no_grad_keeps_preweight_semantics(buffer):
 
 
 def test_inference_is_postweighted_and_rejects_requested_gradient(buffer):
-    b, calls, _ = buffer
+    b, calls, plans = buffer
     b.need_grad = False
     x, p, w1, w2 = inputs(b, grad=False)
+    b.gmm1_save_type = "mxfp8"
+    b._prepare(3)
+    assert plans[0].spec[-2] == "none"
     y = call(b, w1, w2)
+    assert len(plans) == 1
     assert calls[-1][1:3] == ("none", False) and not y.requires_grad
     x.requires_grad_()
     with pytest.raises(ValueError, match="need_grad=True"):

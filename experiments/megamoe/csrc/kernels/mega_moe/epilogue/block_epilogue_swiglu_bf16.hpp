@@ -84,12 +84,10 @@ public:
     __aicore__ inline void UpdateGlobalAddr(const BlockCoord& baseOffset)
     {
         if constexpr (g_coreType == AscendC::AIV) {
-            savedBaseOffset_ = Get<0>(baseOffset);
             outputGlobal_.SetGlobalBuffer((__gm__ bfloat16_t*)params_.yGmAddr + Get<0>(baseOffset));
-            // Gate/up use the same packed-row x F coordinates as GMM2 input.
 
             groupFlagListGmAddr_ = (__gm__ int32_t*)params_.groupFlagListGmAddr + Get<5>(baseOffset);
-            {
+            if (params_.applyTopkWeight) {
                 routedTopkWeightGlobal_.SetGlobalBuffer((__gm__ TopkWeightT*)params_.routedTopkWeightGmAddr +
                                                         Get<3>(baseOffset));
                 routedTopkWeightGlobal_.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
@@ -102,7 +100,6 @@ public:
         outputN_ = Get<1>(problemShape);
     }
 
-    template <uint32_t SaveMode>
     __aicore__ inline void Run(const BlockShape& blockShape, const BlockCoord& blockCoord)
     {
         if constexpr (g_coreType != AscendC::AIV) {
@@ -116,9 +113,6 @@ public:
         }
 
         const uint32_t tileRow = static_cast<uint32_t>(Get<0>(blockCoord) / outputN_);
-        if constexpr (SaveMode == MegaMoeBF16Training::kSaveMxFp8) {
-            SaveGateUp<SaveMode>(singleM, singleN, Get<0>(blockCoord));
-        }
         ComputeSwigluDirect(singleM, singleN, tileRow);
 
         AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(0);
@@ -134,8 +128,7 @@ public:
         AscendC::AtomicAdd(groupFlagListGmAddr_ + tileRow / params_.baseM, 1);
     }
 
-    __aicore__ inline void LoadRawTile(GM_ADDR gate, GM_ADDR up, uint64_t expertOffset, uint16_t mSize, uint16_t nSize,
-                                       int64_t offset)
+    __aicore__ inline void LoadRawTile(GM_ADDR gate, GM_ADDR up, uint64_t expertOffset, uint16_t mSize, uint16_t nSize)
     {
         AscendC::GlobalTensor<bfloat16_t> rawGate, rawUp;
         rawGate.SetGlobalBuffer((__gm__ bfloat16_t*)gate + expertOffset);
@@ -145,10 +138,33 @@ public:
         AscendC::SyncFunc<AscendC::HardEvent::V_MTE2>();
         AscendC::SyncFunc<AscendC::HardEvent::MTE3_MTE2>();
         AscendC::DataCopyExtParams copyParams{mSize, static_cast<uint32_t>(nSize * sizeof(bfloat16_t)),
-                                              static_cast<uint32_t>((outputN_ - nSize) * sizeof(bfloat16_t)), 0, 0};
-        AscendC::DataCopyPad(l0cOutUbFirst_, rawGate[offset], copyParams, {});
-        AscendC::DataCopyPad(l0cOutUbSecond_, rawUp[offset], copyParams, {});
+                                              static_cast<uint32_t>((kTileColumns - nSize) * sizeof(bfloat16_t)), 0, 0};
+        AscendC::DataCopyPad(l0cOutUbFirst_, rawGate, copyParams, {});
+        AscendC::DataCopyPad(l0cOutUbSecond_, rawUp, copyParams, {});
         AscendC::SyncFunc<AscendC::HardEvent::MTE2_V>();
+    }
+
+    template <uint32_t Mode>
+    __aicore__ inline void SaveRows(uint32_t row, uint16_t rows, uint16_t cols, uint64_t dst)
+    {
+        const uint32_t stride = Ops::Base::CeilAlign(uint32_t(cols), uint32_t(16));
+        auto gate = l0cOutUbFirst_[row * stride];
+        auto up = l0cOutUbSecond_[row * stride];
+        if constexpr (Mode == MegaMoeBF16Training::kSaveMxFp8) {
+            quantSave_.Save(gate, up, params_.savedGateGmAddr, params_.savedUpGmAddr, params_.savedGateScaleGmAddr,
+                            params_.savedUpScaleGmAddr, params_.savedGateHighGmAddr, params_.savedUpLowGmAddr,
+                            params_.savedUpHighGmAddr, params_.swigluLimit, rows, cols, outputN_, dst);
+        } else {
+            AscendC::GlobalTensor<bfloat16_t> savedGate, savedUp;
+            savedGate.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(params_.savedGateGmAddr) + dst);
+            savedUp.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(params_.savedUpGmAddr) + dst);
+            const AscendC::DataCopyExtParams cp{rows, uint32_t(cols * sizeof(bfloat16_t)), 0,
+                                                uint32_t((outputN_ - cols) * sizeof(bfloat16_t)), 0};
+            AscendC::SyncFunc<AscendC::HardEvent::MTE2_MTE3>();
+            AscendC::DataCopyPad(savedGate, gate, cp);
+            AscendC::DataCopyPad(savedUp, up, cp);
+        }
+        AscendC::SyncFunc<AscendC::HardEvent::MTE3_V>();
     }
 
 private:
@@ -159,19 +175,6 @@ private:
     using QuantSave = std::conditional_t<QuantizedSave, SavedGateUpMxFp8<kTileRows, kTileColumns>, NoSavedGateUpQuant>;
     static_assert(2U * kTileElements * sizeof(bfloat16_t) <= Catlass::Arch::Ascend950::UB_SIZE,
                   "The BF16 SwiGLU input tiles must fit in A5 UB");
-
-    template <uint32_t SaveMode>
-    __aicore__ inline void SaveGateUp(uint16_t mSize, uint16_t nSize, int64_t offset)
-    {
-        MegaMoeTrainTimerSpanScope timerSave(timer_, MegaMoeTrainTimer::AIV_SAVE_GATE_UP);
-        if constexpr (SaveMode == MegaMoeBF16Training::kSaveMxFp8) {
-            quantSave_.Save(l0cOutUbFirst_, l0cOutUbSecond_, params_.savedGateGmAddr, params_.savedUpGmAddr,
-                            params_.savedGateScaleGmAddr, params_.savedUpScaleGmAddr, params_.savedGateHighGmAddr,
-                            params_.savedUpLowGmAddr, params_.savedUpHighGmAddr, params_.swigluLimit, mSize, nSize,
-                            outputN_, savedBaseOffset_ + offset);
-            return;
-        }
-    }
 
     __aicore__ inline void ComputeSwigluDirect(uint16_t mSize, uint16_t nSize, uint32_t tileRow)
     {
@@ -252,7 +255,6 @@ private:
     __gm__ int32_t* groupFlagListGmAddr_{nullptr};
     Params params_{};
     int64_t outputN_{0};
-    int64_t savedBaseOffset_{0};
     QuantSave quantSave_;
     static_assert(QuantSave::Layout::totalBytesWithClipMasks <= Catlass::Arch::Ascend950::UB_SIZE,
                   "Saved gate/up MXFP8 scratch must fit AIV0 UB");

@@ -69,32 +69,48 @@ MEGA_MOE_WAVE_HOST_DEVICE constexpr bool UseGmm2Lag(uint32_t sourceRows)
     return sourceRows >= 512;
 }
 
-// Per-slice Hp/Dispatch/output counters, per-core issued words, then unique
-// packed GMM2 rows. No output slot can be overwritten by a later Wave.
+// Per-slice Hp/Dispatch/output counters followed by per-core issued words.
 struct ReadyLayout {
-    uint64_t words, dispatchOffset, downReadyOffset, issuedOffset, outputOffset, bytes;
-    MEGA_MOE_WAVE_HOST_DEVICE constexpr ReadyLayout(uint64_t capacity, uint64_t experts, uint64_t hidden)
+    uint64_t words, dispatchOffset, downReadyOffset, issuedOffset, outputOffset;
+    MEGA_MOE_WAVE_HOST_DEVICE constexpr ReadyLayout(uint64_t capacity, uint64_t experts)
         : words((capacity + kGmm1Rows - 1U) / kGmm1Rows + experts),
           dispatchOffset((words * sizeof(int32_t) + 127U) / 128U * 128U),
           downReadyOffset(dispatchOffset + (words * sizeof(int32_t) + 127U) / 128U * 128U),
           issuedOffset(downReadyOffset + (words * sizeof(int32_t) + 127U) / 128U * 128U),
-          outputOffset((issuedOffset + kMaxCores * 16U * sizeof(int32_t) + 511U) / 512U * 512U),
-          bytes(outputOffset + capacity * hidden * sizeof(uint16_t))
+          outputOffset((issuedOffset + kMaxCores * 16U * sizeof(int32_t) + 511U) / 512U * 512U)
     {
     }
 };
 
-// BF16 saves own raw Gate/Up. Other save modes reuse Hp for raw Gate and
-// append raw Up after the complete output/control region; it cannot alias
-// any in-flight GMM2 or Combine payload.
+// Unpermute writes Y after Combine drains. A slice starting before the boundary
+// may extend by maxSliceRows-1. Leave one row (at least 512 B) for aligning Y views.
+MEGA_MOE_WAVE_HOST_DEVICE constexpr uint64_t OutputRowsInY(uint64_t capacity, uint64_t sourceRows, uint32_t groups)
+{
+    if (groups == 0 || sourceRows == 0) return 0;
+    if (capacity < sourceRows) return capacity;
+    const uint64_t maxSliceRows = uint64_t(groups) * kGroupRows;
+    return sourceRows > maxSliceRows ? sourceRows - maxSliceRows : 0U;
+}
+
+// Each Cube/Vector pair owns two Gate/Up slots. Credits are returned after the vector consumes the tile.
+constexpr uint32_t kRawStages = 2;
+constexpr uint64_t kRawTileElements = uint64_t(kGmm1Rows) * kPairedColumns;
+MEGA_MOE_WAVE_HOST_DEVICE constexpr uint64_t RawTileOffset(uint32_t core, uint32_t sequence)
+{
+    return (core * kRawStages + sequence % kRawStages) * kRawTileElements;
+}
 struct ForwardWorkspaceLayout {
-    uint64_t readyOffset, rawUpOffset, rawUpBytes, totalBytes;
+    uint64_t readyOffset, rowsInY, weightOffset, rawGateOffset, rawUpOffset, totalBytes;
     MEGA_MOE_WAVE_HOST_DEVICE constexpr ForwardWorkspaceLayout(uint64_t baseBytes, uint64_t capacity, uint64_t experts,
-                                                               uint64_t hidden, uint64_t ffn, bool savedBf16)
+                                                               uint64_t hidden, uint32_t weightBytes,
+                                                               uint64_t sourceRows, uint32_t groups)
         : readyOffset((baseBytes + 511U) / 512U * 512U),
-          rawUpOffset(readyOffset + ReadyLayout(capacity, experts, hidden).bytes),
-          rawUpBytes(savedBf16 ? 0U : (capacity * ffn * sizeof(uint16_t) + 511U) / 512U * 512U),
-          totalBytes(rawUpOffset + rawUpBytes)
+          rowsInY(OutputRowsInY(capacity, sourceRows, groups)),
+          weightOffset(readyOffset + ReadyLayout(capacity, experts).outputOffset +
+                       (capacity - rowsInY) * hidden * sizeof(uint16_t)),
+          rawGateOffset(weightOffset + (capacity * weightBytes + 511U) / 512U * 512U),
+          rawUpOffset(rawGateOffset + RawTileOffset(kMaxCores, 0) * sizeof(uint16_t)),
+          totalBytes(rawUpOffset + (rawUpOffset - rawGateOffset))
     {
     }
 };

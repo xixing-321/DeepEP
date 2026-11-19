@@ -41,9 +41,13 @@ PYBIND11_MODULE(_C, module)
         .def(py::init<uintptr_t, int64_t, int, int, torch::Tensor, bool>())
         .def("prepare", &BF16Plan::prepare)
         .def_property_readonly("workspace_bytes", &BF16Plan::workspace_bytes)
-        .def("forward_out", &BF16Plan::forward_out)
+        .def("forward_out", &BF16Plan::forward_out, py::arg("out"), py::arg("x"), py::arg("topk_ids"),
+             py::arg("topk_weights"), py::arg("weight1"), py::arg("weight2"), py::arg("max_recv_tokens"),
+             py::arg("swiglu_limit"), py::arg("save_gmm1_output"), py::arg("save_dispatched_x") = true)
         .def("backward", &BF16Plan::backward)
-        .def("forward_with_timer", &BF16Plan::forward_with_timer)
+        .def("forward_with_timer", &BF16Plan::forward_with_timer, py::arg("x"), py::arg("topk_ids"),
+             py::arg("topk_weights"), py::arg("weight1"), py::arg("weight2"), py::arg("max_recv_tokens"),
+             py::arg("swiglu_limit"), py::arg("save_gmm1_output"), py::arg("out"), py::arg("save_dispatched_x") = true)
         .def("backward_with_timer", &BF16Plan::backward_with_timer)
         .def("close", &BF16Plan::close);
     module.def("ffts_config", [] { return shmemx_get_ffts_config(); });

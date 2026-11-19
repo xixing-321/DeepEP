@@ -73,7 +73,8 @@ WorkspaceInfo CalcWorkspaceSize(const MegaMoeBf16TilingData& td)
 {
     WorkspaceInfo ws;
     ws.totalSize += HostCeilAlign(SIZE_BF_16 * static_cast<int64_t>(td.maxOutputSize) * td.k, ALIGN_512);
-    ws.totalSize += HostCeilAlign(SIZE_BF_16 * static_cast<int64_t>(td.maxOutputSize) * td.n / SWIGLU_N_HALF, ALIGN_512);
+    ws.totalSize +=
+        HostCeilAlign(SIZE_BF_16 * static_cast<int64_t>(td.maxOutputSize) * td.n / SWIGLU_N_HALF, ALIGN_512);
     ws.totalSize += HostCeilAlign(static_cast<int64_t>(td.epWorldSize) * td.expertPerRank * SIZE_INT_32, ALIGN_512);
     ws.totalSize += SIZE_INT_32 * HostCeilAlign(static_cast<int64_t>(td.m), ALIGN_256) * td.topK * 2;
     ws.totalSize += SIZE_INT_32 * HostCeilAlign(static_cast<int64_t>(td.epWorldSize) * td.expertPerRank, ALIGN_128);
@@ -220,9 +221,6 @@ BufferSizes MakeTiling(MegaMoeBf16TilingData& tiling, int64_t m, int64_t k, int6
     TORCH_CHECK(Wave::ScratchFits(static_cast<uint32_t>(k), static_cast<uint32_t>(world_size),
                                   static_cast<uint32_t>(expert_per_rank)),
                 "BF16 forward Dispatch/Combine buffers and routing metadata exceed the AIV1 UB budget");
-    static_assert(DEEPEP_MEGAMOE_BF16_FORWARD_SCHEDULE == 0 || DEEPEP_MEGAMOE_BF16_FORWARD_SCHEDULE == 1,
-                  "BF16 forward schedule must be 0 (interleaved) or 1 (staged)");
-    tiling.forwardSchedule = DEEPEP_MEGAMOE_BF16_FORWARD_SCHEDULE;
     tiling.compactTokenCountExchange = ResolveCompactTokenCountExchange(world_size, expert_per_rank) ? 1U : 0U;
     const auto workspace_info = optiling::CalcWorkspaceSize(tiling);
     const auto peer_info = optiling::CalcPeermemSize(tiling);
@@ -271,9 +269,9 @@ uint64_t ForwardTransientWorkspaceBytes(const MegaMoeBf16TilingData& tiling)
 {
     using namespace MegaMoeBF16Training;
     const ForwardTransientWorkspaceLayout transient(tiling.n, tiling.expertPerRank, tiling.maxOutputSize);
-    const auto saved = tiling.savedGateUpMode;
+    const auto expertWeightBytes = tiling.routeWeightBeforeGmm2 ? TopkWeightBytes(tiling.topkWeightType) : 0U;
     const Wave::ForwardWorkspaceLayout layout(transient.totalBytes, tiling.maxOutputSize, tiling.expertPerRank,
-                                              tiling.k, tiling.n / 2U, saved == kSaveBf16);
+                                              tiling.k, expertWeightBytes, tiling.m, tiling.mGroupsPerWave);
     const uint64_t bytes = layout.totalBytes;
     TORCH_CHECK(bytes <= uint64_t(std::numeric_limits<int64_t>::max()), "forward workspace exceeds int64 capacity");
     return bytes;
@@ -398,7 +396,10 @@ torch::Tensor BF16Plan::AllocateTimer(const torch::Tensor& like, const torch::Te
     const int64_t rows = phase == 0 ? 192 : 128;
     const int64_t tiles = ceil(maxRecv + e * (rows - 1), rows) * ceil(std::max(h, 2 * f), 256);
     const int64_t dwTiles = e * std::max(ceil(2 * f, 128) * ceil(h, 256), ceil(h, 128) * ceil(f, 256));
-    const int64_t bound = ceil(std::max(tiles, phase == 0 ? int64_t(0) : dwTiles), groups) + 4 * e + 32;
+    const int64_t gemmTasks = ceil(std::max(tiles, phase == 0 ? int64_t(0) : dwTiles), groups);
+    // Short dP sends from every peer/expert pair can all be owned by the first AIV.
+    const int64_t sendTasks = phase == 0 ? 0 : int64_t(world_size_) * e;
+    const int64_t bound = std::max(gemmTasks, sendTasks) + 4 * e + 32;
     const int capacity = static_cast<int>(ceil(std::max(bound, int64_t(128)), 64) * 64);
     TORCH_CHECK(capacity <= kMaxCapacity, "training Timer task capacity exceeds supported bound");
     const Layout layout{static_cast<int>(groups * 3), capacity};
@@ -463,12 +464,15 @@ void BF16Plan::prepare(int64_t m, int64_t h, int64_t f, int64_t topk, int64_t lo
 {
     TORCH_CHECK(address_ != 0, "BF16 Plan has been closed");
     MegaMoeBf16TilingData tiling{};
-    const auto host =
-        MakeTiling(tiling, m, h, 2 * f, topk, world_size_, local_experts, max_recv, rank_, limit, save_type,
-                   fp32_p ? MegaMoeBF16Training::kTopkWeightFp32 : MegaMoeBF16Training::kTopkWeightBf16);
+    static_assert(DEEPEP_MEGAMOE_BF16_FORWARD_SCHEDULE == 0 || DEEPEP_MEGAMOE_BF16_FORWARD_SCHEDULE == 1,
+                  "BF16 training forward schedule must be 0 (interleaved) or 1 (staged)");
+    tiling.routeWeightBeforeGmm2 = weight_before_gmm2_ ? 1U : 0U;
+    tiling.forwardSchedule = weight_before_gmm2_ ? DEEPEP_MEGAMOE_BF16_FORWARD_SCHEDULE : 0U;
+    const auto host = MakeTiling(tiling, m, h, 2 * f, topk, world_size_, local_experts, max_recv, rank_, limit,
+                                 weight_before_gmm2_ ? save_type : "none",
+                                 fp32_p ? MegaMoeBF16Training::kTopkWeightFp32 : MegaMoeBF16Training::kTopkWeightBf16);
     TORCH_CHECK(host.peer_bytes <= SymmetricBufferBytes(), "BF16 symmetric window is too small");
     auto workspace = AllocateForwardTransientWorkspace(context_, tiling);
-    tiling.routeWeightBeforeGmm2 = weight_before_gmm2_ ? 1U : 0U;
     tiling_ = tiling;
     layout_workspace_bytes_ = host.workspace_bytes;
     workspace_ = std::move(workspace);
@@ -499,21 +503,23 @@ void BF16Plan::close()
 ops::ForwardResult BF16Plan::forward_out(torch::Tensor out, torch::Tensor x, torch::Tensor topk_ids,
                                          torch::Tensor topk_weights, torch::Tensor weight1, torch::Tensor weight2,
                                          int64_t max_recv_tokens, double swiglu_limit,
-                                         const std::string& save_gmm1_output)
+                                         const std::string& save_gmm1_output, bool saveDispatchedX)
 {
     TORCH_CHECK(address_ != 0, "training operator has been closed");
     TORCH_CHECK(out.defined(), "y must be a defined output tensor");
     return Forward(x, topk_ids, topk_weights, weight1, weight2, max_recv_tokens, swiglu_limit, save_gmm1_output, out,
-                   {});
+                   {}, saveDispatchedX);
 }
 
 ops::ForwardResult BF16Plan::forward_with_timer(torch::Tensor x, torch::Tensor ids, torch::Tensor weights,
                                                 torch::Tensor w1, torch::Tensor w2, int64_t maxRecv, double limit,
-                                                const std::string& mode, c10::optional<torch::Tensor> out)
+                                                const std::string& mode, c10::optional<torch::Tensor> out,
+                                                bool saveDispatchedX)
 {
     TORCH_CHECK(address_ != 0, "training operator has been closed");
     auto timer = AllocateTimer(x, weights, w1, w2, maxRecv, 0, mode);
-    return Forward(x, ids, weights, w1, w2, maxRecv, limit, mode, out.value_or(torch::Tensor()), timer);
+    return Forward(x, ids, weights, w1, w2, maxRecv, limit, mode, out.value_or(torch::Tensor()), timer,
+                   saveDispatchedX);
 }
 
 torch::Tensor BF16Plan::Context(const torch::Tensor& like)
@@ -556,7 +562,7 @@ std::size_t BF16Plan::SymmetricBufferBytes() const
 ops::ForwardResult BF16Plan::Forward(torch::Tensor x, torch::Tensor topkIds, torch::Tensor topkWeights,
                                      torch::Tensor weight1, torch::Tensor weight2, int64_t maxRecvTokens,
                                      double swigluLimit, const std::string& save_gmm1_output, torch::Tensor out,
-                                     torch::Tensor timer)
+                                     torch::Tensor timer, bool saveDispatchedX)
 {
     auto context = Context(x);
     const int worldSize = world_size_;
@@ -606,8 +612,9 @@ ops::ForwardResult BF16Plan::Forward(torch::Tensor x, torch::Tensor topkIds, tor
     TORCH_CHECK(topk <= expertPerRank * worldSize, "MegaMoe BF16 topk must not exceed the total expert count");
     TORCH_CHECK(maxRecvTokens > 0, "max_recv_tokens must be positive");
     TORCH_CHECK(k % 256 == 0 && n % 512 == 0, "MegaMoe BF16 requires k % 256 == 0 and n % 512 == 0");
-    const auto tiling = TilingForCall(m, k, n, topk, expertPerRank, maxRecvTokens, swigluLimit, save_gmm1_output,
-                                      topkWeightType, weightLayout.transW);
+    const auto tiling =
+        TilingForCall(m, k, n, topk, expertPerRank, maxRecvTokens, swigluLimit,
+                      weight_before_gmm2_ ? save_gmm1_output : "none", topkWeightType, weightLayout.transW);
 
     const MegaMoeBF16Training::TrainingSavedStateLayout savedStateLayout(
         m, k, topk, worldSize, expertPerRank, maxRecvTokens, n,
@@ -631,23 +638,30 @@ ops::ForwardResult BF16Plan::Forward(torch::Tensor x, torch::Tensor topkIds, tor
     // returned tensors do not need a device-wide pre-clear.
     auto y = out.defined() ? out : torch::empty({m, k}, x.options());
     auto expertTokenNums = torch::empty({expertPerRank}, topkIds.options().dtype(torch::kInt32));
-    auto trainingSavedState = AllocateTrainingSavedState(savedStateLayout, x);
-    auto dispatchOutput =
-        torch::empty({static_cast<int64_t>(dispatchOutputLayout.totalBytes)}, x.options().dtype(torch::kUInt8));
+    // Inference uses only the working route indices and prefixes up to this offset.
+    auto routingState = weight_before_gmm2_
+                            ? AllocateTrainingSavedState(savedStateLayout, x)
+                            : torch::zeros({static_cast<int64_t>(savedStateLayout.savedTokenCountsOffset)},
+                                           x.options().dtype(torch::kUInt8));
+    torch::Tensor dispatchOutput;
+    if (weight_before_gmm2_ && saveDispatchedX) {
+        dispatchOutput =
+            torch::empty({static_cast<int64_t>(dispatchOutputLayout.totalBytes)}, x.options().dtype(torch::kUInt8));
+    }
     ClearWindowControl();
 
     LaunchMegaMoeBF16ForwardKernel(
-        context, x, topkIds, topkWeights, weight1, weight2, y, expertTokenNums, trainingSavedState, dispatchOutput,
+        context, x, topkIds, topkWeights, weight1, weight2, y, expertTokenNums, routingState, dispatchOutput,
         workspace_, tiling,
         static_cast<uint32_t>(platform_ascendc::PlatformAscendCManager::GetInstance()->GetCoreNumAic()), ffts_addr_,
         timer);
     const auto stream = c10_npu::getCurrentNPUStream();
     for (const auto* tensor : {&context, &x, &topkIds, &topkWeights, &weight1, &weight2, &y, &expertTokenNums,
-                               &trainingSavedState, &dispatchOutput, &workspace_}) {
-        c10_npu::NPUCachingAllocator::recordStream(tensor->storage().data_ptr(), stream);
+                               &routingState, &dispatchOutput, &workspace_}) {
+        if (tensor->defined()) c10_npu::NPUCachingAllocator::recordStream(tensor->storage().data_ptr(), stream);
     }
     if (timer.defined()) c10_npu::NPUCachingAllocator::recordStream(timer.storage().data_ptr(), stream);
-    return {y, expertTokenNums, trainingSavedState, dispatchOutput, timer};
+    return {y, expertTokenNums, weight_before_gmm2_ ? routingState : torch::Tensor(), dispatchOutput, timer};
 }
 
 }  // namespace deepep::megamoe::bf16

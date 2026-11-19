@@ -119,6 +119,7 @@ class SymmBuffer:
         gmm1_save_type: str = "bf16",
         max_recv_tokens: int | None = None,
         debug_collectives: bool = False,
+        save_dispatched_x: bool = True,
     ):
         import torch
         import torch.distributed as dist
@@ -147,13 +148,17 @@ class SymmBuffer:
                 raise ValueError("Shared experts currently require FP8xFP4 weights")
             if num_experts % size or num_experts // size > (32 if bf16 else 128):
                 raise ValueError(f"Experts must divide EP, with at most {32 if bf16 else 128} local experts")
-            if type(need_grad) is not bool or type(debug_collectives) is not bool:
-                raise TypeError("need_grad and debug_collectives must be bool")
+            if (
+                type(need_grad) is not bool
+                or type(debug_collectives) is not bool
+                or type(save_dispatched_x) is not bool
+            ):
+                raise TypeError("need_grad, debug_collectives and save_dispatched_x must be bool")
             if gmm1_save_type not in {"bf16", "none", "mxfp8"}:
                 raise ValueError("gmm1_save_type must be bf16, none or mxfp8")
             if bf16:
                 integer("max_recv_tokens", max_recv_tokens, 1, (1 << 31) - 1)
-            elif need_grad or max_recv_tokens is not None or gmm1_save_type != "bf16":
+            elif not save_dispatched_x or need_grad or max_recv_tokens is not None or gmm1_save_type != "bf16":
                 raise ValueError("Training and receive-capacity settings require bf16xbf16")
             if ranks_per_node and size % ranks_per_node:
                 raise ValueError("ranks_per_node must divide EP (contiguous node-major ranks)")
@@ -175,6 +180,7 @@ class SymmBuffer:
             gmm1_save_type,
             max_recv_tokens,
             debug_collectives,
+            save_dispatched_x,
         )
         collective_check(group, "configuration", error, config)
         ext = _extension()
@@ -204,6 +210,8 @@ class SymmBuffer:
         self.hidden, self.intermediate_hidden = hidden, intermediate_hidden
         self.num_shared_experts, self.mma_type = num_shared_experts, mma_type
         self.ranks_per_node = ranks_per_node
+        self.save_dispatched_x = save_dispatched_x
+        self.dispatch_rebuilder = None
         self.need_grad, self.gmm1_save_type = need_grad, gmm1_save_type
         self.max_recv_tokens = max_recv_tokens
         self._plan_key = None

@@ -9,7 +9,7 @@
 | Host | csrc/forward_bf16.cpp、csrc/backward_bf16.cpp | 前反向校验、分配和启动 |
 | Plan | csrc/forward.hpp、csrc/forward_bf16.cpp | 借用根通信窗口，按配置准备基础 tiling 和前向 workspace。每次调用复制 tiling 并填入权重布局 |
 | Launch | csrc/kernel_launch.hpp | Host 和设备共用的启动符号声明 |
-| 前向 | mega_moe_bf16.hpp | 同一实现组织交错及分阶段流程 |
+| 前向 | mega_moe_bf16.hpp | 推理固定使用模式 0（Wave 交错）；训练支持模式 0 和模式 1（分阶段） |
 | 反向 | mega_moe_bf16_backward.hpp | dY分发、dHp、激活梯度、dX回传及dW |
 | stage | 路由、peer映射、通信、Unpermute及ready | 数据移动和完成条件 |
 | catlass_gmm | mega_moe_bf16_catlass_impl.hpp及_backward.hpp | BF16 GEMM与布局供数 |
@@ -26,23 +26,25 @@
 
 ## 路由与payload边界
 
-BF16 与量化直发路径共用按专家提取 route 的逻辑，同一专家内按原 token、TopK slot 顺序排列。量化路径把列表发到对端；BF16 在源卡按专家计数取前缀，生成排序行与原始 slot 的双向映射，再按排序行打包 X 和权重。
-两者共用peer配额、prefix cut和行区间工具。量化token/scale、BF16 token/p各自保留对应载荷布局。
-BF16的保存、解码及反向状态由保存策略管理，激活数学和有序归并使用共同基础函数。
+BF16 与量化直发路径共用按专家提取 route 的逻辑，同一专家内按原 token、TopK slot 顺序排列。量化路径把列表发到对端。BF16 在源卡根据专家计数计算前缀，建立排序行与原始 slot 的双向映射，再按排序行打包 X。训练将同行的 TopK weight（p）发给专家，在 GMM2 前乘权；推理将 p 留在源卡，在 Unpermute 时乘权。
+
+前向按 Wave 从多个源 rank 取行，供 GMM1 和 SwiGLU 连续计算。供反向使用的数据统一按本地专家、源 EP rank、源内 token/TopK slot 排列。同一行的 X、p、Gate 和 Up 对应同一条 route。
 
 ## 状态与生命周期
 
-SHMEM窗口属于根Runtime，BF16 Plan只借用地址。prepare或首次调用准备临时workspace。
-输入保留原Tensor的梯度连接。每次前向保存独立counts、dispatch数据及反向状态，后续前向可以复用临时区。
-buffer锁及caller/runtime stream依赖对调用排序；异步Tensor登记record_stream。
+SHMEM 窗口由根 Runtime 持有。BF16 Plan 在 prepare 或首次调用时准备前向临时 workspace，后续前向可以复用。训练中，每个需要反向的 microbatch 由自己的 autograd context 持有 counts 和反向状态。
+
+`save_dispatched_x=True`（默认）时，前向保存规范行序的 X 和 p。`save_dispatched_x=False` 时，前向记录本次调用的 `dispatch_rebuilder`，反向通过它取得相同行序的 X/p。两种来源都可用于 `bf16`、`mxfp8` 和 `none` 三种 GMM1 保存模式。
+
+调用流与 Runtime 流通过事件衔接，异步使用的张量通过 `record_stream` 登记生命周期。框架异步重建 X/p 时，回调须让调用流等待重建完成。
 
 ## GMM1 保存与反向
 
 | 保存类型 | 反向如何获得 Gate 和 Up |
 | --- | --- |
 | `bf16` | 读取前向保存的 BF16 值。在整行路径中，一次读取 dHp、Gate、Up，生成 dP、Hp 和 dZ。 |
-| `mxfp8` | 按前向保存的 Wave 行序读取量化值和比例因子。在寄存器中以 FP32 解码并舍入为 BF16。启用裁剪时，梯度使用前向保存的掩码。 |
-| `none` | 利用前向保留的分发输入重新执行 GMM1，得到 Gate 和 Up。 |
+| `mxfp8` | 按专家内的规范行序读取量化值和比例因子，在寄存器中以 FP32 解码并舍入为 BF16。启用裁剪时，梯度使用同行的裁剪掩码。 |
+| `none` | 从本次前向保存或框架重建的 X 中取出每个专家的连续行，按专家重算 GMM1，得到 Gate 和 Up。 |
 
-保存行映射每条 route 占两个 uint32，记录物理行和连续段。dP 归约计划使用整个 rank 的路由行数和全部 AIV，保持各分片的归约顺序。dP 回传以 UB 中的源 rank 前缀定位行区间，将梯度写回原来的 TopK slot。
+dW1 同样按专家读取连续的 X，与同行的 dZ 计算权重梯度。dP 归约计划使用整个 rank 的路由行数和全部 AIV，保持各分片的归约顺序。dP 回传以 UB 中的源 rank 前缀定位行区间，将梯度写回原来的 TopK slot。
 dHp覆盖为Hp前完成本行dP；dX覆盖dO前，等待dHp和dW2的全部读者退出。

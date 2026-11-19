@@ -34,6 +34,11 @@ int main()
     static_assert(MegaMoeImpl::GetGmmFirstOwnedTile(0, 4, 1, true) == 2);
     static_assert(MegaMoeImpl::GetGmmNextStartBlock(3, 3, 4) == 2);
     assert(kGmm1Rows == 256 && kGmm2Rows == 256 && GroupsPerWave(32, 3072, 7168) == 3);
+    using MegaMoeBF16Training::BackwardWorkspaceLayout;
+    const BackwardWorkspaceLayout largeEp(4, 24576, 7168, 6144, 128, 32, 4, MegaMoeBF16Training::kSaveBf16);
+    const BackwardWorkspaceLayout smallEp(4, 24576, 7168, 6144, 8, 32, 4, MegaMoeBF16Training::kSaveBf16);
+    assert(largeEp.dzOffset == 24576ULL * 7168U * sizeof(uint16_t));
+    assert(smallEp.dzOffset == largeEp.dzOffset);
     assert(MetadataFits(128, 4));
     assert(MetadataFits(1024, 2));
     assert(MetadataBytes(8, 4) == 4096 && MetadataBytes(1024, 2) == 16384);
@@ -71,16 +76,36 @@ int main()
     static_assert(Quant::totalBytesWithClipMasks + 256U * sizeof(float) <= 248U * 1024U);
     for (uint64_t capacity : {0ULL, 1ULL, 255ULL, 256ULL, 257ULL, 24576ULL}) {
         const MegaMoeBF16Training::ForwardTransientWorkspaceLayout transient(6144, 4, capacity);
-        const ForwardWorkspaceLayout bf16(transient.totalBytes, capacity, 4, 7168, 3072, true);
-        const ForwardWorkspaceLayout other(transient.totalBytes, capacity, 4, 7168, 3072, false);
-        assert(bf16.rawUpBytes == 0 && bf16.totalBytes == bf16.rawUpOffset);
-        assert(other.rawUpOffset == bf16.rawUpOffset && other.rawUpOffset % 512U == 0);
-        assert(other.rawUpBytes >= capacity * 3072U * sizeof(uint16_t));
-        assert(other.totalBytes == other.rawUpOffset + other.rawUpBytes);
+        const ForwardWorkspaceLayout bf16(transient.totalBytes, capacity, 4, 7168, 2, 4096, 3);
+        const ForwardWorkspaceLayout other(transient.totalBytes, capacity, 4, 7168, 4, 4096, 3);
+        const ForwardWorkspaceLayout dedicated(transient.totalBytes, capacity, 4, 7168, 2, 4096, 0);
+        assert(dedicated.readyOffset == bf16.readyOffset);
+        assert(dedicated.totalBytes - bf16.totalBytes == bf16.rowsInY * 7168U * sizeof(uint16_t));
+        assert(bf16.rawGateOffset - bf16.weightOffset == (capacity * 2 + 511) / 512 * 512);
+        assert(other.rawGateOffset - other.weightOffset == (capacity * 4 + 511) / 512 * 512);
+        assert(bf16.rawUpOffset - bf16.rawGateOffset == RawTileOffset(kMaxCores, 0) * sizeof(uint16_t));
+        assert(bf16.totalBytes - bf16.rawUpOffset == bf16.rawUpOffset - bf16.rawGateOffset);
+        assert(other.totalBytes - other.rawGateOffset == bf16.totalBytes - bf16.rawGateOffset);
+    }
+    static_assert(OutputRowsInY(24576, 4096, 3) == 3328);
+    for (uint32_t sourceRows : {1U, 128U, 768U, 769U, 4096U}) {
+        for (uint32_t capacity : {0U, 1U, 767U, 768U, 4096U, 24576U}) {
+            constexpr uint32_t groups = 3;
+            const uint64_t cut = OutputRowsInY(capacity, sourceRows, groups);
+            assert(cut <= capacity);
+            for (uint32_t first = 0; first < capacity; ++first) {
+                const uint32_t count = std::min(groups * kGroupRows, capacity - first);
+                if (first < cut) {
+                    assert(first + count <= sourceRows - 1);
+                } else {
+                    assert(first - cut + count <= capacity - cut);
+                }
+            }
+        }
     }
     for (uint32_t mode : {1U, 2U, 3U}) {
         for (uint64_t capacity : {1ULL, 127ULL, 128ULL, 129ULL, 24576ULL}) {
-            const MegaMoeBF16Training::BackwardWorkspaceLayout layout(4, capacity, 7168, 6144, 8, 4, 4, mode, 3);
+            const MegaMoeBF16Training::BackwardWorkspaceLayout layout(4, capacity, 7168, 6144, 8, 4, 4, mode);
             assert(layout.doOffset == 0 && layout.controlOffset < layout.totalBytes);
             assert(layout.dzOffset % 512 == 0 && layout.hpOffset % 512 == 0 && layout.dpOffset % 512 == 0);
             assert(layout.dhpReadyOffset < layout.dzReadyOffset && layout.dzReadyOffset < layout.dxReadyOffset);
@@ -205,6 +230,17 @@ int main()
                     const auto direct = MegaMoeImpl::GetPeerRowLimits(pc, peers);
                     assert(limits.minimum == direct.minimum && limits.maximum == direct.maximum &&
                            limits.total == direct.total);
+                    const PeerRowLayout<Prefix> layout{Prefix{prefix}, Prefix{prefix}, peers, experts, rank};
+                    layout.ForEachSpan(
+                        slice, slice.packed, slice.packed + slice.rows, cache,
+                        [&](const MegaMoeImpl::PeerTransfer& t, uint64_t packed) {
+                            const uint32_t preceding = t.sourceRank ? prefix[(t.sourceRank - 1) * experts + e] : 0;
+                            for (uint32_t j = 0; j < t.rowCount; ++j) {
+                                const auto ref = expected[packed + j - info.base];
+                                assert(ref.first == t.sourceRank);
+                                assert(layout.SavedRow(slice, t) + j == info.base + preceding + ref.second);
+                            }
+                        });
                     std::vector<uint32_t> coverage(slice.rows);
                     for (uint32_t owner = 0; owner < 32; ++owner) {
                         const uint32_t q = slice.rows / 32, r = slice.rows % 32;
