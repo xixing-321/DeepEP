@@ -182,35 +182,29 @@ public:
                                   Catlass::Arch::PositionGM{});
         auto tu = tla::MakeTensor(up, tla::MakeLayout<bfloat16_t, Catlass::layout::RowMajor>(slice.rows, f),
                                   Catlass::Arch::PositionGM{});
-        WaveBlockScheduler scheduler({slice.rows, f, h}, Catlass::MakeCoord(kRows, kPairedColumns));
-        const uint32_t tasks = scheduler.GetCoreLoops();
-        const uint32_t first = MegaMoeImpl::GetGmmFirstOwnedTile(core, cores, startBlock);
         bool ready = false;
-        for (uint32_t task = first; task < tasks; task += cores) {
-            const auto coord = scheduler.GetBlockCoord(task);
-            const auto shape = scheduler.GetActualBlockShape(coord);
-            const uint32_t m = coord.m() * kRows, n = coord.n() * kPairedColumns;
-            if (!ready) {
-                MegaMoeTrainTimerPassiveScope wait(params.timer, MegaMoeTrainTimer::AIC_GMM1_WAIT, slice.expert,
-                                                   slice.row + m, shape.m(), n, kRows, kPairedColumns, h, f);
-                while (AscendC::ReadGmByPassDCache(dispatchReady) < cores) {
+        ForEachGateUpTile<WaveBlockScheduler>(
+            slice.rows, f, h, core, cores, startBlock, [&](uint32_t m, uint32_t n, const auto& shape) __aicore__ {
+                if (!ready) {
+                    MegaMoeTrainTimerPassiveScope wait(params.timer, MegaMoeTrainTimer::AIC_GMM1_WAIT, slice.expert,
+                                                       slice.row + m, shape.m(), n, kRows, kPairedColumns, h, f);
+                    while (AscendC::ReadGmByPassDCache(dispatchReady) < cores) {
+                    }
+                    AscendC::SyncFunc<AscendC::HardEvent::S_MTE2>();
+                    ready = true;
                 }
-                AscendC::SyncFunc<AscendC::HardEvent::S_MTE2>();
-                ready = true;
-            }
-            MegaMoeTrainTimerPassiveScope tile(params.timer, MegaMoeTrainTimer::AIC_GMM1, slice.expert, slice.row + m,
-                                               shape.m(), n, kRows, kPairedColumns, h, f);
-            GateUpCompletion::Acquire(sequence);
-            auto tileA = tla::GetTile(ta, tla::MakeCoord(m, 0U), tla::MakeShape(shape.m(), shape.k()));
-            auto tileB = tla::GetTile(tb, tla::MakeCoord(0U, 2U * n), tla::MakeShape(shape.k(), 2U * shape.n()));
-            WaveGateUpWeight<decltype(tileB)> pairedWeight(tileB);
-            auto tileGate = tla::GetTile(tg, tla::MakeCoord(m, n), tla::MakeShape(shape.m(), shape.n()));
-            auto tileUp = tla::GetTile(tu, tla::MakeCoord(m, n), tla::MakeShape(shape.m(), shape.n()));
-            WaveGateUpOutput<decltype(tileGate)> output(tileGate, tileUp);
-            blockMmad(tileA, pairedWeight, output, Catlass::GemmCoord{shape.m(), 2U * shape.n(), shape.k()});
-            GateUpCompletion::Publish(sequence++);
-        }
-        startBlock = MegaMoeImpl::GetGmmNextStartBlock(startBlock, tasks, cores);
+                MegaMoeTrainTimerPassiveScope tile(params.timer, MegaMoeTrainTimer::AIC_GMM1, slice.expert,
+                                                   slice.row + m, shape.m(), n, kRows, kPairedColumns, h, f);
+                GateUpCompletion::Acquire(sequence);
+                auto tileA = tla::GetTile(ta, tla::MakeCoord(m, 0U), tla::MakeShape(shape.m(), shape.k()));
+                auto tileB = tla::GetTile(tb, tla::MakeCoord(0U, 2U * n), tla::MakeShape(shape.k(), 2U * shape.n()));
+                WaveGateUpWeight<decltype(tileB)> pairedWeight(tileB);
+                auto tileGate = tla::GetTile(tg, tla::MakeCoord(m, n), tla::MakeShape(shape.m(), shape.n()));
+                auto tileUp = tla::GetTile(tu, tla::MakeCoord(m, n), tla::MakeShape(shape.m(), shape.n()));
+                WaveGateUpOutput<decltype(tileGate)> output(tileGate, tileUp);
+                blockMmad(tileA, pairedWeight, output, Catlass::GemmCoord{shape.m(), 2U * shape.n(), shape.k()});
+                GateUpCompletion::Publish(sequence++);
+            });
     }
 
     __aicore__ inline bool Down(const Bf16Params& params, const MegaMoeBF16Training::Wave::Slice& slice, GM_ADDR output,

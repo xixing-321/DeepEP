@@ -912,21 +912,11 @@ __aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::DispatchWave(const WaveR
         if (begin < end) {
             MegaMoeTrainTimerPassiveScope dispatch(timer_, MegaMoeTrainTimer::AIV_DISPATCH, slice.expert,
                                                    static_cast<uint32_t>(begin - expertBase), end - begin);
-            const PeerCounts<UbPeerPrefix> peerCounts{UbPeerPrefix{waveCumsum_}, expertPerRank_, slice.expert,
-                                                      slice.fullRows};
-            const auto& limits =
-                MegaMoeImpl::GetCachedPeerRowLimits(dispatchPeerLimits_, peerCounts, slice.expert, worldSize_);
-            MegaMoeImpl::PeerTransferCursor<PeerCounts<UbPeerPrefix>> peers(
-                peerCounts, limits, slice.row, slice.row + slice.rows, static_cast<uint32_t>(begin - expertBase),
-                static_cast<uint32_t>(end - expertBase), worldSize_, rankId_);
-            MegaMoeImpl::PeerTransfer transfer{};
-            while (peers.Next(transfer)) {
-                const uint32_t sourceRow =
-                    waveSourcePrefix_.GetValue(transfer.sourceRank * expertPerRank_ + slice.expert) +
-                    transfer.sourceOrdinalBegin;
-                CopyWavePayload(transfer.sourceRank, sourceRow, expertBase + transfer.destinationRow,
-                                transfer.rowCount);
-            }
+            const PeerRowLayout<UbPeerPrefix> layout{
+                {waveCumsum_}, {waveSourcePrefix_}, worldSize_, expertPerRank_, rankId_};
+            layout.ForEachSpan(slice, begin, end, dispatchPeerLimits_,
+                               [&](uint32_t source, uint32_t sourceRow, uint64_t packedRow, uint32_t rows)
+                                   __aicore__ { CopyWavePayload(source, sourceRow, packedRow, rows); });
         }
         // All workers retire each slice, including empty intersections.
         // Publish only after both X and p writes have completed.
@@ -968,32 +958,26 @@ __aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::SwigluWave(const WaveRan
         epilogue.UpdateGlobalAddr({static_cast<int64_t>(slice.packed * f), 0, slice.expert,
                                    static_cast<int64_t>(slice.packed), 0,
                                    static_cast<int64_t>(ReadySlot(slice.packed - slice.row, slice.expert, slice.row))});
-        const uint32_t columns = kPairedColumns;
-        WaveBlockScheduler scheduler({slice.rows, f, k_}, Catlass::MakeCoord(kGmm1Rows, columns));
-        const uint32_t tasks = scheduler.GetCoreLoops();
-        const uint32_t first = GetGmmFirstOwnedTile(blockIdx_, blockNum_, startBlock);
-        for (uint32_t task = first; task < tasks; task += blockNum_) {
-            const auto coord = scheduler.GetBlockCoord(task);
-            const auto shape = scheduler.GetActualBlockShape(coord);
-            const uint32_t m = coord.m() * kGmm1Rows, n = coord.n() * columns;
-            {
-                MegaMoeTrainTimerPassiveScope wait(timer_, MegaMoeTrainTimer::AIV_SWIGLU_WAIT, slice.expert,
-                                                   slice.row + m, shape.m(), n, kGmm1Rows, columns, k_, f);
-                GateUpCompletion::Wait(sequence);
-                epilogue.LoadRawTile(params_.forwardRawGate, params_.forwardRawUp, slice.packed * f, shape.m(),
-                                     shape.n(), static_cast<int64_t>(m) * f + n);
-            }
-            MegaMoeTrainTimerPassiveScope activation(timer_, MegaMoeTrainTimer::AIV_SWIGLU, slice.expert, slice.row + m,
-                                                     shape.m(), n, kGmm1Rows, columns, k_, f);
-            // BF16 saves are already written by GMM1; MXFP8 saves encode raw tiles before activation.
-            constexpr uint32_t epilogueSave = SaveMode == MegaMoeBF16Training::kSaveMxFp8
-                                                  ? MegaMoeBF16Training::kSaveMxFp8
-                                                  : MegaMoeBF16Training::kSaveNone;
-            epilogue.template Run<epilogueSave>({shape.m(), shape.n(), 0, 0},
-                                                {static_cast<int64_t>(m) * f + n, 0, 0, 0, 0, 0});
-            GateUpCompletion::Release(sequence++);
-        }
-        startBlock = GetGmmNextStartBlock(startBlock, tasks, blockNum_);
+        ForEachGateUpTile<WaveBlockScheduler>(
+            slice.rows, f, k_, blockIdx_, blockNum_, startBlock,
+            [&](uint32_t m, uint32_t n, const auto& shape) __aicore__ {
+                {
+                    MegaMoeTrainTimerPassiveScope wait(timer_, MegaMoeTrainTimer::AIV_SWIGLU_WAIT, slice.expert,
+                                                       slice.row + m, shape.m(), n, kGmm1Rows, kPairedColumns, k_, f);
+                    GateUpCompletion::Wait(sequence);
+                    epilogue.LoadRawTile(params_.forwardRawGate, params_.forwardRawUp, slice.packed * f, shape.m(),
+                                         shape.n(), static_cast<int64_t>(m) * f + n);
+                }
+                MegaMoeTrainTimerPassiveScope activation(timer_, MegaMoeTrainTimer::AIV_SWIGLU, slice.expert,
+                                                         slice.row + m, shape.m(), n, kGmm1Rows, kPairedColumns, k_, f);
+                // BF16 saves are already written by GMM1; MXFP8 saves encode raw tiles before activation.
+                constexpr uint32_t epilogueSave = SaveMode == MegaMoeBF16Training::kSaveMxFp8
+                                                      ? MegaMoeBF16Training::kSaveMxFp8
+                                                      : MegaMoeBF16Training::kSaveNone;
+                epilogue.template Run<epilogueSave>({shape.m(), shape.n(), 0, 0},
+                                                    {static_cast<int64_t>(m) * f + n, 0, 0, 0, 0, 0});
+                GateUpCompletion::Release(sequence++);
+            });
     }
 }
 
@@ -1065,43 +1049,34 @@ __aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::CombineSlice(const WaveS
     const uint64_t end = begin + owned.count;
     MegaMoeTrainTimerPassiveScope combine(timer_, MegaMoeTrainTimer::AIV_COMBINE, slice.expert,
                                           slice.row + static_cast<uint32_t>(begin - slice.packed), end - begin);
-    const uint64_t expertBase = slice.packed - slice.row;
     const uint32_t rowElements = Ops::Base::CeilAlign(k_, 32U);
     LocalTensor<bfloat16_t> buffers[2] = {{TPosition::VECIN, 0, rowElements},
                                           {TPosition::VECIN, rowElements * uint32_t(sizeof(bfloat16_t)), rowElements}};
     using namespace MegaMoeBF16Training::Wave;
-    const PeerCounts<UbPeerPrefix> peerCounts{UbPeerPrefix{waveCumsum_}, expertPerRank_, slice.expert, slice.fullRows};
-    const auto& limits = MegaMoeImpl::GetCachedPeerRowLimits(combinePeerLimits_, peerCounts, slice.expert, worldSize_);
-    MegaMoeImpl::PeerTransferCursor<PeerCounts<UbPeerPrefix>> peers(
-        peerCounts, limits, slice.row, slice.row + slice.rows, static_cast<uint32_t>(begin - expertBase),
-        static_cast<uint32_t>(end - expertBase), worldSize_, rankId_);
-    MegaMoeImpl::PeerTransfer transfer{};
-    while (peers.Next(transfer)) {
-        const uint32_t source = transfer.sourceRank;
-        const uint64_t copyBegin = expertBase + transfer.destinationRow;
-        const uint64_t copyEnd = copyBegin + transfer.rowCount;
-        const uint64_t remoteRow =
-            waveSourcePrefix_.GetValue(source * expertPerRank_ + slice.expert) + transfer.sourceOrdinalBegin;
-        GlobalTensor<bfloat16_t> input, output;
-        input.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(waveOutputBase_) + copyBegin * k_);
-        input.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
-        const uint64_t returnOffset = params_.peermemInfo.ptrD - params_.peermemInfo.ptrBase;
-        output.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(GetRankWinAddrWithOffset(source, returnOffset)) +
-                               remoteRow * k_);
-        for (uint32_t row = 0; row < copyEnd - copyBegin; ++row) {
-            const uint32_t ping = waveCombineSequence_ & 1U;
-            const TEventID event = ping ? EVENT_ID7 : EVENT_ID6;
-            WaitFlag<HardEvent::MTE3_MTE2>(event);
-            DataCopy(buffers[ping], input[static_cast<uint64_t>(row) * k_], k_);
-            SetFlag<HardEvent::MTE2_MTE3>(event);
-            WaitFlag<HardEvent::MTE2_MTE3>(event);
-            DataCopy(output[static_cast<uint64_t>(row) * k_], buffers[ping], k_);
-            SetFlag<HardEvent::MTE3_MTE2>(event);
-            ++waveCombineSequence_;
-            // Keep the completion cursor moving while this slice's token sends are in flight.
-            PollDownCompletion();
-        }
-    }
+    const PeerRowLayout<UbPeerPrefix> layout{{waveCumsum_}, {waveSourcePrefix_}, worldSize_, expertPerRank_, rankId_};
+    layout.ForEachSpan(
+        slice, begin, end, combinePeerLimits_,
+        [&](uint32_t source, uint64_t remoteRow, uint64_t packedRow, uint32_t rows) __aicore__ {
+            GlobalTensor<bfloat16_t> input, output;
+            input.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(waveOutputBase_) + packedRow * k_);
+            input.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
+            const uint64_t returnOffset = params_.peermemInfo.ptrD - params_.peermemInfo.ptrBase;
+            output.SetGlobalBuffer(
+                reinterpret_cast<__gm__ bfloat16_t*>(GetRankWinAddrWithOffset(source, returnOffset)) + remoteRow * k_);
+            for (uint32_t row = 0; row < rows; ++row) {
+                const uint32_t ping = waveCombineSequence_ & 1U;
+                const TEventID event = ping ? EVENT_ID7 : EVENT_ID6;
+                WaitFlag<HardEvent::MTE3_MTE2>(event);
+                DataCopy(buffers[ping], input[static_cast<uint64_t>(row) * k_], k_);
+                SetFlag<HardEvent::MTE2_MTE3>(event);
+                WaitFlag<HardEvent::MTE2_MTE3>(event);
+                DataCopy(output[static_cast<uint64_t>(row) * k_], buffers[ping], k_);
+                SetFlag<HardEvent::MTE3_MTE2>(event);
+                ++waveCombineSequence_;
+                // Keep the completion cursor moving while this slice's token sends are in flight.
+                PollDownCompletion();
+            }
+        });
 }
 
 template <typename TopkWeightT>

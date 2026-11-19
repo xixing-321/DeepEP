@@ -18,6 +18,31 @@ struct PeerCounts {
     }
 };
 
+// Dispatch reads and Combine writes the same packed source row for each expert row.
+template <class Prefix>
+struct PeerRowLayout {
+    Prefix countsPrefix, sourcePrefix;
+    uint32_t peers, experts, rank;
+
+    template <class Visit>
+    MEGA_MOE_PEER_HOST_DEVICE inline void ForEachSpan(const Slice& slice, uint64_t begin, uint64_t end,
+                                                      MegaMoeImpl::PeerRowLimitsCache& cache, Visit visit) const
+    {
+        const uint64_t expertBase = slice.packed - slice.row;
+        const PeerCounts<Prefix> counts{countsPrefix, experts, slice.expert, slice.fullRows};
+        const auto& limits = MegaMoeImpl::GetCachedPeerRowLimits(cache, counts, slice.expert, peers);
+        MegaMoeImpl::PeerTransferCursor<PeerCounts<Prefix>> cursor(
+            counts, limits, slice.row, slice.row + slice.rows, static_cast<uint32_t>(begin - expertBase),
+            static_cast<uint32_t>(end - expertBase), peers, rank);
+        MegaMoeImpl::PeerTransfer transfer{};
+        while (cursor.Next(transfer)) {
+            const uint32_t sourceRow =
+                sourcePrefix.Get(transfer.sourceRank * experts + slice.expert) + transfer.sourceOrdinalBegin;
+            visit(transfer.sourceRank, sourceRow, expertBase + transfer.destinationRow, transfer.rowCount);
+        }
+    }
+};
+
 struct PeerExpert {
     uint64_t base;
     uint32_t rows, firstSliceRows;

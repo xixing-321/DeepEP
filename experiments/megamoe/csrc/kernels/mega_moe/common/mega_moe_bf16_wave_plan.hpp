@@ -99,15 +99,19 @@ struct ForwardWorkspaceLayout {
     }
 };
 
-struct ProducerRange {
-    uint32_t first;
-    uint32_t last;
-};
-
-// Cover a non-empty consumer interval with producer tiles.
-MEGA_MOE_WAVE_HOST_DEVICE constexpr ProducerRange ReadyProducers(uint32_t row, uint32_t rows, uint32_t producerRows)
+// AIC produces Gate/Up in the same tile order that its paired AIV consumes them.
+template <class BlockScheduler, class Visit>
+MEGA_MOE_WAVE_HOST_DEVICE inline void ForEachGateUpTile(uint32_t rows, uint32_t ffn, uint32_t hidden, uint32_t core,
+                                                        uint32_t cores, uint32_t& startBlock, Visit visit)
 {
-    return {row / producerRows, (row + rows - 1U) / producerRows};
+    BlockScheduler scheduler({rows, ffn, hidden}, {kGmm1Rows, kPairedColumns});
+    const uint32_t tasks = scheduler.GetCoreLoops();
+    const uint32_t first = MegaMoeImpl::GetGmmFirstOwnedTile(core, cores, startBlock);
+    for (uint32_t task = first; task < tasks; task += cores) {
+        const auto coord = scheduler.GetBlockCoord(task);
+        visit(coord.m() * kGmm1Rows, coord.n() * kPairedColumns, scheduler.GetActualBlockShape(coord));
+    }
+    startBlock = MegaMoeImpl::GetGmmNextStartBlock(startBlock, tasks, cores);
 }
 
 struct Cursor {
