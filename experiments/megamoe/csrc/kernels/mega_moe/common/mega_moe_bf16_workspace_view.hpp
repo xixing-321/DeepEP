@@ -11,7 +11,7 @@
 
 #include "kernel_operator.h"
 #include "op_common/op_kernel/math_util.h"
-#include "common/mega_moe_bf16_tiling.hpp"
+#include "mega_moe_bf16_tiling.hpp"
 #include "common/mega_moe_bf16_layout.hpp"
 #include "common/mega_moe_bf16_wave_plan.hpp"
 #include "common/mega_moe_workspace_backward.hpp"

@@ -181,7 +181,7 @@ private:
     TBuf<> TopkGradPartialBuf_;
     TBuf<> TopkGradPeerPrefixBuf_;
 
-    __gm__ Mc2MoeContext* mc2Context_{nullptr};
+    __gm__ ::Mc2MoeContext* mc2Context_{nullptr};
     Bf16Params params_{};
     MegaMoeTrainTimerDevice* timer_ = nullptr;
     BackwardSavedStateInfo savedState_{};
@@ -281,7 +281,7 @@ __aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::Init(GM_ADDR context, G
     rankId_ = tilingData->rankId;
     savedGateUpMode_ = tilingData->savedGateUpMode;
 
-    mc2Context_ = reinterpret_cast<__gm__ Mc2MoeContext*>(context);
+    mc2Context_ = reinterpret_cast<__gm__ ::Mc2MoeContext*>(context);
     for (int i = 0; i < worldSize_; i++) {
         winRankAddr_[i] = (GM_ADDR)mc2Context_->epHcclBuffer[i];
     }
@@ -552,7 +552,7 @@ __aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::DispatchWaveTokensBackw
         const uint32_t sourceBase = preSumBeforeRankWorkSpace_(source * expertPerRank_ + expertIdx);
         GlobalTensor<QuantOutType> input, output;
         input.SetGlobalBuffer(reinterpret_cast<__gm__ QuantOutType*>(
-            GetRankWinAddrWithOffset(source, params_.peermemInfo.payloadOffset)));
+            ::GetRankWinAddrWithOffset(source, params_.peermemInfo.payloadOffset)));
         output.SetGlobalBuffer(reinterpret_cast<__gm__ QuantOutType*>(dstBase));
         PeerRowCursor cursor(counts, worldSize_, rankId_, params_.peerRowsGroups, info.rows, info.firstSliceRows, 0U,
                              ownBegin < ownEnd ? info.rows : 0U);
@@ -640,7 +640,7 @@ __aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::DispatchTokensBackward(
                 int64_t gmOffsetPeer = rowSrcOffsetPerCore * widthA;
 
                 gmRemoteA.SetGlobalBuffer(reinterpret_cast<__gm__ QuantOutType*>(
-                    GetRankWinAddrWithOffset(dstRankIdx, params_.peermemInfo.payloadOffset)));
+                    ::GetRankWinAddrWithOffset(dstRankIdx, params_.peermemInfo.payloadOffset)));
                 aGlobalTensor.SetGlobalBuffer(reinterpret_cast<__gm__ QuantOutType*>(dstBase));
                 if (UseDispatchRowReady(ordinal)) {
                     const auto ready = MakeDispatchRowReady(expertIdx, ordinal);
@@ -1228,7 +1228,7 @@ __aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::CopyTopkGradBatch(uint6
     SyncFunc<HardEvent::V_MTE3>();
     GlobalTensor<TopkWeightT> output;
     output.SetGlobalBuffer(reinterpret_cast<__gm__ TopkWeightT*>(
-        GetRankWinAddrWithOffset(rank, params_.peermemInfo.ptrD - params_.peermemInfo.ptrBase)));
+        ::GetRankWinAddrWithOffset(rank, params_.peermemInfo.ptrD - params_.peermemInfo.ptrBase)));
     MegaMoeTrainTimerPassiveScope send(timer_, MegaMoeTrainTimer::AIV_BW_DP_SEND, expert, expertRow, rows, uint32_t(-1),
                                        rows, 1U, partialTiles, 1U, 0U, rank);
     DataCopyPad(output[remoteRow], routeBuf,

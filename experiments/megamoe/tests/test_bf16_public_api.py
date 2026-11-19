@@ -37,7 +37,7 @@ def buffer(monkeypatch):
         def prepare(self, *args):
             self.spec = args
 
-        def forward_out(self, out, x, ids, p, w1, w2, capacity, limit, mode, save_dispatched_x=True):
+        def forward(self, out, x, ids, p, w1, w2, capacity, limit, mode, capture_timer, save_dispatched_x=True):
             calls.append((p.dtype, mode, self.before, limit))
             out.copy_(x)
             return SimpleNamespace(
@@ -45,23 +45,18 @@ def buffer(monkeypatch):
                 counts=torch.full((2,), 7, dtype=torch.int32),
                 saved_state=torch.zeros(1, dtype=torch.uint8),
                 dispatch_output=torch.zeros(1, dtype=torch.uint8) if save_dispatched_x else None,
+                timer=torch.zeros(1, dtype=torch.int64) if capture_timer else torch.Tensor(),
             )
 
-        def backward(self, dy, p, w1, w2, counts, saved, dispatch, capacity, limit, mode):
+        def backward(self, dy, p, w1, w2, counts, saved, dispatch, capacity, limit, mode, capture_timer):
             assert mode == self.spec[-2]
             return SimpleNamespace(
-                dx=dy, dtopk_weights=torch.full_like(p, 2), dw1=torch.full_like(w1, 3), dw2=torch.full_like(w2, 4)
+                dx=dy,
+                dtopk_weights=torch.full_like(p, 2),
+                dw1=torch.full_like(w1, 3),
+                dw2=torch.full_like(w2, 4),
+                timer=torch.ones(1, dtype=torch.int64) if capture_timer else torch.Tensor(),
             )
-
-        def forward_with_timer(self, x, ids, p, w1, w2, capacity, limit, mode, out, save_dispatched_x=True):
-            result = self.forward_out(out, x, ids, p, w1, w2, capacity, limit, mode, save_dispatched_x)
-            result.timer = torch.zeros(1, dtype=torch.int64)
-            return result
-
-        def backward_with_timer(self, *args):
-            result = self.backward(*args)
-            result.timer = torch.ones(1, dtype=torch.int64)
-            return result
 
     monkeypatch.setattr(api, "_extension", lambda: SimpleNamespace(BF16Plan=Plan))
     monkeypatch.setattr(bf16, "require_native", lambda _: SimpleNamespace(megamoe_workspace_address=lambda _: 4096))

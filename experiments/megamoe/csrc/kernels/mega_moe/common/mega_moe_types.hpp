@@ -14,7 +14,7 @@
 
 #include "lib/std/tuple.h"
 #include "tensor_api/tensor.h"
-#include "../mega_moe_tiling.hpp"
+#include "mega_moe_tiling.hpp"
 #include "mega_moe_constants.hpp"
 #include "mega_moe_workspace.hpp"
 #if defined(ENABLE_MEGA_MOE_LAYERED_KERNEL)

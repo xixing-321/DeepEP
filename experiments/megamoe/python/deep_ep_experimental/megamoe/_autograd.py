@@ -19,14 +19,10 @@ class BF16Function(torch.autograd.Function):
             raise ValueError("Set sym_buffer.dispatch_rebuilder for this microbatch when save_dispatched_x=False")
         if capture is not None:
             capture.claim()
-            result = plan.forward_with_timer(
-                x, ids, p, w1, w2, config.max_recv, config.limit, config.save_type, out, owner.save_dispatched_x
-            )
+        result = plan.forward(out, x, ids, p, w1, w2, config.max_recv, config.limit, config.save_type,
+                              capture is not None, owner.save_dispatched_x)
+        if capture is not None:
             capture.forward = result.timer
-        else:
-            result = plan.forward_out(
-                out, x, ids, p, w1, w2, config.max_recv, config.limit, config.save_type, owner.save_dispatched_x
-            )
         saved = result.saved_state
         saved.gmm1_save_type = config.save_type
         ctx.owner, ctx.plan, ctx.config = owner, plan, config
@@ -51,8 +47,7 @@ class BF16Function(torch.autograd.Function):
             with npu_api().stream(runtime.stream):
                 if capture is not None:
                     capture.begin_backward()
-                fn = ctx.plan.backward if capture is None else ctx.plan.backward_with_timer
-                result = fn(
+                result = ctx.plan.backward(
                     dy.contiguous(),
                     p,
                     w1,
@@ -63,6 +58,7 @@ class BF16Function(torch.autograd.Function):
                     config.max_recv,
                     config.limit,
                     config.save_type,
+                    capture is not None,
                 )
                 if capture is not None:
                     capture.backward = result.timer

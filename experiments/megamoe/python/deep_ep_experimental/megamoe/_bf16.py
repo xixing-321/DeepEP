@@ -150,11 +150,10 @@ def run(y, w1, w2, b, shared_w1, shared_w2, stats, activation, clamp, fast_math)
                 result_y, counts = BF16Function.apply(b, plan, config, x, ids, p, w1, w2, y)
             else:
                 capture = getattr(b, "_timer_capture", None)
-                if capture is None:
-                    result = plan.forward_out(y, x, ids, p, w1, w2, config.max_recv, limit, mode, False)
-                else:
+                if capture is not None:
                     capture.claim()
-                    result = plan.forward_with_timer(x, ids, p, w1, w2, config.max_recv, limit, mode, y, False)
+                result = plan.forward(y, x, ids, p, w1, w2, config.max_recv, limit, mode, capture is not None, False)
+                if capture is not None:
                     capture.forward = result.timer
                 result_y, counts = result.y, result.counts
             if stats is not None:

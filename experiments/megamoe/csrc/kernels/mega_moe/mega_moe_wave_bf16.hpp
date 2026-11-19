@@ -2,7 +2,7 @@
 // Modified by xixing 2026
 
 /*!
- * \file mega_moe_bf16.hpp
+ * \file mega_moe_wave_bf16.hpp
  * \brief Fused BF16 MoE training forward dispatch, expert computation and combine.
  */
 
@@ -159,7 +159,7 @@ private:
     TBuf<> ResetFlagBuf_;
     TBuf<> SaveStateBuf_;
 
-    __gm__ Mc2MoeContext* mc2Context_{nullptr};
+    __gm__ ::Mc2MoeContext* mc2Context_{nullptr};
     Bf16Params params_{};
     MegaMoeTrainTimerDevice* timer_ = nullptr;
     TupleShape problemShape_{};
@@ -266,7 +266,7 @@ __aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::Init(
     maxOutputSize_ = tilingData->maxOutputSize;
     Get<N_VALUE>(problemShape_) = tilingData->n;
     Get<K_VALUE>(problemShape_) = k_;
-    mc2Context_ = reinterpret_cast<__gm__ Mc2MoeContext*>(context);
+    mc2Context_ = reinterpret_cast<__gm__ ::Mc2MoeContext*>(context);
     rankId_ = mc2Context_->epRankId;
     for (int i = 0; i < worldSize_; i++) {
         winRankAddr_[i] = (GM_ADDR)mc2Context_->epHcclBuffer[i];
@@ -487,7 +487,7 @@ __aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::CrossRankSyncCntPerExper
         GlobalTensor<int32_t> srcAddress;
         srcAddress.SetGlobalBuffer(reinterpret_cast<__gm__ int32_t*>(tokenPerExpertCurRankAddr_));
         GlobalTensor<int32_t> dstAddress;
-        __gm__ void* dstPeermemPtr = GetRankWinAddrWithOffset(dstRankIdx, offsetInDstWinAddr);
+        __gm__ void* dstPeermemPtr = ::GetRankWinAddrWithOffset(dstRankIdx, offsetInDstWinAddr);
         dstAddress.SetGlobalBuffer((__gm__ int32_t*)dstPeermemPtr);
         SyncFunc<AscendC::HardEvent::MTE3_MTE2>();
         DataCopy(tmpBuffer, srcAddress, numPerCore);
@@ -601,7 +601,7 @@ __aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::CrossRankSyncCntPerExper
         SyncFunc<AscendC::HardEvent::S_MTE3>();
         const uint32_t destination = firstDestination + localDestination;
         GlobalTensor<int32_t> remotePacket;
-        remotePacket.SetGlobalBuffer(reinterpret_cast<__gm__ int32_t*>(GetRankWinAddrWithOffset(
+        remotePacket.SetGlobalBuffer(reinterpret_cast<__gm__ int32_t*>(::GetRankWinAddrWithOffset(
             destination,
             MegaMoeBF16Training::kPeerDataOffset + static_cast<uint64_t>(rankId_) * kCompactTokenCountPacketBytes)));
         DataCopy(remotePacket, packet, packetElements);
@@ -875,7 +875,7 @@ __aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::CopyWavePayload(uint32_t
     LocalTensor<bfloat16_t> x1{TPosition::VECIN, dispatchBase + copyElements * 2U, copyElements};
     GlobalTensor<bfloat16_t> sourceX, targetX, savedX;
     sourceX.SetGlobalBuffer(
-        reinterpret_cast<__gm__ bfloat16_t*>(GetRankWinAddrWithOffset(source, params_.peermemInfo.payloadOffset)) +
+        reinterpret_cast<__gm__ bfloat16_t*>(::GetRankWinAddrWithOffset(source, params_.peermemInfo.payloadOffset)) +
         static_cast<uint64_t>(sourceRow) * k_);
     targetX.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(waveX) + uint64_t(localRow) * k_);
     if (params_.workspaceInfo.ptrA) {
@@ -927,7 +927,7 @@ __aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::CopyWavePayload(uint32_t
     LocalTensor<TopkWeightT> weights{TPosition::VECIN, dispatchBase + 4U * copyElements, elements};
     GlobalTensor<TopkWeightT> sourceP, targetP;
     const uint64_t weightOffset = params_.peermemInfo.ptrRoutedTopkWeights - params_.peermemInfo.ptrBase;
-    sourceP.SetGlobalBuffer(reinterpret_cast<__gm__ TopkWeightT*>(GetRankWinAddrWithOffset(source, weightOffset)) +
+    sourceP.SetGlobalBuffer(reinterpret_cast<__gm__ TopkWeightT*>(::GetRankWinAddrWithOffset(source, weightOffset)) +
                             sourceRow);
     targetP.SetGlobalBuffer(reinterpret_cast<__gm__ TopkWeightT*>(waveWeights_) + packedRow);
     SetFlag<HardEvent::MTE3_MTE2>(EVENT_ID2);
@@ -1135,7 +1135,7 @@ __aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::CombineSlice(const WaveS
             input.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
             const uint64_t returnOffset = params_.peermemInfo.ptrD - params_.peermemInfo.ptrBase;
             output.SetGlobalBuffer(
-                reinterpret_cast<__gm__ bfloat16_t*>(GetRankWinAddrWithOffset(source, returnOffset)) + remoteRow * k_);
+                reinterpret_cast<__gm__ bfloat16_t*>(::GetRankWinAddrWithOffset(source, returnOffset)) + remoteRow * k_);
             for (uint32_t row = 0; row < rows; ++row) {
                 const uint32_t ping = waveCombineSequence_ & 1U;
                 const TEventID event = ping ? EVENT_ID7 : EVENT_ID6;

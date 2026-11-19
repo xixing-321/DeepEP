@@ -11,7 +11,7 @@
 
 #include "lib/std/tuple.h"
 #include "timer/ascend_timer_device.hpp"
-#include "common/mega_moe_bf16_tiling.hpp"
+#include "mega_moe_bf16_tiling.hpp"
 #include "common/mega_moe_bf16_workspace_view.hpp"
 
 using namespace AscendC;

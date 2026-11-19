@@ -27,12 +27,6 @@ set(megamoe_definitions CATLASS_ARCH=3510)
 if(DEEPEP_MEGAMOE_TIMER)
     list(APPEND megamoe_definitions DEEPEP_MEGAMOE_TIMER=1)
 endif()
-set(megamoe_device_flags -O2 -std=c++17 -fPIC -xasc --npu-arch=dav-3510
-    --cce-auto-infer-kernel-type=false -DL2_CACHE_HINT)
-foreach(definition IN LISTS megamoe_definitions)
-    list(APPEND megamoe_device_flags "-D${definition}")
-endforeach()
-
 set(quantized_include_dirs
     "${PROJECT_SOURCE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/csrc"
@@ -49,22 +43,6 @@ set(quantized_include_dirs
     "${ASCEND_DEEPEP_MEGA_MOE_COMMON_INCLUDE_DIR}"
     "${ASCEND_DEEPEP_MEGA_MOE_COMMON_INCLUDE_DIR}/tensor_api"
     "${ASCEND_DEEPEP_MEGA_MOE_COMMON_INCLUDE_DIR}/tensor_api/include")
-set(quantized_device_flags ${megamoe_device_flags} --cce-auto-sync=off
-    -DASCEND_DEEPEP_DIRECT_TENSOR_INPUT=1
-    -DASCEND_DEEPEP_DISABLE_MEGA_MOE_EXCEPTION_DUMP=1 -DENABLE_TENSOR_API
-    -DNOT_DYNAMIC_COMPILE -DHIGH_PERFORMANCE=1 -DDETERMINISTIC_MODE=0)
-foreach(path IN LISTS quantized_include_dirs)
-    list(APPEND quantized_device_flags "-I${path}")
-endforeach()
-find_file(api_header ascendc_api_version.h
-    PATHS "${ASCEND_HOME_PATH}/compiler/tikcpp/tikcfw/lib"
-    "${ASCEND_HOME_PATH}/aarch64-linux/tikcpp/tikcfw/lib" NO_DEFAULT_PATH)
-if(api_header)
-    file(STRINGS "${api_header}" api_version REGEX "^#define ASCENDC_API_VERSION [0-9]+")
-    string(REGEX REPLACE ".*ASCENDC_API_VERSION ([0-9]+).*" "\\1" api_version "${api_version}")
-    list(APPEND quantized_device_flags "-DASCENDC_API_VERSION=${api_version}")
-endif()
-
 set(bf16_include_dirs "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/csrc"
     "${CMAKE_CURRENT_SOURCE_DIR}/csrc/kernels/mega_moe"
@@ -85,30 +63,38 @@ set(bf16_definitions
     DEEPEP_MEGAMOE_BF16_FORWARD_SCHEDULE=${DEEPEP_MEGAMOE_BF16_FORWARD_SCHEDULE}
     DEEPEP_MEGAMOE_BF16_BACKWARD_SLICES=$<BOOL:${DEEPEP_MEGAMOE_BF16_BACKWARD_SLICES}>
     DEEPEP_MEGAMOE_BF16_BACKWARD_COMBINE_SLICES=$<BOOL:${DEEPEP_MEGAMOE_BF16_BACKWARD_COMBINE_SLICES}>)
-set(bf16_device_flags ${megamoe_device_flags}
-    -Xhost-start -ftrapv -D__ASC_NPU_HOST__ -Xhost-end)
-foreach(definition IN LISTS bf16_definitions)
-    list(APPEND bf16_device_flags "-D${definition}")
+
+# One compile configuration for every entry: the training kernels align to
+# the quantized regime (auto-sync off, static compile, tensor API), keeping
+# only the BF16 schedule macros the code consumes.
+set(megamoe_device_flags -O2 -std=c++17 -fPIC -xasc --npu-arch=dav-3510
+    --cce-auto-infer-kernel-type=false --cce-auto-sync=off -DL2_CACHE_HINT
+    -DASCEND_DEEPEP_DIRECT_TENSOR_INPUT=1
+    -DASCEND_DEEPEP_DISABLE_MEGA_MOE_EXCEPTION_DUMP=1 -DENABLE_TENSOR_API
+    -DNOT_DYNAMIC_COMPILE -DHIGH_PERFORMANCE=1 -DDETERMINISTIC_MODE=0)
+foreach(definition IN LISTS megamoe_definitions bf16_definitions)
+    list(APPEND megamoe_device_flags "-D${definition}")
 endforeach()
-foreach(path IN LISTS bf16_include_dirs)
-    list(APPEND bf16_device_flags "-I${path}")
+foreach(path IN LISTS quantized_include_dirs bf16_include_dirs)
+    list(APPEND megamoe_device_flags "-I${path}")
 endforeach()
+find_file(api_header ascendc_api_version.h
+    PATHS "${ASCEND_HOME_PATH}/compiler/tikcpp/tikcfw/lib"
+    "${ASCEND_HOME_PATH}/aarch64-linux/tikcpp/tikcfw/lib" NO_DEFAULT_PATH)
+if(api_header)
+    file(STRINGS "${api_header}" api_version REGEX "^#define ASCENDC_API_VERSION [0-9]+")
+    string(REGEX REPLACE ".*ASCENDC_API_VERSION ([0-9]+).*" "\\1" api_version "${api_version}")
+    list(APPEND megamoe_device_flags "-DASCENDC_API_VERSION=${api_version}")
+endif()
 
 file(GLOB_RECURSE megamoe_headers CONFIGURE_DEPENDS "csrc/*.hpp" "${PROJECT_SOURCE_DIR}/csrc/kernels/common/*.hpp")
 set(megamoe_objects)
-foreach(source mega_moe mega_moe_bf16 mega_moe_bf16_backward)
-    if(source STREQUAL "mega_moe")
-        set(device_flags ${quantized_device_flags})
-    else()
-        set(device_flags ${bf16_device_flags})
-    endif()
-    set(source_file "${CMAKE_CURRENT_SOURCE_DIR}/csrc/kernels/mega_moe/${source}.cpp")
-    set(object "${CMAKE_CURRENT_BINARY_DIR}/${source}.o")
-    add_custom_command(OUTPUT "${object}"
-        COMMAND "${BISHENG}" ${device_flags} -c "${source_file}" -o "${object}"
-        DEPENDS "${source_file}" ${megamoe_headers} VERBATIM)
-    list(APPEND megamoe_objects "${object}")
-endforeach()
+set(entry_source "${CMAKE_CURRENT_SOURCE_DIR}/csrc/kernels/mega_moe/mega_moe.cpp")
+set(object "${CMAKE_CURRENT_BINARY_DIR}/mega_moe.o")
+add_custom_command(OUTPUT "${object}"
+    COMMAND "${BISHENG}" ${megamoe_device_flags} -c "${entry_source}" -o "${object}"
+    DEPENDS "${entry_source}" ${megamoe_headers} VERBATIM)
+list(APPEND megamoe_objects "${object}")
 
 set(kernel_library "${CMAKE_CURRENT_BINARY_DIR}/libmegamoe_kernel.so")
 add_custom_command(OUTPUT "${kernel_library}"
@@ -123,7 +109,7 @@ add_library(megamoe_kernel SHARED IMPORTED)
 set_target_properties(megamoe_kernel PROPERTIES IMPORTED_LOCATION "${kernel_library}")
 
 pybind11_add_module(megamoe_ext csrc/bindings.cpp csrc/forward.cpp
-    csrc/forward_bf16.cpp csrc/backward_bf16.cpp)
+    csrc/backward.cpp)
 set_target_properties(megamoe_ext PROPERTIES OUTPUT_NAME _C
     INSTALL_RPATH "$ORIGIN" INSTALL_RPATH_USE_LINK_PATH FALSE)
 target_include_directories(megamoe_ext PRIVATE ${quantized_include_dirs} ${bf16_include_dirs}
