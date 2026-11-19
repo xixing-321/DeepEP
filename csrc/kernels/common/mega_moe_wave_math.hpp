@@ -39,6 +39,15 @@ MEGA_MOE_WAVE_MATH_HD constexpr uint32_t GetGmmNextStartBlock(uint32_t startBloc
     return (startBlockIdx + tiles) % blockNum;
 }
 
+// Replay the producer assignment for one slice, even when this AIC owns no tiles.
+MEGA_MOE_WAVE_MATH_HD constexpr bool AdvanceGmmSlice(uint32_t blockIdx, uint32_t blockNum, uint32_t& startBlock,
+                                                     uint32_t tiles, bool reverseBlocks = false)
+{
+    const uint32_t first = GetGmmFirstOwnedTile(blockIdx, blockNum, startBlock, reverseBlocks);
+    startBlock = GetGmmNextStartBlock(startBlock, tiles, blockNum);
+    return first < tiles;
+}
+
 // Give the first remainder workers one extra row.
 MEGA_MOE_WAVE_MATH_HD constexpr WorkRange GetBalancedTokenRange(uint32_t totalTokens, uint32_t workerIdx,
                                                                 uint32_t workerCount)

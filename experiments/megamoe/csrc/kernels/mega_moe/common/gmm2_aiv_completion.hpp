@@ -32,14 +32,13 @@ struct Gmm2AivCompletion {
         return AscendC::ReadGmByPassDCache(submitted) > completed;
     }
 
-    __aicore__ static inline void Wait()
+    // After HasPending, FIX must finish before this AIC is counted as ready for its slice.
+    __aicore__ static inline void Acknowledge(__gm__ int32_t* sliceReady, int32_t& completed)
     {
         AscendC::CrossCoreWaitFlag<kMode, PIPE_S>(kFull);
-    }
-
-    __aicore__ static inline void Release()
-    {
+        AscendC::AtomicAdd(sliceReady, int32_t(1));
         AscendC::CrossCoreSetFlag<kMode, PIPE_S>(kEmpty);
+        ++completed;
     }
 
     __aicore__ static inline void Drain(AscendC::TEventID fenceEvent)

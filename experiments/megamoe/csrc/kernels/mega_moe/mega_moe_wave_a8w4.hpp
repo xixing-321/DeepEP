@@ -341,9 +341,7 @@ __aicore__ inline bool MegaMoeA8W4Wave<TemplateMegaMoeA8W4WaveTypeFunc>::NextGmm
     while (NextAivSlice(cursor, false, false)) {
         const uint32_t rows = cursor.slice.end.globalTokenIndex - cursor.slice.begin.globalTokenIndex;
         const uint32_t tiles = GetMGroupCountForRows(rows, GMM1_TILE_M) * cols;
-        const uint32_t first = GetGmmFirstOwnedTile(job.jobIndex, job.totalJobs, cursor.startBlockIdx, true);
-        cursor.startBlockIdx = GetGmmNextStartBlock(cursor.startBlockIdx, tiles, job.totalJobs);
-        if (first < tiles) return true;
+        if (AdvanceGmmSlice(job.jobIndex, job.totalJobs, cursor.startBlockIdx, tiles, true)) return true;
     }
     return false;
 }
@@ -357,12 +355,9 @@ __aicore__ inline bool MegaMoeA8W4Wave<TemplateMegaMoeA8W4WaveTypeFunc>::TryRece
                       uint64_t(job.jobIndex) * INT_CACHELINE;
     if (!Gmm2AivCompletion::HasPending(submitted, completedSequence)) return false;
 
-    // The FIX event follows all output stores issued by this AIC for the slice.
-    Gmm2AivCompletion::Wait();
     const auto& begin = cursor.slice.begin;
-    AscendC::AtomicAdd(GetTokenCombineReadyCounter(params_, begin.expertIdx, begin.tokenIndexInExpert), 1);
-    Gmm2AivCompletion::Release();
-    ++completedSequence;
+    auto* ready = GetTokenCombineReadyCounter(params_, begin.expertIdx, begin.tokenIndexInExpert);
+    Gmm2AivCompletion::Acknowledge(ready, completedSequence);
     return true;
 }
 

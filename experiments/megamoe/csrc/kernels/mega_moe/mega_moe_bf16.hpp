@@ -1029,9 +1029,7 @@ __aicore__ inline bool MegaMoeBF16Forward<TopkWeightT>::NextDownCompletion(MegaM
     using namespace MegaMoeBF16Training::Wave;
     while (NextWaveSlice(cursor, groups, slice)) {
         const uint32_t tasks = Ops::Base::CeilDiv(slice.rows, kGmm2Rows) * Ops::Base::CeilDiv(k_, kTileColumns);
-        const uint32_t first = GetGmmFirstOwnedTile(blockIdx_, blockNum_, startBlock);
-        startBlock = GetGmmNextStartBlock(startBlock, tasks, blockNum_);
-        if (first < tasks) return true;
+        if (AdvanceGmmSlice(blockIdx_, blockNum_, startBlock, tasks)) return true;
     }
     return false;
 }
@@ -1048,10 +1046,8 @@ __aicore__ inline bool MegaMoeBF16Forward<TopkWeightT>::PollDownCompletion()
     MegaMoeTrainTimerPassiveScope completion(timer_, MegaMoeTrainTimer::AIV_COMBINE_WAIT, slice.expert, slice.row,
                                              slice.rows, uint32_t(-1), kGmm2Rows, kTileColumns,
                                              params_.tilingData->n / 2U, k_, 1U);
-    Gmm2AivCompletion::Wait();
-    AtomicAdd(waveDownReady_ + ReadySlot(slice.packed - slice.row, slice.expert, slice.row), int32_t(1));
-    Gmm2AivCompletion::Release();
-    ++state.completed;
+    auto* ready = waveDownReady_ + ReadySlot(slice.packed - slice.row, slice.expert, slice.row);
+    Gmm2AivCompletion::Acknowledge(ready, state.completed);
     state.pending = NextDownCompletion(state.cursor, state.groups, state.startBlock, state.slice);
     return true;
 }
