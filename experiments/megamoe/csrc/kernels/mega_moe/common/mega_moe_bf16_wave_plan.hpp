@@ -69,15 +69,38 @@ MEGA_MOE_WAVE_HOST_DEVICE constexpr bool UseGmm2Lag(uint32_t sourceRows)
     return sourceRows >= 512;
 }
 
+// Dispatch X and GMM2 output share rows. Interleaved Hp follows those rows;
+// staged Hp must survive the entire GMM1 pass.
+struct ForwardScratch {
+    uint64_t rows, hpRows;
+    uint32_t slotRows;
+    MEGA_MOE_WAVE_HOST_DEVICE constexpr ForwardScratch(uint64_t capacity, uint32_t groups, uint32_t schedule)
+        : rows(MegaMoeImpl::WaveScratchRows(capacity, groups * kGroupRows)),
+          hpRows(schedule ? capacity : rows),
+          slotRows(rows < capacity ? groups * kGroupRows : 0U)
+    {
+    }
+    MEGA_MOE_WAVE_HOST_DEVICE constexpr uint64_t Row(uint32_t wave, uint64_t first, uint64_t packed) const
+    {
+        return MegaMoeImpl::WaveScratchRow(wave, first, packed, slotRows);
+    }
+    MEGA_MOE_WAVE_HOST_DEVICE constexpr uint64_t HpRow(uint64_t physical, uint64_t logical) const
+    {
+        return hpRows == rows ? physical : logical;
+    }
+};
+
 // Per-slice Hp/Dispatch/output counters followed by per-core issued words.
 struct ReadyLayout {
-    uint64_t words, dispatchOffset, downReadyOffset, issuedOffset, outputOffset;
-    MEGA_MOE_WAVE_HOST_DEVICE constexpr ReadyLayout(uint64_t capacity, uint64_t experts)
+    uint64_t words, dispatchOffset, downReadyOffset, issuedOffset, releaseOffset, inputDoneOffset, outputOffset;
+    MEGA_MOE_WAVE_HOST_DEVICE constexpr ReadyLayout(uint64_t capacity, uint64_t experts, bool ring = false)
         : words((capacity + kGmm1Rows - 1U) / kGmm1Rows + experts),
           dispatchOffset((words * sizeof(int32_t) + 127U) / 128U * 128U),
           downReadyOffset(dispatchOffset + (words * sizeof(int32_t) + 127U) / 128U * 128U),
           issuedOffset(downReadyOffset + (words * sizeof(int32_t) + 127U) / 128U * 128U),
-          outputOffset((issuedOffset + kMaxCores * 16U * sizeof(int32_t) + 511U) / 512U * 512U)
+          releaseOffset(issuedOffset + kMaxCores * 16U * sizeof(int32_t)),
+          inputDoneOffset(releaseOffset + (ring ? MegaMoeImpl::kWaveScratchSlots * 16U * sizeof(int32_t) : 0U)),
+          outputOffset((inputDoneOffset + (ring ? sizeof(int32_t) : 0U) + 511U) / 512U * 512U)
     {
     }
 };
@@ -103,11 +126,12 @@ struct ForwardWorkspaceLayout {
     uint64_t readyOffset, rowsInY, weightOffset, rawGateOffset, rawUpOffset, totalBytes;
     MEGA_MOE_WAVE_HOST_DEVICE constexpr ForwardWorkspaceLayout(uint64_t baseBytes, uint64_t capacity, uint64_t experts,
                                                                uint64_t hidden, uint32_t weightBytes,
-                                                               uint64_t sourceRows, uint32_t groups)
+                                                               uint64_t sourceRows, uint32_t groups,
+                                                               uint64_t scratchRows)
         : readyOffset((baseBytes + 511U) / 512U * 512U),
-          rowsInY(OutputRowsInY(capacity, sourceRows, groups)),
-          weightOffset(readyOffset + ReadyLayout(capacity, experts).outputOffset +
-                       (capacity - rowsInY) * hidden * sizeof(uint16_t)),
+          rowsInY(OutputRowsInY(scratchRows, sourceRows, groups)),
+          weightOffset(readyOffset + ReadyLayout(capacity, experts, scratchRows < capacity).outputOffset +
+                       (scratchRows - rowsInY) * hidden * sizeof(uint16_t)),
           rawGateOffset(weightOffset + (capacity * weightBytes + 511U) / 512U * 512U),
           rawUpOffset(rawGateOffset + RawTileOffset(kMaxCores, 0) * sizeof(uint16_t)),
           totalBytes(rawUpOffset + (rawUpOffset - rawGateOffset))

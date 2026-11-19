@@ -209,13 +209,13 @@ public:
     }
 
     __aicore__ inline bool Down(const Bf16Params& params, const MegaMoeBF16Training::Wave::Slice& slice, GM_ADDR output,
-                                __gm__ int32_t* hpFlags, uint32_t& startBlock)
+                                uint64_t scratchRow, __gm__ int32_t* hpFlags, uint32_t& startBlock)
     {
         const uint32_t h = params.tilingData->k, f = params.tilingData->n / 2U;
         const uint32_t cores = AscendC::GetBlockNum();
         const uint32_t core = AscendC::GetBlockIdx() / AscendC::GetTaskRation();
         AscendC::GlobalTensor<bfloat16_t> a, b, c;
-        a.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(params.workspaceInfo.ptrA2) + slice.packed * f);
+        a.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(params.workspaceInfo.ptrA2) + scratchRow * f);
         b.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(params.b2GmAddr) +
                           static_cast<uint64_t>(slice.expert) * f * h);
         c.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(output));

@@ -268,10 +268,12 @@ void InitializeMegaMoeBF16Context(torch::Tensor context, void* symmetric_buffer,
 uint64_t ForwardTransientWorkspaceBytes(const MegaMoeBf16TilingData& tiling)
 {
     using namespace MegaMoeBF16Training;
-    const ForwardTransientWorkspaceLayout transient(tiling.n, tiling.expertPerRank, tiling.maxOutputSize);
+    const Wave::ForwardScratch scratch(tiling.maxOutputSize, tiling.mGroupsPerWave, tiling.forwardSchedule);
+    const ForwardTransientWorkspaceLayout transient(tiling.n, tiling.expertPerRank, scratch.hpRows);
     const auto expertWeightBytes = tiling.routeWeightBeforeGmm2 ? TopkWeightBytes(tiling.topkWeightType) : 0U;
     const Wave::ForwardWorkspaceLayout layout(transient.totalBytes, tiling.maxOutputSize, tiling.expertPerRank,
-                                              tiling.k, expertWeightBytes, tiling.m, tiling.mGroupsPerWave);
+                                              tiling.k, expertWeightBytes, tiling.m, tiling.mGroupsPerWave,
+                                              scratch.rows);
     const uint64_t bytes = layout.totalBytes;
     TORCH_CHECK(bytes <= uint64_t(std::numeric_limits<int64_t>::max()), "forward workspace exceeds int64 capacity");
     return bytes;

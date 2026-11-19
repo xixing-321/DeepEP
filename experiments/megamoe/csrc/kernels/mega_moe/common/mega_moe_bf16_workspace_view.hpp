@@ -13,6 +13,7 @@
 #include "op_common/op_kernel/math_util.h"
 #include "common/mega_moe_bf16_tiling.hpp"
 #include "common/mega_moe_bf16_layout.hpp"
+#include "common/mega_moe_bf16_wave_plan.hpp"
 #include "common/mega_moe_workspace_backward.hpp"
 
 namespace {
@@ -179,8 +180,10 @@ struct ForwardWorkspaceInfo {
             tilingData->k, tilingData->maxOutputSize, MegaMoeBF16Training::TopkWeightBytes(tilingData->topkWeightType));
         ptrA = dispatchOutputBase;
         ptrDispatchedTopkWeights = dispatchOutputBase ? dispatchOutputBase + dispatchLayout.topkWeightsOffset : nullptr;
+        const MegaMoeBF16Training::Wave::ForwardScratch scratch(tilingData->maxOutputSize, tilingData->mGroupsPerWave,
+                                                                tilingData->forwardSchedule);
         const MegaMoeBF16Training::ForwardTransientWorkspaceLayout transientLayout(
-            tilingData->n, tilingData->expertPerRank, tilingData->maxOutputSize);
+            tilingData->n, tilingData->expertPerRank, scratch.hpRows);
         ptrA2 = transientWorkspaceBase + transientLayout.ptrA2Offset;
         ptrFlagSwiGluToGmm2 = transientWorkspaceBase + transientLayout.swigluToGmm2FlagOffset;
         ptrAScale = ptrA2;

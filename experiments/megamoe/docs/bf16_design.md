@@ -32,6 +32,13 @@ BF16 与量化直发路径共用按专家提取 route 的逻辑，同一专家�
 
 ## 状态与生命周期
 
+一个槽可容纳一个 Wave 的全部专家切片。接收容量超过 8 个 Wave 时，Dispatch 的临时 X 和 GMM2 输出共用 8 个循环槽；可借用的 Y 空间计入这批槽。路由表、供前向末尾转序的 p 和供反向使用的张量按逻辑行寻址。
+
+| 调度 | Hp 的容量 | 槽何时可覆盖 |
+|---|---|---|
+| 模式 0（交错） | 与临时 X 相同的行数，独立存放 | 同槽上一轮的所有 Combine 发送结束后，Dispatch 才写下一轮。 |
+| 模式 1（分阶段） | 完整接收容量 | GMM1 阶段，上一轮的整行 Hp 就绪后即可覆盖 X。所有 SwiGLU tile 完成后，GMM2 接管这些槽，每次回绕等待上轮 Combine 发送结束。 |
+
 SHMEM 窗口由根 Runtime 持有。BF16 Plan 在 prepare 或首次调用时准备前向临时 workspace，后续前向可以复用。训练中，每个需要反向的 microbatch 由自己的 autograd context 持有 counts 和反向状态。
 
 `save_dispatched_x=True`（默认）时，前向保存规范行序的 X 和 p。`save_dispatched_x=False` 时，前向记录本次调用的 `dispatch_rebuilder`，反向通过它取得相同行序的 X/p。两种来源都可用于 `bf16`、`mxfp8` 和 `none` 三种 GMM1 保存模式。

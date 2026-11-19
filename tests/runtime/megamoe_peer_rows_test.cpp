@@ -76,9 +76,9 @@ int main()
     static_assert(Quant::totalBytesWithClipMasks + 256U * sizeof(float) <= 248U * 1024U);
     for (uint64_t capacity : {0ULL, 1ULL, 255ULL, 256ULL, 257ULL, 24576ULL}) {
         const MegaMoeBF16Training::ForwardTransientWorkspaceLayout transient(6144, 4, capacity);
-        const ForwardWorkspaceLayout bf16(transient.totalBytes, capacity, 4, 7168, 2, 4096, 3);
-        const ForwardWorkspaceLayout other(transient.totalBytes, capacity, 4, 7168, 4, 4096, 3);
-        const ForwardWorkspaceLayout dedicated(transient.totalBytes, capacity, 4, 7168, 2, 4096, 0);
+        const ForwardWorkspaceLayout bf16(transient.totalBytes, capacity, 4, 7168, 2, 4096, 3, capacity);
+        const ForwardWorkspaceLayout other(transient.totalBytes, capacity, 4, 7168, 4, 4096, 3, capacity);
+        const ForwardWorkspaceLayout dedicated(transient.totalBytes, capacity, 4, 7168, 2, 4096, 0, capacity);
         assert(dedicated.readyOffset == bf16.readyOffset);
         assert(dedicated.totalBytes - bf16.totalBytes == bf16.rowsInY * 7168U * sizeof(uint16_t));
         assert(bf16.rawGateOffset - bf16.weightOffset == (capacity * 2 + 511) / 512 * 512);
@@ -88,6 +88,14 @@ int main()
         assert(other.totalBytes - other.rawGateOffset == bf16.totalBytes - bf16.rawGateOffset);
     }
     static_assert(OutputRowsInY(24576, 4096, 3) == 3328);
+    constexpr ForwardScratch interleaved(24576, 3, 0), staged(24576, 3, 1), dense(4096, 3, 1);
+    static_assert(ForwardScratch(6144, 3, 0).slotRows == 0 && ForwardScratch(6144, 3, 1).slotRows == 0);
+    static_assert(ForwardScratch(6145, 3, 0).hpRows == 6144 && ForwardScratch(6145, 3, 1).hpRows == 6145);
+    static_assert(interleaved.rows == 6144 && interleaved.hpRows == 6144);
+    static_assert(staged.rows == 6144 && staged.hpRows == 24576);
+    static_assert(interleaved.Row(8, 17393, 17404) == 11 && staged.Row(8, 17393, 17404) == 11);
+    static_assert(interleaved.HpRow(11, 17404) == 11 && staged.HpRow(11, 17404) == 17404);
+    static_assert(dense.rows == 4096 && dense.Row(9, 450, 453) == 453);
     for (uint32_t sourceRows : {1U, 128U, 768U, 769U, 4096U}) {
         for (uint32_t capacity : {0U, 1U, 767U, 768U, 4096U, 24576U}) {
             constexpr uint32_t groups = 3;

@@ -95,7 +95,7 @@ private:
     __aicore__ inline bool NextDownCompletion(MegaMoeBF16Training::Wave::Cursor& cursor, uint32_t& groups,
                                               uint32_t& startBlock, WaveSlice& slice);
     __aicore__ inline bool PollDownCompletion();
-    __aicore__ inline void CombineSlice(const WaveSlice& slice);
+    __aicore__ inline void CombineSlice(const WaveSlice& slice, uint64_t scratchRow);
     template <uint32_t SaveMode, bool TransW>
     __aicore__ inline void ProcessWave(TPipe& firstPipe);
     __aicore__ inline void FinishForward(int64_t oriOverflowMode);
@@ -201,6 +201,32 @@ private:
     __gm__ int32_t* waveDispatchReady_{nullptr};
     __gm__ int32_t* waveDownReady_{nullptr};
     __gm__ int32_t* waveIssued_{nullptr};
+    MegaMoeBF16Training::Wave::ForwardScratch scratch_{0, 0, 0};
+    __gm__ int32_t* waveReleased_{nullptr};
+    __gm__ int32_t* stagedInputDone_{nullptr};
+    __aicore__ inline bool OutputSlotAvailable(uint32_t wave) const
+    {
+        using namespace MegaMoeBF16Training::Wave;
+        return !scratch_.slotRows || wave < MegaMoeImpl::kWaveScratchSlots ||
+               ReadGmByPassDCache(waveReleased_ + (wave % MegaMoeImpl::kWaveScratchSlots) * INT_CACHELINE) >=
+                   static_cast<int32_t>((wave / MegaMoeImpl::kWaveScratchSlots) * blockNum_);
+    }
+    __aicore__ inline bool InputsConsumed(const WaveRange& range) const
+    {
+        using namespace MegaMoeBF16Training::Wave;
+        const WaveCounts counts{waveExpertRows_};
+        auto cursor = range.begin;
+        auto groups = waveGroups_;
+        WaveSlice slice{};
+        const auto columns = (params_.tilingData->n / 2U + kPairedColumns - 1U) / kPairedColumns;
+        auto* flags = reinterpret_cast<__gm__ int32_t*>(waveReadyBase_);
+        while (Next(cursor, groups, expertPerRank_, maxOutputSize_, counts, slice)) {
+            const auto first = ReadySlot(slice.packed - slice.row, slice.expert, slice.row);
+            for (uint32_t m = 0; m < slice.rows; m += kGroupRows)
+                if (ReadGmByPassDCache(flags + first + m / kGroupRows) < static_cast<int32_t>(columns)) return false;
+        }
+        return true;
+    }
     GM_ADDR waveOutputBase_{nullptr};
     GM_ADDR waveOutputInY_{nullptr};
     uint64_t outputRowsInY_{0};
@@ -285,15 +311,19 @@ template <typename TopkWeightT>
 __aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::InitForwardWorkspace(GM_ADDR workspace)
 {
     using namespace MegaMoeBF16Training;
-    const ForwardTransientWorkspaceLayout transient(params_.tilingData->n, expertPerRank_, maxOutputSize_);
-    const Wave::ReadyLayout ready(maxOutputSize_, expertPerRank_);
+    const auto groups = params_.tilingData->mGroupsPerWave;
+    scratch_ = {maxOutputSize_, groups, params_.tilingData->forwardSchedule};
+    const ForwardTransientWorkspaceLayout transient(params_.tilingData->n, expertPerRank_, scratch_.hpRows);
+    const Wave::ReadyLayout ready(maxOutputSize_, expertPerRank_, scratch_.slotRows != 0);
     const Wave::ForwardWorkspaceLayout layout(transient.totalBytes, maxOutputSize_, expertPerRank_, k_,
                                               params_.tilingData->routeWeightBeforeGmm2 ? sizeof(TopkWeightT) : 0U, m_,
-                                              params_.tilingData->mGroupsPerWave);
+                                              groups, scratch_.rows);
     waveReadyBase_ = workspace + layout.readyOffset;
     waveDispatchReady_ = reinterpret_cast<__gm__ int32_t*>(waveReadyBase_ + ready.dispatchOffset);
     waveDownReady_ = reinterpret_cast<__gm__ int32_t*>(waveReadyBase_ + ready.downReadyOffset);
     waveIssued_ = reinterpret_cast<__gm__ int32_t*>(waveReadyBase_ + ready.issuedOffset);
+    stagedInputDone_ = reinterpret_cast<__gm__ int32_t*>(waveReadyBase_ + ready.inputDoneOffset);
+    waveReleased_ = reinterpret_cast<__gm__ int32_t*>(waveReadyBase_ + ready.releaseOffset);
     waveOutputBase_ = waveReadyBase_ + ready.outputOffset;
     outputRowsInY_ = layout.rowsInY;
     const auto alignedY = (reinterpret_cast<uint64_t>(params_.y2GmAddr) + 511U) & ~uint64_t(511U);
@@ -322,7 +352,7 @@ template <typename TopkWeightT>
 __aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::ResetWorkSpaceFlagList()
 {
     if constexpr (g_coreType == AIV) {
-        const MegaMoeBF16Training::Wave::ReadyLayout ready(maxOutputSize_, expertPerRank_);
+        const MegaMoeBF16Training::Wave::ReadyLayout ready(maxOutputSize_, expertPerRank_, scratch_.slotRows != 0);
         auto* words = reinterpret_cast<__gm__ int32_t*>(waveReadyBase_);
         for (uint64_t word = aivCoreIdx_; word < ready.outputOffset / sizeof(int32_t); word += blockAivNum_)
             WriteGmByPassDCache(words + word, 0);
@@ -940,7 +970,8 @@ __aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::DispatchWave(const WaveR
                 {waveCumsum_}, {waveSourcePrefix_}, worldSize_, expertPerRank_, rankId_};
             layout.ForEachSpan(
                 slice, begin, end, dispatchPeerLimits_, [&](const PeerTransfer& t, uint64_t packed) __aicore__ {
-                    CopyWavePayload(t.sourceRank, layout.SourceRow(slice, t), SliceOutput(slice.packed),
+                    CopyWavePayload(t.sourceRank, layout.SourceRow(slice, t),
+                                    SliceOutput(scratch_.Row(range.begin.wave, range.begin.packed, slice.packed)),
                                     packed - slice.packed, packed,
                                     params_.workspaceInfo.ptrA ? layout.SavedRow(slice, t) : 0, t.rowCount);
                 });
@@ -965,7 +996,8 @@ __aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::Gmm1Wave(
     WaveSlice slice{};
     while (Next(cursor, groups, expertPerRank_, maxOutputSize_, counts, slice)) {
         auto* ready = waveDispatchReady_ + ReadySlot(slice.packed - slice.row, slice.expert, slice.row);
-        matmul.GateUp(params_, slice, SliceOutput(slice.packed), ready, startBlock, sequence);
+        matmul.GateUp(params_, slice, SliceOutput(scratch_.Row(range.begin.wave, range.begin.packed, slice.packed)),
+                      ready, startBlock, sequence);
     }
 }
 
@@ -982,8 +1014,10 @@ __aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::SwigluWave(const WaveRan
     uint32_t groups = waveGroups_;
     WaveSlice slice{};
     while (Next(cursor, groups, expertPerRank_, maxOutputSize_, counts, slice)) {
-        epilogue.UpdateGlobalAddr({static_cast<int64_t>(slice.packed * f), 0, slice.expert,
-                                   static_cast<int64_t>(slice.packed), 0,
+        const auto scratchRow = scratch_.Row(range.begin.wave, range.begin.packed, slice.packed);
+        const auto hpRow = scratch_.HpRow(scratchRow, slice.packed);
+        epilogue.UpdateGlobalAddr({static_cast<int64_t>(hpRow * f), 0, slice.expert, static_cast<int64_t>(slice.packed),
+                                   0,
                                    static_cast<int64_t>(ReadySlot(slice.packed - slice.row, slice.expert, slice.row))});
         ForEachGateUpTile<WaveBlockScheduler>(
             slice.rows, f, k_, blockIdx_, blockNum_, startBlock,
@@ -1031,7 +1065,9 @@ __aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::Gmm2Wave(
     while (Next(cursor, groups, expertPerRank_, maxOutputSize_, counts, slice)) {
         auto* hp = reinterpret_cast<__gm__ int32_t*>(waveReadyBase_) +
                    ReadySlot(slice.packed - slice.row, slice.expert, slice.row);
-        const bool owns = matmul.Down(params_, slice, SliceOutput(slice.packed), hp, startBlock);
+        const auto scratchRow = scratch_.Row(range.begin.wave, range.begin.packed, slice.packed);
+        const auto hpRow = scratch_.HpRow(scratchRow, slice.packed);
+        const bool owns = matmul.Down(params_, slice, SliceOutput(scratchRow), hpRow, hp, startBlock);
         if (owns) Gmm2AivCompletion::Submit(waveIssued_ + blockIdx_ * INT_CACHELINE, ++issued);
     }
 }
@@ -1076,7 +1112,7 @@ __aicore__ inline bool MegaMoeBF16Forward<TopkWeightT>::PollDownCompletion()
 }
 
 template <typename TopkWeightT>
-__aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::CombineSlice(const WaveSlice& slice)
+__aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::CombineSlice(const WaveSlice& slice, uint64_t scratchRow)
 {
     SyncFunc<HardEvent::S_MTE2>();
     const auto owned = GetBalancedTokenRange(slice.rows, blockIdx_, blockNum_);
@@ -1089,7 +1125,7 @@ __aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::CombineSlice(const WaveS
                                           {TPosition::VECIN, rowElements * uint32_t(sizeof(bfloat16_t)), rowElements}};
     using namespace MegaMoeBF16Training::Wave;
     const PeerRowLayout<UbPeerPrefix> layout{{waveCumsum_}, {waveSourcePrefix_}, worldSize_, expertPerRank_, rankId_};
-    auto* sliceOutput = reinterpret_cast<__gm__ bfloat16_t*>(SliceOutput(slice.packed));
+    auto* sliceOutput = reinterpret_cast<__gm__ bfloat16_t*>(SliceOutput(scratchRow));
     layout.ForEachSpan(
         slice, begin, end, combinePeerLimits_, [&](const PeerTransfer& t, uint64_t packedRow) __aicore__ {
             const uint32_t source = t.sourceRank, rows = t.rowCount;
@@ -1188,7 +1224,10 @@ __aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::ProcessWave(TPipe& first
             uint32_t combineGroups = waveGroups_;
             WaveSlice combine{};
             bool hasCombine = NextWaveSlice(combineCursor, combineGroups, combine);
+            uint64_t combineFirstRow = combine.packed;
             WaveRange dispatch = first;
+            WaveRange priorInput = first;
+            const bool stagedRing = scratch_.slotRows && params_.tilingData->forwardSchedule == 1U;
             for (uint32_t i = 0; i < 2 && dispatch.valid; ++i) {
                 DispatchWave(dispatch);
                 dispatch = NextWaveRange(dispatch.end);
@@ -1201,12 +1240,27 @@ __aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::ProcessWave(TPipe& first
                     ReadGmByPassDCache(waveDownReady_ +
                                        ReadySlot(combine.packed - combine.row, combine.expert, combine.row)) >=
                         GetGmm2ProducerCount(GetGmm2SliceTiles<kGmm2Rows, kTileColumns>(combine.rows, k_), blockNum_);
-                if (ready && ((params_.tilingData->forwardSchedule == 0U && preferCombine) || !dispatch.valid)) {
-                    CombineSlice(combine);
+                const auto dispatchWave = dispatch.begin.wave;
+                const bool reuseInput = stagedRing && dispatchWave >= MegaMoeImpl::kWaveScratchSlots;
+                const bool canDispatch =
+                    dispatch.valid && (reuseInput ? InputsConsumed(priorInput) : OutputSlotAvailable(dispatchWave));
+                if (ready && ((params_.tilingData->forwardSchedule == 0U && preferCombine) || !canDispatch)) {
+                    const auto sent = combineCursor.wave;
+                    CombineSlice(combine, scratch_.Row(sent, combineFirstRow, combine.packed));
                     hasCombine = NextWaveSlice(combineCursor, combineGroups, combine);
+                    if (!hasCombine || sent != combineCursor.wave) {
+                        combineFirstRow = combine.packed;
+                        if (scratch_.slotRows && waveCount_ - sent > MegaMoeImpl::kWaveScratchSlots) {
+                            // Each sender retires its last DMA before Dispatch can overwrite this slot.
+                            SyncFunc<HardEvent::MTE3_S>();
+                            AtomicAdd(waveReleased_ + (sent % MegaMoeImpl::kWaveScratchSlots) * INT_CACHELINE,
+                                      int32_t(1));
+                        }
+                    }
                     preferCombine = false;
                     progressed = true;
-                } else if (dispatch.valid) {
+                } else if (canDispatch) {
+                    if (reuseInput) priorInput = NextWaveRange(priorInput.end);
                     DispatchWave(dispatch);
                     dispatch = NextWaveRange(dispatch.end);
                     preferCombine = true;
@@ -1243,6 +1297,11 @@ __aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::ProcessWave(TPipe& first
                 SwigluWave<SaveMode>(current, epilogue, startBlock, sequence);
                 current = NextWaveRange(current.end);
             }
+            if (scratch_.slotRows && params_.tilingData->forwardSchedule == 1U) {
+                // All Hp tiles live in GM. GMM2 can now take ownership of the Dispatch slots.
+                SyncFunc<HardEvent::MTE3_S>();
+                AtomicAdd(stagedInputDone_, int32_t(1));
+            }
         }
     } else if constexpr (g_coreType == AscendC::AIC) {
         Matmul matmul;
@@ -1265,8 +1324,14 @@ __aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::ProcessWave(TPipe& first
             current = NextWaveRange(current.end);
         }
         if (staged) {
+            if (scratch_.slotRows) {
+                while (ReadGmByPassDCache(stagedInputDone_) < static_cast<int32_t>(blockNum_)) {
+                }
+            }
             current = first;
             while (current.valid) {
+                while (!OutputSlotAvailable(current.begin.wave)) {
+                }
                 Gmm2Wave<TransW>(current, matmul, downStart, issued);
                 current = NextWaveRange(current.end);
             }
