@@ -452,6 +452,24 @@ def test_store_group_public_configuration_and_prepare_without_process_group(back
     ]
 
 
+def test_store_group_ep256_with_eight_bf16_experts_per_rank(backend, monkeypatch):
+    group = api.StoreGroup(None, 255, 256, prefix="ep256", bf16=True)
+    monkeypatch.setattr(group, "all_gather", lambda value, stage: [value] * group.size())
+    backend.ext.bf16_enabled = True
+    backend.ext.bf16_buffer_size = Mock(return_value=2 << 20)
+    options = dict(mma_type="bf16xbf16", need_grad=True, max_recv_tokens=128)
+    with pytest.raises(ValueError, match="num_experts"):
+        api.SymmBuffer(group, 256 * 9, 17, 2, 1024, 256, **options)
+    for mma_type in ("fp8xfp4", "fp8xfp8"):
+        with pytest.raises(ValueError, match="world_size"):
+            api.SymmBuffer(group, 256 * 8, 17, 2, 1024, 256, mma_type=mma_type)
+    buf = api.SymmBuffer(group, 256 * 8, 17, 2, 1024, 256, **options)
+    try:
+        backend.ext.bf16_buffer_size.assert_called_once_with(17, 1024, 256, 2, 256, 8, 128)
+    finally:
+        buf.destroy()
+
+
 def test_non_finite_route_weights_and_bad_capacity_fail_before_launch(backend):
     backend.buffer.topk_weights.data[2, 0] = np.nan
     with pytest.raises(ValueError, match="token=2.*finite"):
