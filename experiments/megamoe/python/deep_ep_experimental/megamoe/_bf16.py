@@ -45,10 +45,9 @@ def validate_buffer_inputs(b, bs):
         raise ValueError("topk_weights must be bfloat16 or float32")
 
 
-def prepare(b, bs, limit, save_type):
+def prepare_plan(b, bs, limit, save_type):
     from .api import _extension
 
-    validate_buffer_inputs(b, bs)
     mode = b.gmm1_save_type if save_type is None else save_type
     if not b.need_grad:
         mode = "none"
@@ -135,8 +134,6 @@ def run(y, w1, w2, b, shared_w1, shared_w2, stats, activation, clamp, fast_math)
     if gradients and not b.need_grad:
         raise ValueError("Use a SymmBuffer with need_grad=True for differentiable BF16 calls")
     mode = b.gmm1_save_type if gradients else "none"
-    if mode not in ("bf16", "mxfp8", "none"):
-        raise ValueError("gmm1_save_type must be bf16, mxfp8 or none")
     config = Call(b.max_recv_tokens, limit, mode)
     with b._lock:
         runtime = b._runtime
@@ -145,7 +142,7 @@ def run(y, w1, w2, b, shared_w1, shared_w2, stats, activation, clamp, fast_math)
         caller = npu_api().current_stream(runtime.device)
         runtime.stream.wait_stream(caller)
         with npu_api().stream(runtime.stream):
-            plan = b._prepare(bs, limit, mode)
+            plan = prepare_plan(b, bs, limit, mode)
             if gradients:
                 result_y, counts = BF16Function.apply(b, plan, config, x, ids, p, w1, w2, y)
             else:

@@ -144,6 +144,9 @@ def test_component_switches_preserve_python_packages(tmp_path):
         with zipfile.ZipFile(archive_path) as archive:
             names = archive.namelist()
             assert names.count("deep_ep_experimental/__init__.py") == int(megamoe or ep_gmm_fused)
+            for family in ("w4a8", "bf16"):
+                timer_parser = f"deep_ep_experimental/megamoe/timer/{family}/trace_parser.py"
+                assert (timer_parser in names) is megamoe
             for component, present, module in (
                 ("megamoe", megamoe, "api.py"),
                 ("ep_gmm_fused", ep_gmm_fused, "ops.py"),

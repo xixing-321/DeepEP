@@ -133,23 +133,6 @@ private:
     template <bool TransW>
     __aicore__ inline void GMM2DWPhase();
 
-    __aicore__ inline void TilingByCore(int32_t totalLen, int32_t& coreLen, int32_t& coreOffset,
-                                        int32_t align = ALIGN_32)
-    {
-        int32_t coreIdx = GetBlockIdx();
-        int32_t coreNum = GetBlockNum() * 2;
-        int32_t lenPerCore = Ops::Base::CeilDiv(static_cast<uint32_t>(totalLen), static_cast<uint32_t>(coreNum));
-        int32_t lenPerCoreAlign = Ops::Base::CeilAlign(static_cast<uint32_t>(lenPerCore), static_cast<uint32_t>(align));
-        coreLen = lenPerCoreAlign;
-        coreOffset = coreIdx * lenPerCoreAlign;
-        if (coreOffset + coreLen >= totalLen) {
-            coreLen = totalLen - coreOffset;
-        }
-        if (coreOffset >= totalLen) {
-            coreLen = 0;
-        }
-    }
-
     __aicore__ inline int64_t TokenPerExpertLayout(int64_t dim0, int64_t dim1, int64_t dim2)
     {
         return dim0 * perRankStridesInTokenPerExpert_ + dim1 * expertPerRank_ + dim2;
@@ -391,7 +374,7 @@ __aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::GatherRoutes()
         return;
     }
     int32_t coreLen, coreOffset;
-    TilingByCore(static_cast<int32_t>(m_) * static_cast<int32_t>(topK_), coreLen, coreOffset, 1);
+    MegaMoeImpl::TilingByCore(static_cast<int32_t>(m_) * static_cast<int32_t>(topK_), coreLen, coreOffset, 1);
     GlobalTensor<int32_t> expandedRowIdx;
     expandedRowIdx.SetGlobalBuffer((__gm__ int32_t*)params_.workspaceInfo.expandedRowIdx);
     GlobalTensor<QuantOutType> gradY;
@@ -1110,7 +1093,7 @@ __aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::UnpermuteBackward()
         return;
     }
     int32_t coreLen, coreOffset;
-    TilingByCore(m_, coreLen, coreOffset, 1);
+    MegaMoeImpl::TilingByCore(m_, coreLen, coreOffset, 1);
     GlobalTensor<int32_t> expandedRowIdxGather;
     expandedRowIdxGather.SetGlobalBuffer((__gm__ int32_t*)params_.workspaceInfo.expandedRowIdxGather);
     GlobalTensor<QuantOutType> ptrD;
@@ -1365,7 +1348,7 @@ __aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::UnpermuteTopkGrad()
     }
     int32_t coreLen = 0;
     int32_t coreOffset = 0;
-    TilingByCore(static_cast<int32_t>(m_ * topK_), coreLen, coreOffset, 1);
+    MegaMoeImpl::TilingByCore(static_cast<int32_t>(m_ * topK_), coreLen, coreOffset, 1);
     __gm__ int32_t* routeToPacked = reinterpret_cast<__gm__ int32_t*>(params_.workspaceInfo.expandedRowIdxGather);
     using GradientBits = std::conditional_t<std::is_same_v<TopkWeightT, float>, uint32_t, uint16_t>;
     __gm__ GradientBits* routedDp = reinterpret_cast<__gm__ GradientBits*>(params_.peermemInfo.ptrD);

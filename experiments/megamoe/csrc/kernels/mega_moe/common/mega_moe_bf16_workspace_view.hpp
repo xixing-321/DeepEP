@@ -31,9 +31,6 @@ constexpr uint64_t IDX_B2_OFFSET = 8UL;
 constexpr uint64_t IDX_B2_SCALE_OFFSET = 9UL;
 constexpr uint64_t IDX_Y2_OFFSET = 10UL;
 constexpr uint64_t IDX_M_OFFSET = 11UL;
-constexpr uint8_t SYNC_AIC_AIV_MODE = 4;
-constexpr uint16_t AIC_SYNC_AIV_FLAG = 4;
-constexpr uint16_t AIV_SYNC_AIC_FLAG = 6;
 constexpr uint16_t FLAG_ID_MAX = 16;
 // GMM1(dispatch/swiglu)阶段结束、GMM2开始前，AIV1->AIC的一次性同步：
 // 用一个独立的flag槽位(避开combine使用的pingpong 0/1)，值2 => AIV1本地槽8，

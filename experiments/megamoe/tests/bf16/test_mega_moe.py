@@ -17,7 +17,6 @@ import os
 from pathlib import Path
 import re
 import signal
-import statistics
 import struct
 import subprocess
 import sys
@@ -26,6 +25,9 @@ import time
 import traceback
 from urllib.parse import urlsplit
 from uuid import uuid4
+
+from accuracy import check_accuracy, combine_baseline, prepare_references
+from perf_compare import fused_forward, measure, performance_summary, summarize_event_rounds
 
 
 DATA_PROFILES = (
@@ -57,6 +59,10 @@ def parse_devices(value):
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("devices", type=parse_devices, nargs="?", default=None)
+    parser.add_argument("--bitwise-bigop", action="store_true", help="Require bitwise equality to uncompressed BigOp")
+    parser.add_argument(
+        "--compare-forward", action="store_true", help="Compare MegaMoE, BigOp and DeepEP MC forward Event/kernel time"
+    )
     parser.add_argument(
         "--atk", action="store_true", help="Explicit ATK request; all precision runs use ATK by default"
     )
@@ -153,6 +159,20 @@ def parse_args(argv=None):
     parser.add_argument("--shmem-ip-port", default="tcp://127.0.0.1:29862")
     parser.add_argument("--output", type=Path, default=None, help="New report directory")
     args = parser.parse_args(argv)
+    if args.bitwise_bigop and args.skip == "precision":
+        parser.error("--bitwise-bigop requires a precision run")
+    if args.compare_forward and (
+        args.suite
+        or args.skip
+        or args.bitwise_bigop
+        or args.atk
+        or args.timer
+        or args.baseline == "off"
+        or args.atk_ratios
+        or args.diagnose_mxfp8
+        or "RANK" in os.environ
+    ):
+        parser.error("--compare-forward is a standalone three-way forward benchmark; run once with python")
     # Keep earlier standalone commands usable while publishing only F in the
     # new manifest/report schema. N denotes GMM1's full Gate+Up width, 2*F.
     if args.gmm_n is not None:
@@ -174,7 +194,7 @@ def parse_args(argv=None):
         parser.error("Internal suite workers require --output and persistent execution")
     if args.atk and args.skip == "precision":
         parser.error("--atk requires precision; use --skip performance for accuracy only")
-    args.atk = args.skip != "precision"
+    args.atk = args.skip != "precision" and not args.compare_forward
     if args.diagnose_mxfp8 and args.skip != "performance":
         parser.error("--diagnose-mxfp8 requires --skip performance")
     if args.atk_ratios is not None and (
@@ -207,6 +227,8 @@ def parse_args(argv=None):
         parse_devices(inherited) if inherited else list(range(int(os.environ.get("LOCAL_WORLD_SIZE", "2"))))
     )
     world = int(os.environ.get("WORLD_SIZE", str(len(args.devices))))
+    if args.compare_forward and world > 8:
+        parser.error("DeepEP MC supports at most 8 ranks")
     if not 2 <= world <= 1024 or not 1 <= args.seq <= 16384 or not 1 <= args.expert_per_rank <= 32:
         parser.error("Requires EP in 2..1024, seq in 1..16384 and local experts in 1..32")
     if args.hidden <= 0 or args.hidden % 256 or args.ffn <= 0 or args.ffn % 256:
@@ -303,6 +325,8 @@ def launch_options(args):
             argv += ["--" + key.replace("_", "-"), str(value)]
     if args.atk:
         argv += ["--atk"]
+    if args.bitwise_bigop:
+        argv += ["--bitwise-bigop"]
     if args.diagnose_mxfp8:
         argv += ["--diagnose-mxfp8"]
     if args.atk_ratios is not None:
@@ -908,376 +932,6 @@ def apply_data_profile(inputs, args, token_start=0):
         inputs["w1"][:, :, 0] = torch.cat((gate, up))
 
 
-def combine_baseline(partial, args, rank, world, device):
-    """Move route values through Gloo, then apply the selected NPU combine."""
-    import torch
-    import torch.distributed as dist
-
-    from npu_baseline import unpermute_routes
-
-    m, h = args.seq, args.hidden
-    for destination in range(world):
-        # Every row/slot has one owning expert. FP32 carries BF16 y/dx and
-        # either BF16 or FP32 dp exactly; no route contributions are combined.
-        buffer = torch.zeros((m, args.topk, 2 * h + 1), dtype=torch.float32, device="cpu")
-        for route in partial["routes"]:
-            mask = route["rows"] // m == destination
-            rows, slots = route["rows"][mask] % m, route["slots"][mask]
-            buffer[rows, slots, :h] = route["y"][mask].float()
-            buffer[rows, slots, h : 2 * h] = route["dx"][mask].float()
-            buffer[rows, slots, -1] = route["dp"][mask].float()
-        dist.reduce(buffer, dst=destination)
-        if rank == destination:
-            ids = partial["ids"][rank * m : (rank + 1) * m]
-            result = unpermute_routes(
-                buffer, ids, device, reference=partial["reference"], topk_weight_dtype=partial["topk_weight_dtype"]
-            )
-    result.update(dw1=partial["dw1"], dw2=partial["dw2"])
-    return result
-
-
-def local_truth(inputs, args, rank):
-    import torch.distributed as dist
-
-    from cpu_reference import run_reference
-
-    result = run_reference(inputs, rank * args.expert_per_rank, args.chunk_rows, args.swiglu_limit)
-    sl = slice(rank * args.seq, (rank + 1) * args.seq)
-    for name in ("y", "dx", "dtopk_weights"):
-        dist.all_reduce(result[name])
-        result[name] = result[name][sl].clone()
-    return result
-
-
-# ---------------------------------------------------------------------------
-# Performance protocol and the small-operator baseline.
-#
-# Ported from ascend_deepep_hkq@f575fc1 test/bigop_fused: test_speed.py owns the
-# three measurement scopes and the per-iteration synchronization, timing.py owns
-# the statistics, golden.py owns the dropless small-operator chain that is timed
-# here as the baseline. Event sampling is independent of the optional
-# diagnostic Timer capture; every
-# sample is one synchronized NPU Event window.
-#
-# The source times its `BigOp.apply(x, moe_layer)` chain, which runs a router
-# before the dispatch. MegaMoE BF16 takes routing ids/weights directly and this
-# package has no router, so both paths here start at permute1: the router cost
-# that is common to both sides in the source stays outside this entry.
-# ---------------------------------------------------------------------------
-
-PEAK_TFLOPS = 432.0  # source comment: Ascend950 BF16 cube peak
-ROOFLINE_TFLOPS = round(PEAK_TFLOPS * 0.95, 1)  # 410.4: the source's derated roofline
-FORWARD_RFK = 6.0  # GMM1 (4) + GMM2 (2) per routed row
-SAVED_MODE_RFK = {"none": 16.0, "bf16": 12.0, "mxfp8": 12.0}
-BASELINE_BUDGET_BYTES = 16 << 30  # packed-route working set the baseline may allocate
-
-
-def event_stats(samples):
-    """Sample list plus the source's mean/median/min/max summary."""
-    return {
-        "samples": list(samples),
-        "median": statistics.median(samples),
-        "mean": statistics.mean(samples),
-        "min": min(samples),
-        "max": max(samples),
-    }
-
-
-def bench_scope(body, prepare, args):
-    """warmup+loops Event windows, synchronized before and after every window.
-
-    The source synchronizes each iteration and rebuilds a forward graph for
-    every backward sample, so queued SHMEM calls never share one workspace.
-    """
-    import torch
-
-    samples = []
-    for iteration in range(args.warmup + args.loops):
-        torch.npu.synchronize()
-        state = prepare() if prepare is not None else None
-        if prepare is not None:
-            torch.npu.synchronize()
-        start, end = torch.npu.Event(enable_timing=True), torch.npu.Event(enable_timing=True)
-        start.record()
-        body(state)
-        end.record()
-        torch.npu.synchronize()
-        if iteration >= args.warmup:
-            samples.append(float(start.elapsed_time(end)))
-    return samples
-
-
-def exchanged_rows(group, value, receive_splits, send_splits):
-    """Blocking all_to_all_single with Megatron's split orientation.
-
-    The source keeps an asynchronous handle only to overlap a shared expert this
-    entry does not have; the blocking form moves the same bytes.
-    """
-    import torch.distributed as dist
-
-    if dist.get_world_size(group) == 1:
-        return value
-    value = value.contiguous()
-    output = value.new_empty([sum(receive_splits), *value.shape[1:]])
-    dist.all_to_all_single(output, value, output_split_sizes=receive_splits, input_split_sizes=send_splits, group=group)
-    return output
-
-
-def reorder_chunks(value, sizes, order, local_experts=None):
-    """Megatron sort_chunks_by_idxs; zero-row chunks keep empty experts valid.
-
-    The source skips permute2/unpermute1 entirely with one local expert, where
-    the reorder is an identity copy; keep that so neither side pays for it.
-    """
-    import torch
-
-    if local_experts == 1:
-        return value
-    chunks = torch.split(value, sizes, dim=0)
-    return torch.cat([chunks[index] for index in order], dim=0)
-
-
-def clip_gate_up(gate, up, limit):
-    """Source clip semantics: Gate one-sided, Up two-sided, disabled for limit<=0."""
-    import torch
-
-    if not 0 < limit < torch.finfo(torch.bfloat16).max:
-        return gate, up
-    return gate.clamp_max(limit), up.clamp(-limit, limit)
-
-
-class BaselinePlan:
-    """Row order, exchange splits, expert counts and weight views of one case."""
-
-    __slots__ = (
-        "group",
-        "tokens",
-        "topk",
-        "hidden",
-        "local_experts",
-        "swiglu_limit",
-        "order",
-        "route_row",
-        "counts",
-        "input_splits",
-        "output_splits",
-        "received_sizes",
-        "return_sizes",
-        "sort_index",
-        "restore_index",
-        "weight1",
-        "weight2",
-        "recompute",
-    )
-
-
-def baseline_plan(ids, w1, w2, group, args, rank, world, mode):
-    """Derive the baseline chain metadata from the shared routing ids.
-
-    Returns ``(plan, None)`` or ``(None, reason)``, so a shape the baseline
-    cannot afford prints why it is absent instead of failing the case. Every
-    value here is built once, outside all Event windows.
-    """
-    import torch
-    import torch.distributed as dist
-
-    local_experts = args.expert_per_rank
-    tokens, topk = (int(size) for size in ids.shape)
-    routes = tokens * topk
-    working_set = routes * (args.hidden + args.ffn) * 2 * 6
-    if working_set > BASELINE_BUDGET_BYTES:
-        return None, (
-            f"packed routes need ~{working_set / 2**30:.1f} GiB, above the "
-            f"{BASELINE_BUDGET_BYTES >> 30} GiB baseline budget"
-        )
-    flat = ids.detach().to(device="cpu", dtype=torch.int64).reshape(-1)
-    experts = world * local_experts
-    gathered = [None] * world
-    dist.all_gather_object(gathered, torch.bincount(flat, minlength=experts).tolist())
-    # Rows rank `source` produces for this rank, split by local expert.
-    sent_to_us = torch.tensor(gathered, dtype=torch.int64)[:, rank * local_experts : (rank + 1) * local_experts]
-    order = torch.argsort(flat, stable=True)
-    plan = BaselinePlan()
-    plan.group = group
-    plan.tokens, plan.topk, plan.hidden = tokens, topk, args.hidden
-    plan.local_experts, plan.swiglu_limit, plan.recompute = local_experts, args.swiglu_limit, mode == "none"
-    plan.order = order.to(ids.device)
-    plan.route_row = (order // topk).to(ids.device)
-    plan.counts = sent_to_us.sum(dim=0).to(ids.device)
-    plan.input_splits = torch.bincount(flat // local_experts, minlength=world).tolist()
-    plan.output_splits = sent_to_us.sum(dim=1).tolist()
-    plan.received_sizes = sent_to_us.reshape(-1).tolist()
-    plan.return_sizes = sent_to_us.T.reshape(-1).tolist()
-    plan.sort_index = torch.arange(experts).reshape(world, local_experts).T.reshape(-1).tolist()
-    plan.restore_index = torch.arange(experts).reshape(local_experts, world).T.reshape(-1).tolist()
-    # Megatron stores [H, 2F*E] and [F*E, H]; the operator takes per-expert
-    # tensors, so read both once here rather than copying inside a window.
-    plan.weight1 = w1.detach().transpose(1, 2).contiguous()
-    plan.weight2 = w2.detach().transpose(1, 2).contiguous()
-    if sum(plan.received_sizes) != sum(plan.output_splits) or int(plan.counts.sum()) != sum(plan.received_sizes):
-        return None, "inconsistent dispatch splits"
-    return plan, None
-
-
-_BASELINE_CHAIN = None
-_HCCL = {}
-
-
-def device_group():
-    """One reusable HCCL subgroup for the baseline; the default group is Gloo.
-
-    MegaMoE BF16 communicates inside its own runtime, so the baseline
-    chain needs a Torch-level device collective. Creation is cached: a suite
-    must not accumulate one communicator per case.
-    """
-    import torch.distributed as dist
-
-    if "group" not in _HCCL:
-        try:
-            _HCCL["group"] = dist.new_group(ranks=list(range(dist.get_world_size())), backend="hccl")
-            _HCCL["reason"] = None
-        except Exception as error:  # capability probe; the reason is reported, not hidden
-            _HCCL["group"] = None
-            _HCCL["reason"] = f"no HCCL subgroup for all_to_all ({type(error).__name__}: {error})"
-    return _HCCL["group"], _HCCL["reason"]
-
-
-def baseline_chain():
-    """Build the baseline autograd Function once; keeps module import Torch-free."""
-    global _BASELINE_CHAIN
-    if _BASELINE_CHAIN is not None:
-        return _BASELINE_CHAIN
-
-    import torch
-
-    class BaselineChain(torch.autograd.Function):
-        """The source's dropless small-operator chain with its hand-written backward.
-
-        permute1 -> dispatch -> permute2 -> GMM1 -> SwiGLU*probs -> GMM2 ->
-        unpermute1 -> combine -> unpermute2. ``recompute`` mirrors the source's
-        coupled regime: MegaMoE BF16 saves Gate/Up for bf16/mxfp8 and
-        recomputes GMM1 for none, so the baseline performs the same GEMM work
-        (12 versus 16 RFK).
-        """
-
-        @staticmethod
-        def forward(ctx, x, topk_weights, w1, w2, plan):
-            from npu_baseline import _grouped_matmul
-
-            counts = plan.counts
-            global_x = reorder_chunks(
-                exchanged_rows(plan.group, x.index_select(0, plan.route_row), plan.output_splits, plan.input_splits),
-                plan.received_sizes,
-                plan.sort_index,
-                plan.local_experts,
-            )
-            global_p = reorder_chunks(
-                exchanged_rows(
-                    plan.group,
-                    topk_weights.reshape(-1).index_select(0, plan.order),
-                    plan.output_splits,
-                    plan.input_splits,
-                ),
-                plan.received_sizes,
-                plan.sort_index,
-                plan.local_experts,
-            )
-            gate_up = _grouped_matmul(global_x, plan.weight1, counts)
-            gate, up = clip_gate_up(*torch.chunk(gate_up, 2, dim=-1), plan.swiglu_limit)
-            activation = torch.nn.functional.silu(gate) * up
-            if global_p.dtype == torch.float32:
-                # FP32 p must not promote the following BF16 GMM operands.
-                intermediate = (activation.float() * global_p.unsqueeze(-1)).to(activation.dtype)
-            else:
-                intermediate = activation * global_p.unsqueeze(-1)
-            packed_y = _grouped_matmul(intermediate, plan.weight2, counts)
-            combined = exchanged_rows(
-                plan.group,
-                reorder_chunks(packed_y, plan.return_sizes, plan.restore_index, plan.local_experts),
-                plan.input_splits,
-                plan.output_splits,
-            )
-            output = torch.zeros((plan.tokens, plan.hidden), dtype=combined.dtype, device=combined.device)
-            output.scatter_add_(0, plan.route_row.unsqueeze(1).expand(-1, plan.hidden), combined)
-            ctx.plan = plan
-            saved = [global_x, global_p] if plan.recompute else [global_x, global_p, gate_up]
-            ctx.save_for_backward(*saved)
-            return output
-
-        @staticmethod
-        def backward(ctx, grad_output):
-            from npu_baseline import _grouped_matmul, _grouped_wgrad
-
-            plan = ctx.plan
-            counts = plan.counts
-            global_x, global_p = ctx.saved_tensors[0], ctx.saved_tensors[1]
-            weight1_transposed = plan.weight1.transpose(-1, -2).contiguous()
-            weight2_transposed = plan.weight2.transpose(-1, -2).contiguous()
-            grad_packed_y = reorder_chunks(
-                exchanged_rows(
-                    plan.group,
-                    grad_output.index_select(0, plan.route_row),
-                    plan.output_splits,
-                    plan.input_splits,
-                ),
-                plan.received_sizes,
-                plan.sort_index,
-                plan.local_experts,
-            )
-            gate_up = _grouped_matmul(global_x, plan.weight1, counts) if plan.recompute else ctx.saved_tensors[2]
-            gate, up = clip_gate_up(*torch.chunk(gate_up, 2, dim=-1), plan.swiglu_limit)
-            activation = torch.nn.functional.silu(gate) * up
-            if global_p.dtype == torch.float32:
-                intermediate = (activation.float() * global_p.unsqueeze(-1)).to(activation.dtype)
-            else:
-                intermediate = activation * global_p.unsqueeze(-1)
-            grad_intermediate = _grouped_matmul(grad_packed_y, weight2_transposed, counts)
-            grad_w2 = _grouped_wgrad(intermediate, grad_packed_y, counts)
-            grad_w2 = grad_w2.reshape(plan.weight2.shape).transpose(1, 2).contiguous()
-            grad_activation = grad_intermediate * global_p.unsqueeze(-1)
-            if global_p.dtype == torch.float32:
-                grad_p = (grad_intermediate.float() * activation.float()).sum(dim=-1)
-            else:
-                grad_p = (grad_intermediate * activation).sum(dim=-1)
-            # The source differentiates the same PyTorch graph it ran in forward
-            # instead of substituting a different activation backward.
-            with torch.enable_grad():
-                replay = gate_up.detach().requires_grad_(True)
-                replay_gate, replay_up = clip_gate_up(*torch.chunk(replay, 2, dim=-1), plan.swiglu_limit)
-                (grad_gate_up,) = torch.autograd.grad(
-                    torch.nn.functional.silu(replay_gate) * replay_up, replay, grad_activation
-                )
-            grad_x = _grouped_matmul(grad_gate_up, weight1_transposed, counts)
-            grad_w1 = _grouped_wgrad(global_x, grad_gate_up, counts)
-            grad_w1 = grad_w1.reshape(plan.weight1.shape).transpose(1, 2).contiguous()
-            grad_x = reorder_chunks(grad_x, plan.return_sizes, plan.restore_index, plan.local_experts)
-            grad_p = reorder_chunks(grad_p, plan.return_sizes, plan.restore_index, plan.local_experts)
-            grad_x = exchanged_rows(plan.group, grad_x, plan.input_splits, plan.output_splits)
-            grad_p = exchanged_rows(plan.group, grad_p, plan.input_splits, plan.output_splits)
-            grad_input = torch.zeros((plan.tokens, plan.hidden), dtype=grad_x.dtype, device=grad_x.device)
-            grad_input.scatter_add_(0, plan.route_row.unsqueeze(1).expand(-1, plan.hidden), grad_x)
-            grad_weights = torch.zeros(plan.tokens * plan.topk, dtype=grad_p.dtype, device=grad_p.device)
-            grad_weights.index_copy_(0, plan.order, grad_p)
-            return grad_input, grad_weights.reshape(plan.tokens, plan.topk), grad_w1, grad_w2, None
-
-    _BASELINE_CHAIN = BaselineChain
-    return _BASELINE_CHAIN
-
-
-def fused_forward(op, x, ids, weights, w1, w2, capacity, *, save_gmm1_output, swiglu_limit, api, collect_counts=True):
-    """Test adapter for the unified in-place interface."""
-    import torch
-    from deep_ep_experimental.megamoe import bf16_mega_moe
-
-    op.x, op.topk_idx, op.topk_weights = x, ids, weights
-    op.gmm1_save_type = save_gmm1_output
-    op.max_recv_tokens = capacity
-    y = torch.empty_like(x, requires_grad=False)
-    counts = torch.zeros(w1.shape[0], dtype=torch.int32, device=x.device) if collect_counts else None
-    bf16_mega_moe(y, w1, w2, op, cumulative_local_expert_recv_stats=counts, activation_clamp=swiglu_limit)
-    return y, counts
-
-
 def make_buffer(operator_type, group, args, world):
     return operator_type(
         group,
@@ -1291,183 +945,6 @@ def make_buffer(operator_type, group, args, world):
         max_recv_tokens=args.seq * args.topk * world,
         timeout=args.timeout,
     )
-
-
-def measure(op, tensors, capacity, args, mode):
-    """Three Event scopes for the MegaMoE BF16 operator, optional small-operator baseline.
-
-    Ported protocol: identical warmup/loop counts for both sides, one window per
-    sample, a rebuilt forward graph for every backward sample, and the coupled
-    backward regime. The reference is informational; it never decides the case.
-    """
-    import torch
-    import torch.distributed as dist
-
-    x, ids, p, w1, w2, dy = tensors
-    leaves = (x, p, w1, w2)
-    rank = dist.get_rank()
-
-    def stage(name):
-        """Progress markers: a silent hang in this phase is otherwise invisible."""
-        if rank == 0 and _LOG_LEVEL != "quiet":
-            print(f"[PERF] stage {name}", flush=True)
-
-    def reset():
-        for leaf in leaves:
-            leaf.grad = None
-
-    def megamoe_forward(collect_counts=False):
-        reset()
-        y, counts = fused_forward(
-            op,
-            x,
-            ids,
-            p,
-            w1,
-            w2,
-            capacity,
-            save_gmm1_output=args.save_gmm1_output,
-            swiglu_limit=args.swiglu_limit,
-            api=args.api,
-            collect_counts=collect_counts,
-        )
-        return y, counts
-
-    def megamoe_complete(collect_counts=False):
-        y, counts = megamoe_forward(collect_counts)
-        y.backward(dy)
-        return y, counts
-
-    stage(f"scopes start warmup={args.warmup} loops={args.loops}")
-    megamoe = {}
-    for name, body, prepare in (
-        ("forward", lambda state: megamoe_forward(), None),
-        ("backward", lambda state: state[0].backward(dy), megamoe_forward),
-        ("complete", lambda state: megamoe_complete(), None),
-    ):
-        megamoe[f"{name}_ms"] = event_stats(bench_scope(body, prepare, args))
-        stage(f"{name} scope done")
-    y, counts = megamoe_complete(collect_counts=True)
-    if not all(bool(torch.isfinite(value).all().item()) for value in (y, x.grad, p.grad, w1.grad, w2.grad)):
-        raise RuntimeError("Non-finite output or gradient after timing")
-    stage("megamoe_bf16 valid")
-    report = {
-        "operator": "megamoe_bf16",
-        "warmup": args.warmup,
-        "loops": args.loops,
-        "scope": (
-            "Synchronized NPU Event latency of forward, autograd backward with the graph built outside the "
-            "window, and forward+backward; reference, reporting and loss construction excluded; no device Timer"
-        ),
-        "baseline": {"status": "OFF", "reason": "--baseline off"},
-        **megamoe,
-    }
-    route_flops = args.seq * args.topk * args.ffn * args.hidden  # FLOPs per 1 RFK
-    backward_rfk = SAVED_MODE_RFK.get(mode, 12.0)
-    scoped_rfk = {
-        "forward": FORWARD_RFK,
-        "backward": backward_rfk,
-        "complete": FORWARD_RFK + backward_rfk,
-    }
-
-    def utilization(scopes_ms):
-        """GMM-only achieved TFLOPS and its share of the BF16 cube peak.
-
-        Non-GEMM work (all-to-all, permute, activation) is inside the window, so
-        this is the operator's GMM utilization: achieved / peak, not a claim
-        about the end-to-end model.
-        """
-        result = {}
-        for name, rfk_value in scoped_rfk.items():
-            latency = scopes_ms[f"{name}_ms"]["median"]
-            flops = rfk_value * route_flops
-            throughput = flops / (latency * 1e-3) / 1e12 if latency > 0 else float("nan")
-            result[name] = {
-                "rfk": rfk_value,
-                "flops": flops,
-                "tflops": throughput,
-                "mfu": 100.0 * throughput / PEAK_TFLOPS,
-            }
-        return result
-
-    megamoe_utilization = utilization(megamoe)
-    if args.baseline == "on":
-        stage("baseline plan start")
-        group, reason = device_group()
-        plan = None
-        if group is not None:
-            plan, reason = baseline_plan(ids, w1, w2, group, args, rank, dist.get_world_size(), mode)
-        if plan is None:
-            report["baseline"] = {"status": "SKIPPED", "reason": reason}
-            stage(f"baseline skipped: {reason}")
-        else:
-            stage("baseline plan ready")
-            chain = baseline_chain()
-
-            def reference_forward():
-                reset()
-                return chain.apply(x, p, w1, w2, plan)
-
-            def reference_complete():
-                out = reference_forward()
-                out.backward(dy)
-                return out
-
-            reference = {}
-            for name, body, prepare in (
-                ("forward", lambda state: reference_forward(), None),
-                ("backward", lambda state: state.backward(dy), reference_forward),
-                ("complete", lambda state: reference_complete(), None),
-            ):
-                reference[f"{name}_ms"] = event_stats(bench_scope(body, prepare, args))
-                stage(f"baseline {name} scope done")
-            out = reference_complete()
-            if all(bool(torch.isfinite(value).all().item()) for value in (out, x.grad, p.grad, w1.grad, w2.grad)):
-                speedup = {
-                    scope: reference[f"{scope}_ms"]["median"] / max(megamoe[f"{scope}_ms"]["median"], 1e-9)
-                    for scope in ("forward", "backward", "complete")
-                }
-                reference_utilization = utilization(reference)
-                report["baseline"] = {
-                    "status": "RUN",
-                    "recompute_gmm1": plan.recompute,
-                    "speedup": speedup,
-                    "mfu": {name: value["mfu"] for name, value in reference_utilization.items()},
-                    **reference,
-                }
-            else:
-                report["baseline"] = {
-                    "status": "SKIPPED",
-                    "reason": "baseline produced non-finite values; its samples are not comparable",
-                }
-    report["mfu"] = {
-        "peak_tflops": PEAK_TFLOPS,
-        "peak_note": (
-            "432 TFLOPS is the BF16 cube peak inherited from the source harness comment; confirm it against the "
-            "official Ascend950 dense-BF16 specification before quoting an absolute utilization"
-        ),
-        "scope": (
-            "GMM-only FLOPs (RFK model) divided by the windowed latency, as a share of the BF16 cube peak; "
-            "all-to-all, permute and activation time stays inside the window, so this is not a model-level MFU"
-        ),
-        **megamoe_utilization,
-    }
-    # The source printed a backward-only roofline. Keep its derated denominator,
-    # but report every scope so the three numbers stay comparable.
-    roofline = {}
-    for name, value in megamoe_utilization.items():
-        measured_ms = megamoe[f"{name}_ms"]["median"]
-        floor_ms = value["flops"] / (ROOFLINE_TFLOPS * 1e12) * 1e3
-        roofline[name] = {
-            "rfk": value["rfk"],
-            "flops": value["flops"],
-            "measured_ms": measured_ms,
-            "floor_ms": floor_ms,
-            "overhead_ms": measured_ms - floor_ms,
-            "tflops": value["tflops"],
-        }
-    report["roofline"] = {"mode": mode, "roofline_tflops": ROOFLINE_TFLOPS, **roofline}
-    return report, counts
 
 
 _LOG_LEVEL = "all"
@@ -1537,8 +1014,7 @@ def execute_case(local_rank, args, rank, world, op, local_mem, phase_seconds, ex
     import torch
     import torch.distributed as dist
 
-    from npu_baseline import BIGOP_REFERENCE_VERSION, run_baseline
-    from precision_metrics import evaluate
+    from npu_baseline import BIGOP_REFERENCE_VERSION
 
     phase = phase_timer(rank, phase_seconds)
     config = {key: value for key, value in vars(args).items() if key not in ("devices", "output")}
@@ -1589,38 +1065,9 @@ def execute_case(local_rank, args, rank, world, op, local_mem, phase_seconds, ex
     trace = {} if args.diagnose_mxfp8 else None
     mode = args.save_gmm1_output
     if precision:
-        with phase("cpu_fp64_reference"):
-            truth = local_truth(inputs, args, rank)
-        with phase("bigop_reference"):
-            raw_baseline = combine_baseline(
-                run_baseline(
-                    inputs,
-                    f"npu:{local_rank}",
-                    rank * args.expert_per_rank,
-                    "bf16",
-                    args.swiglu_limit,
-                    reference="bigop",
-                    trace=trace if mode == "bf16" else None,
-                ),
-                args,
-                rank,
-                world,
-                f"npu:{local_rank}",
-            )
-        if mode == "bf16":
-            # Both checks use the same uncompressed small-op reference.
-            mixed_baseline = raw_baseline
-        else:
-            with phase("megamoe_contract_reference"):
-                mixed_baseline = combine_baseline(
-                    run_baseline(
-                        inputs, f"npu:{local_rank}", rank * args.expert_per_rank, mode, args.swiglu_limit, trace=trace
-                    ),
-                    args,
-                    rank,
-                    world,
-                    f"npu:{local_rank}",
-                )
+        truth, raw_baseline, mixed_baseline = prepare_references(
+            inputs, args, rank, world, f"npu:{local_rank}", mode, trace, phase
+        )
     sl = slice(rank * args.seq, (rank + 1) * args.seq) if precision else slice(None)
 
     def tensor(value, dtype=torch.bfloat16, grad=False):
@@ -1685,22 +1132,14 @@ def execute_case(local_rank, args, rank, world, op, local_mem, phase_seconds, ex
         },
     }
     if precision:
-        with phase("precision_metrics"):
-            actual = {name: value.detach().cpu().clone() for name, value in values.items()}
-            report["precision"] = evaluate(actual, mixed_baseline, expected)
-        if args.atk:
-            with phase("atk_compare"):
-                from atk_compare import DEFAULT_RATIOS, compare_with_atk
-
-                report["precision"]["atk"] = compare_with_atk(
-                    actual,
-                    raw_baseline,
-                    truth,
-                    output / f"atk_rank_{rank}",
-                    args.atk_ratios or DEFAULT_RATIOS,
-                )
-            report["precision"]["passed"] &= report["precision"]["atk"]["passed"]
+        actual, report["precision"] = check_accuracy(
+            values, mixed_baseline, raw_baseline, truth, expected, args, phase, output, rank
+        )
         report["passed"] = report["precision"]["passed"]
+        if args.bitwise_bigop:
+            bitwise = report["precision"]["bitwise_bigop"]
+            failures = {k: v for k, v in bitwise["outputs"].items() if not v["passed"]}
+            print(f"[BITWISE] rank={rank} {'FAIL ' + str(failures) if failures else 'PASS'}", flush=True)
         checks = report["precision"]["outputs"]
         mixed_ok = all(value["mixed_tolerance"]["passed"] for value in checks.values())
         print(
@@ -1845,56 +1284,6 @@ def collect_timer(op, tensors, capacity, args, rank, world, output):
     return dict(passed=True, bitwise_equal=checks, ranks=ranks, output=str(output / "timer"))
 
 
-def performance_summary(reports):
-    """One terminal block: a line per scope with both sides, speedup and MFU.
-
-    Workers only collect data; rank 0 presents it here, after the JSON exists.
-    """
-    first = reports[0]
-    perf = first["performance"]
-    baseline = perf.get("baseline", {})
-    speeds = baseline.get("speedup") or {}
-    base_mfu = baseline.get("mfu") or {}
-    roofline = perf.get("roofline", {})
-    scopes = ("forward", "backward", "complete")
-    rfk = "/".join(f"{roofline[scope]['rfk']:.0f}" for scope in scopes if scope in roofline)
-    lines = [
-        f"[PERF] rank=0 mode={roofline.get('mode', '?')} warmup={perf['warmup']} loops={perf['loops']} "
-        f"({rfk} RFK, GMM peak {PEAK_TFLOPS:.0f} TF)"
-    ]
-    for scope in scopes:
-        row = f"[PERF] {scope:<9} megamoe_bf16={perf[f'{scope}_ms']['median']:8.3f}ms"
-        if scope in speeds:
-            row += f" baseline={baseline[f'{scope}_ms']['median']:8.3f}ms speedup={speeds[scope]:5.2f}x"
-        else:
-            row += " baseline=        --"
-        mfu = perf.get("mfu", {}).get(scope, {}).get("mfu")
-        if mfu is not None:
-            row += f" MFU={mfu:5.1f}%" + (f"/{base_mfu[scope]:.1f}%" if scope in base_mfu else "")
-        lines.append(row)
-    if roofline:
-        floor = "/".join(f"{roofline[scope]['floor_ms']:.2f}" for scope in scopes)
-        overhead = "/".join(f"{roofline[scope]['overhead_ms']:+.2f}" for scope in scopes)
-        lines.append(
-            f"[PERF] roofline floor={floor}ms overhead={overhead}ms @ {roofline['roofline_tflops']} TF (fwd/bwd/fb)"
-        )
-    if baseline.get("status") != "RUN":
-        lines.append(f"[PERF] baseline {str(baseline.get('status', '?')).lower()}: {baseline.get('reason', '')}")
-    for report in reports[1:]:
-        other = report["performance"]
-        other_speed = other.get("baseline", {}).get("speedup") or {}
-        row = (
-            f"[PERF] rank={report['rank']} "
-            f"forward={other['forward_ms']['median']:.3f}ms "
-            f"backward={other['backward_ms']['median']:.3f}ms "
-            f"complete={other['complete_ms']['median']:.3f}ms"
-        )
-        if other_speed:
-            row += f" speedup={other_speed['forward']:.2f}/{other_speed['backward']:.2f}/{other_speed['complete']:.2f}x"
-        lines.append(row)
-    return lines
-
-
 def write_case_reports(args, rank, world, report, output):
     import torch.distributed as dist
 
@@ -1907,6 +1296,7 @@ def write_case_reports(args, rank, world, report, output):
     dist.all_gather_object(reports, report)
     passed = all(value["passed"] for value in reports)
     if rank == 0:
+        event_ms = summarize_event_rounds(reports) if performance and all(r["performance_run"] for r in reports) else {}
         write_report(
             output / "summary.json",
             {
@@ -1916,13 +1306,25 @@ def write_case_reports(args, rank, world, report, output):
                 "atk_requested": args.atk,
                 "precision_run": precision,
                 "precision_passed": all(value["precision"]["passed"] for value in reports) if precision else None,
+                **(
+                    {"bitwise_bigop_passed": all(r["precision"]["bitwise_bigop"]["passed"] for r in reports)}
+                    if args.bitwise_bigop
+                    else {}
+                ),
                 "performance_run": all(value["performance_run"] for value in reports),
+                "event_tail_half_rank_max_mean_ms": event_ms,
                 "ranks": reports,
                 "precision_reference_version": BIGOP_REFERENCE_VERSION,
             },
         )
         print(f"[RESULT] {'PASS' if passed else 'FAIL'} skip={args.skip or 'none'} output={output}", flush=True)
         if passed and performance:
+            for name, timings in event_ms.items():
+                print(
+                    f"[EVENT] {name} tail-half mean of slowest EP rank: "
+                    + " ".join(f"{scope}={ms:.3f}ms" for scope, ms in timings.items()),
+                    flush=True,
+                )
             for line in performance_summary(reports):
                 print(line, flush=True)
     return passed
@@ -1997,6 +1399,10 @@ def main(argv=None):
         return run_suite(args)
     os.environ["ASCEND_RT_VISIBLE_DEVICES"] = ",".join(map(str, args.devices))
     installed_root()
+    if args.compare_forward:
+        from forward_compare import compare_forward
+
+        return compare_forward(args)
     if args.atk:
         from atk_compare import require_atk
 

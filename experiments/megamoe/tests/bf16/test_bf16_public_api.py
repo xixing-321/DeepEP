@@ -190,6 +190,35 @@ def test_token_count_exchange_selects_a_new_plan(buffer, monkeypatch):
     first.sum().backward()
 
 
+def test_forward_and_prepare_validate_routing_inputs_once(buffer, monkeypatch):
+    b, calls, _ = buffer
+    _, _, w1, w2 = inputs(b)
+    checked = []
+    validate = bf16.validate_buffer_inputs
+
+    def track(owner, bs):
+        checked.append(bs)
+        validate(owner, bs)
+
+    monkeypatch.setattr(bf16, "validate_buffer_inputs", track)
+
+    def check(group, stage, error, *args):
+        if error:
+            raise ValueError(error)
+
+    monkeypatch.setattr(api, "collective_check", check)
+    monkeypatch.setattr(api, "npu_api", bf16.npu_api)
+    b.prepare(3)
+    call(b, w1, w2)
+    assert checked == [3, 3]
+    b.topk_weights = b.topk_weights.to(torch.float64)
+    with pytest.raises(ValueError, match="topk_weights"):
+        call(b, w1, w2)
+    with pytest.raises(ValueError, match="topk_weights"):
+        b.prepare(3)
+    assert len(calls) == 1
+
+
 def test_prepared_plan_is_reused_and_no_grad_keeps_preweight_semantics(buffer):
     b, calls, plans = buffer
     x, p, w1, w2 = inputs(b)

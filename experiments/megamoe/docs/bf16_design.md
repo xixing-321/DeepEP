@@ -6,8 +6,8 @@
 | --- | --- | --- |
 | Python | api.py | 共同buffer、输入字段与公开接口 |
 | BF16调用 | _bf16.py、_autograd.py | 校验、Plan缓存及每次调用独立的反向状态 |
-| Host | csrc/forward.cpp（BF16半区）、csrc/backward.cpp | 前反向校验、分配和启动 |
-| Plan | csrc/plan.hpp（BF16Plan） | 借用根通信窗口，按配置准备基础 tiling 和前向 workspace。每次调用复制 tiling 并填入权重布局 |
+| Host | csrc/forward.cpp、csrc/backward.cpp | 前反向校验、分配和启动 |
+| Plan | csrc/plan.hpp、csrc/plan_bf16.cpp | 借用根通信窗口，按配置准备基础 tiling 和前向 workspace。每次调用复制 tiling 并填入权重布局 |
 | Launch | csrc/kernel_launch.hpp | Host 和设备共用的启动符号声明 |
 | 前向 | mega_moe_wave_bf16.hpp | 推理固定使用模式 0（Wave 交错）；训练支持模式 0 和模式 1（分阶段） |
 | 反向 | mega_moe_bf16_backward.hpp | dY分发、dHp、激活梯度、dX回传及dW |

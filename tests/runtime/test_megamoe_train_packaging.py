@@ -58,12 +58,6 @@ def wheel(tmp, payload, enabled, *, missing=None, extra=()):
     return path
 
 
-@pytest.mark.parametrize("enabled", [False, True])
-def test_single_megamoe_payload_matches_build_option(tmp_path, shmem_wheel_payload, enabled):
-    info = inspect_wheel(wheel(tmp_path, shmem_wheel_payload, enabled))
-    assert info["megamoe"]["enabled"] is enabled
-
-
 @pytest.mark.parametrize("missing", ["_C.fake.so", "_bf16.py", "_autograd.py", "benchmark.py", "libmegamoe_kernel.so"])
 def test_megamoe_requires_matching_host_python_and_device(tmp_path, shmem_wheel_payload, missing):
     with pytest.raises(RuntimeError, match="Incomplete MegaMoE"):

@@ -11,8 +11,12 @@
 #include <tuple>
 #include <torch/extension.h>
 #include "host_utils.hpp"
-#include "mega_moe_tiling.hpp"
+#include "mega_moe_quantized_tiling.hpp"
 #include "mega_moe_bf16_tiling.hpp"
+
+namespace MegaMoeBF16Training {
+struct TrainingSavedStateLayout;
+}
 
 namespace deepep::megamoe {
 
@@ -80,10 +84,9 @@ public:
         return workspace_.defined() ? workspace_.numel() : 0;
     }
 
-    ForwardResult forward(torch::Tensor out, torch::Tensor x, torch::Tensor topk_ids,
-                          torch::Tensor topk_weights, torch::Tensor weight1, torch::Tensor weight2,
-                          int64_t max_recv_tokens, double swiglu_limit, const std::string& save_gmm1_output,
-                          bool capture_timer, bool save_dispatched_x = true);
+    ForwardResult forward(torch::Tensor out, torch::Tensor x, torch::Tensor topk_ids, torch::Tensor topk_weights,
+                          torch::Tensor weight1, torch::Tensor weight2, int64_t max_recv_tokens, double swiglu_limit,
+                          const std::string& save_gmm1_output, bool capture_timer, bool save_dispatched_x = true);
 
     BackwardResult backward(torch::Tensor grad_y, torch::Tensor topk_weights, torch::Tensor weight1,
                             torch::Tensor weight2, torch::Tensor counts, torch::Tensor saved_state,
@@ -95,6 +98,10 @@ private:
         int64_t n;
         bool transW;
     };
+    static uint32_t TopkWeightType(torch::ScalarType dtype);
+    static MegaMoeBF16Training::TrainingSavedStateLayout MakeSavedStateLayout(const MegaMoeBf16TilingData& tiling,
+                                                                              int64_t k, int64_t n,
+                                                                              int64_t max_recv_tokens);
     static WeightLayout ResolveWeightLayout(const torch::Tensor& w1, const torch::Tensor& w2, int64_t k);
     void ClearWindowControl() const;
     torch::Tensor AllocateTimer(const torch::Tensor& like, const torch::Tensor& weights, const torch::Tensor& w1,
@@ -102,8 +109,8 @@ private:
     MegaMoeBf16TilingData TilingForCall(int64_t m, int64_t k, int64_t n, int64_t topk, int64_t experts,
                                         int64_t max_recv, double limit, const std::string& mode, uint32_t weight_type,
                                         bool trans_w);
+    PlatformInfo platform_;
     MegaMoeBf16TilingData tiling_{};
-    uint64_t layout_workspace_bytes_{};
     torch::Tensor Context(const torch::Tensor& like);
 
     void* SymmetricBuffer() const;

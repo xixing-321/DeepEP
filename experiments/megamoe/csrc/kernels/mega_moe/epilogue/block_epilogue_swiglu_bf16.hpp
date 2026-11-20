@@ -24,6 +24,8 @@
 
 namespace MegaMoeBF16Impl {
 
+using MegaMoeImpl::Get;
+
 static constexpr AscendC::Reg::CastTrait kCastBF16ToFP32 = {
     AscendC::Reg::RegLayout::ZERO, AscendC::Reg::SatMode::UNKNOWN, AscendC::Reg::MaskMergeMode::ZEROING,
     AscendC::RoundMode::UNKNOWN};

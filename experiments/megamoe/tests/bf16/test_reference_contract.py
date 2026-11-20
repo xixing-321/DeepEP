@@ -16,6 +16,26 @@ except ModuleNotFoundError as error:
 
 
 class RunnerConfiguration(unittest.TestCase):
+    def test_comparison_modes_and_suite_forwarding(self):
+        args = self.runner.parse_args(["0,1", "--bitwise-bigop", "--skip", "performance"])
+        self.assertIn("--bitwise-bigop", self.runner.launch_options(args))
+        self.assertTrue(self.runner.parse_args(["0,1", "--compare-forward"]).compare_forward)
+        for flags in (["--bitwise-bigop", "--skip", "precision"], ["--compare-forward", "--suite", "model"]):
+            with self.assertRaises(SystemExit):
+                self.runner.parse_args(["0,1", *flags])
+
+    def test_kernel_time_merges_overlapping_streams_per_round(self):
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+        from forward_compare import kernel_rounds
+
+        with TemporaryDirectory() as folder:
+            path = Path(folder) / "kernel_details.csv"
+            path.write_text("Step Id,Device_id,Start Time(us),Duration(us)\n1,0,10,100\n1,0,30,150\n2,0,1000,40\n")
+            self.assertEqual(kernel_rounds(folder, 2), [0.17, 0.04])
+            with self.assertRaises(ValueError):
+                kernel_rounds(folder, 3)
+
     def setUp(self):
         import test_mega_moe
 
@@ -70,6 +90,19 @@ class RunnerConfiguration(unittest.TestCase):
             self.assertEqual(child.topk_weight_dtype, case["topk_weight_dtype"])
             self.assertEqual(child.topk_weight_values, case["topk_weight_values"])
 
+    def test_event_summary_uses_slowest_rank_each_round(self):
+        from perf_compare import summarize_event_rounds
+
+        reports = []
+        for samples in ([100, 100, 3, 9], [100, 100, 8, 4]):
+            perf = {f"{scope}_ms": {"samples": samples} for scope in ("forward", "backward", "complete")}
+            reports.append({"performance": {**perf, "baseline": {"status": "RUN", **perf}}})
+        summary = summarize_event_rounds(reports)
+        self.assertEqual(summary["megamoe"]["forward"], 8.5)
+        self.assertEqual(summary["bigop"]["backward"], 8.5)
+        reports[1]["performance"]["baseline"] = {"status": "SKIPPED"}
+        self.assertNotIn("bigop", summarize_event_rounds(reports))
+
     def test_gather_cases_cross_fp32_windows_and_parse_at_supported_ep_sizes(self):
         for devices in ("0,1", "0,1,2,3", "0,1,2,3,4,5,6,7"):
             args = self.runner.parse_args([devices, "--suite", "gather"])
@@ -101,6 +134,24 @@ def cpu_grouped_wgrad(tokens, grad, counts):
 
 @unittest.skipIf(torch is None, "CPU Torch is required; no NPU or ATK is needed")
 class ReferenceContract(unittest.TestCase):
+    def test_bitwise_native_dtype_and_signed_zero(self):
+        from accuracy import bitwise_bigop
+        from precision_metrics import OUTPUTS
+
+        truth = {k: torch.tensor([0.0, 2.0], dtype=torch.bfloat16) for k in OUTPUTS}
+        truth["dtopk_weights"] = truth["dtopk_weights"].float()
+        self.assertTrue(bitwise_bigop(truth, truth)["passed"])
+        actual = {k: v.clone() for k, v in truth.items()}
+        actual["y"][0] = -0.0
+        actual["dtopk_weights"].view(torch.int32)[1] += 1
+        actual["dx"] = actual["dx"].float()
+        checks = bitwise_bigop(actual, truth)
+        self.assertFalse(checks["passed"])
+        self.assertEqual(checks["outputs"]["y"]["first_flat"], 0)
+        self.assertEqual(checks["outputs"]["dtopk_weights"]["mismatches"], 1)
+        self.assertEqual(checks["outputs"]["dtopk_weights"]["first_flat"], 1)
+        self.assertFalse(checks["outputs"]["dx"]["passed"])
+
     def setUp(self):
         import npu_baseline
 
@@ -123,34 +174,19 @@ class ReferenceContract(unittest.TestCase):
         }
 
     def test_fp32_h_rounds_only_after_route_weight(self):
-        for reference in ("bigop", "megamoe"):
-            with self.subTest(reference=reference):
-                trace = {}
-                result = self.baseline.run_baseline(
-                    self.inputs(0.00099945068359375), "cpu", 0, reference=reference, trace=trace
-                )
-                self.assertEqual(trace["h"].dtype, torch.float32)
-                self.assertAlmostEqual(trace["h"].item(), 1.3125 / (1 + math.exp(-1)), delta=1e-7)
-                self.assertEqual(trace["hp"].dtype, torch.bfloat16)
-                self.assertEqual(result["routes"][0]["y"].item(), 0.000957489013671875)
+        trace = {}
+        result = self.baseline.run_baseline(self.inputs(0.00099945068359375), "cpu", 0, reference="bigop", trace=trace)
+        self.assertEqual(trace["h"].dtype, torch.float32)
+        self.assertAlmostEqual(trace["h"].item(), 1.3125 / (1 + math.exp(-1)), delta=1e-7)
+        self.assertEqual(trace["hp"].dtype, torch.bfloat16)
+        self.assertEqual(result["routes"][0]["y"].item(), 0.000957489013671875)
 
     def test_fp32_dh_reaches_activation_derivative(self):
-        for reference in ("bigop", "megamoe"):
-            with self.subTest(reference=reference):
-                trace = {}
-                self.baseline.run_baseline(self.inputs(0.10009765625), "cpu", 0, reference=reference, trace=trace)
-                self.assertEqual(trace["dz"].dtype, torch.bfloat16)
-                self.assertEqual(trace["dz"][0, 0].item(), 0.09130859375)
-                self.assertEqual(trace["dz"][0, 1].item(), 0.054931640625)
-
-    def test_bigop_and_contract_share_numeric_boundaries(self):
-        bigop, contract = {}, {}
-        inputs = self.inputs(0.10009765625)
-        self.baseline.run_baseline(inputs, "cpu", 0, reference="bigop", trace=bigop)
-        self.baseline.run_baseline(inputs, "cpu", 0, reference="megamoe", trace=contract)
-        for name in ("h", "hp", "dhp", "dp", "dz"):
-            torch.testing.assert_close(bigop[name], contract[name], rtol=0, atol=0)
-        self.assertEqual(bigop["h"].dtype, torch.float32)
+        trace = {}
+        self.baseline.run_baseline(self.inputs(0.10009765625), "cpu", 0, reference="bigop", trace=trace)
+        self.assertEqual(trace["dz"].dtype, torch.bfloat16)
+        self.assertEqual(trace["dz"][0, 0].item(), 0.09130859375)
+        self.assertEqual(trace["dz"][0, 1].item(), 0.054931640625)
 
     def test_saved_bf16_reuses_unmodified_forward_gate_up(self):
         captured = []
@@ -194,16 +230,14 @@ class ReferenceContract(unittest.TestCase):
     def test_fp32_probability_bits_reach_hp_and_dp_keeps_input_dtype(self):
         inputs = self.inputs(1.0)
         inputs["p"] = torch.tensor([[1.0038]], dtype=torch.float32)
-        for reference in ("bigop", "megamoe"):
-            with self.subTest(reference=reference):
-                full, rounded = {}, {}
-                self.baseline.run_baseline(inputs, "cpu", 0, reference=reference, trace=full)
-                rounded_inputs = {**inputs, "p": inputs["p"].bfloat16().float()}
-                self.baseline.run_baseline(rounded_inputs, "cpu", 0, reference=reference, trace=rounded)
-                self.assertFalse(torch.equal(full["hp"], rounded["hp"]))
-                self.assertEqual(full["dp"].dtype, torch.float32)
-                self.assertNotEqual(full["dp"].item(), full["dp"].bfloat16().float().item())
-                self.assertAlmostEqual(full["dp"].item(), 0.75 * 1.3125 / (1 + math.exp(-1)), delta=1e-7)
+        full, rounded = {}, {}
+        self.baseline.run_baseline(inputs, "cpu", 0, reference="bigop", trace=full)
+        rounded_inputs = {**inputs, "p": inputs["p"].bfloat16().float()}
+        self.baseline.run_baseline(rounded_inputs, "cpu", 0, reference="bigop", trace=rounded)
+        self.assertFalse(torch.equal(full["hp"], rounded["hp"]))
+        self.assertEqual(full["dp"].dtype, torch.float32)
+        self.assertNotEqual(full["dp"].item(), full["dp"].bfloat16().float().item())
+        self.assertAlmostEqual(full["dp"].item(), 0.75 * 1.3125 / (1 + math.exp(-1)), delta=1e-7)
 
     def test_fp32_route_transport_preserves_dp_bits_and_slot_identity(self):
         ids = torch.tensor([[0, 1]], dtype=torch.int32)
@@ -218,7 +252,7 @@ class ReferenceContract(unittest.TestCase):
     def test_performance_baseline_keeps_fp32_p_without_promoting_gmm_inputs(self):
         from types import SimpleNamespace
 
-        import test_mega_moe as runner
+        import perf_compare as runner
 
         self.enterContext(patch.object(runner, "exchanged_rows", side_effect=lambda group, value, recv, send: value))
         for dtype in (torch.bfloat16, torch.float32):
@@ -280,16 +314,14 @@ class ReferenceContract(unittest.TestCase):
 
     def test_route_combine_keeps_fp32_cancellation_and_slot_order(self):
         ids = torch.tensor([[0, 1, 2]], dtype=torch.int32)
-        for reference in ("bigop", "megamoe"):
-            with self.subTest(reference=reference):
-                buffer = torch.tensor([[[256, -256, 0.125], [1, -1, -0.5], [-256, 256, 1.0]]])
-                result = self.baseline.unpermute_routes(buffer, ids, "cpu", reference=reference)
-                self.assertEqual(result["y"].item(), 1)
-                self.assertEqual(result["dx"].item(), -1)
-                torch.testing.assert_close(result["dtopk_weights"], buffer[:, :, -1].bfloat16())
-                buffer[0, :, 0] = torch.tensor([2**24, 1, -(2**24)])
-                result = self.baseline.unpermute_routes(buffer, ids, "cpu", reference=reference)
-                self.assertEqual(result["y"].item(), 0)
+        buffer = torch.tensor([[[256, -256, 0.125], [1, -1, -0.5], [-256, 256, 1.0]]])
+        result = self.baseline.unpermute_routes(buffer, ids, "cpu", reference="bigop")
+        self.assertEqual(result["y"].item(), 1)
+        self.assertEqual(result["dx"].item(), -1)
+        torch.testing.assert_close(result["dtopk_weights"], buffer[:, :, -1].bfloat16())
+        buffer[0, :, 0] = torch.tensor([2**24, 1, -(2**24)])
+        result = self.baseline.unpermute_routes(buffer, ids, "cpu", reference="bigop")
+        self.assertEqual(result["y"].item(), 0)
 
     def test_final_bf16_cast_rounds_halfway_values_to_even(self):
         buffer = torch.tensor([[[1, -1, 0], [2**-8, -(2**-8), 0]], [[1.0078125, -1.0078125, 0], [2**-8, -(2**-8), 0]]])

@@ -219,6 +219,35 @@ struct SavedGateUpQuantUbLayoutFor {
 
 using SavedGateUpQuantUbLayout = SavedGateUpQuantUbLayoutFor<128>;
 
+// Backward SwiGLU uses three BF16 tiles followed by the MXFP8 decode scratch.
+struct BackwardSwigluUbLayout {
+    static constexpr uint32_t kTileRows = 128;
+    static constexpr uint32_t kTileColumns = 256;
+    static constexpr uint32_t kTileElements = kTileRows * kTileColumns;
+    static constexpr uint32_t kTileBytes = kTileElements * kBf16Bytes;
+    static constexpr uint32_t kDecodeRows = 16;
+    static constexpr uint32_t kMxDataElements = kDecodeRows * kTileColumns;
+    static constexpr uint32_t kMxScaleRowBytes = 32;
+    static constexpr uint32_t kMxScaleBytes = kDecodeRows * kMxScaleRowBytes;
+    // DIST_INTLV stores ignore the mask and write 512 bytes on A5.
+    // Reserve their full footprint before the clipping masks.
+    static constexpr uint32_t kMxDualRegisterStoreBytes = 2U * 256U;
+    static constexpr uint32_t kMxScaleBf16Elements = kMxDualRegisterStoreBytes / kBf16Bytes;
+    static constexpr uint32_t kMxScaleBf16Bytes = kMxScaleBf16Elements * kBf16Bytes;
+    static constexpr uint32_t kMxScaleFp32Elements = kMxDualRegisterStoreBytes / sizeof(float);
+    static constexpr uint32_t kMxScaleFp32Bytes = kMxScaleFp32Elements * sizeof(float);
+    static constexpr uint32_t kWorkTileBytes = 3U * kTileBytes;
+    static constexpr uint32_t kMxDataOffset = kWorkTileBytes;
+    static constexpr uint32_t kMxScaleOffset = kMxDataOffset + kMxDataElements;
+    static constexpr uint32_t kMxScaleBf16Offset = kMxScaleOffset + kMxScaleBytes;
+    static constexpr uint32_t kMxScaleFp32Offset = kMxScaleBf16Offset + kMxScaleBf16Bytes;
+    static constexpr uint32_t kClipMaskBytes = kTileRows * kMxScaleRowBytes;
+    static constexpr uint32_t kGateHighOffset = kMxScaleFp32Offset + kMxScaleFp32Bytes;
+    static constexpr uint32_t kUpLowOffset = kGateHighOffset + kClipMaskBytes;
+    static constexpr uint32_t kUpHighOffset = kUpLowOffset + kClipMaskBytes;
+    static constexpr uint32_t kMxScratchEnd = kUpHighOffset + kClipMaskBytes;
+};
+
 // Simultaneous UB allocations during count exchange and Dispatch. GM count
 // rows contain all experts; Cumsum gathers only this rank's expert columns.
 struct ForwardDispatchUbLayout {

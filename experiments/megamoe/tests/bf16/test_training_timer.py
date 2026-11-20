@@ -14,7 +14,7 @@ import pytest
 
 @pytest.fixture
 def timer(monkeypatch):
-    python = Path(__file__).resolve().parents[1] / "python"
+    python = Path(__file__).resolve().parents[2] / "python"
     monkeypatch.syspath_prepend(str(python))
     package = importlib.import_module("deep_ep_experimental")
     monkeypatch.setattr(package, "__path__", [*package.__path__, str(python / "deep_ep_experimental")])
@@ -63,7 +63,7 @@ def put_event(timer, raw, layout, name, index, start, end, *, m=384, tile_m=192)
 
 
 def test_schema_matches_device_header(timer):
-    header = (Path(__file__).resolve().parents[1] / "csrc/kernels/mega_moe/timer/ascend_timer.hpp").read_text(
+    header = (Path(__file__).resolve().parents[2] / "csrc/kernels/mega_moe/timer/ascend_timer.hpp").read_text(
         encoding="utf-8"
     )
     for enum, sentinel, expected in (

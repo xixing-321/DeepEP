@@ -10,12 +10,12 @@
 // Modified by SimpleBright_Man 2026
 
 /*!
- * \file mega_moe_tiling.h
- * \brief
+ * \file mega_moe_quantized_tiling.hpp
+ * \brief Host and device tiling parameters for W4A8 and W8A8 MegaMoE.
  */
 
-#ifndef ASCENDC_MEGA_MOE_TILING
-#define ASCENDC_MEGA_MOE_TILING
+#ifndef ASCENDC_MEGA_MOE_QUANTIZED_TILING_HPP
+#define ASCENDC_MEGA_MOE_QUANTIZED_TILING_HPP
 
 #include <cstdint>
 #include "kernel_tiling/kernel_tiling.h"

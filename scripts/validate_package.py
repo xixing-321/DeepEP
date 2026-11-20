@@ -360,7 +360,7 @@ def main():
             "import pathlib,sys,torch,torch_npu; from deep_ep_experimental.megamoe.api import _extension; "
             "m=_extension(); assert pathlib.Path(m.__file__).resolve().is_relative_to(pathlib.Path(sys.prefix).resolve()); "
             "assert m.quantized_enabled and m.bf16_enabled; "
-            "assert callable(m.Plan.forward) and callable(m.BF16Plan.forward_out) and callable(m.BF16Plan.backward); "
+            "assert callable(m.Plan.forward) and callable(m.BF16Plan.forward) and callable(m.BF16Plan.backward); "
             f"assert m.timer_enabled is {megamoe['timer']!r}; "
             "assert not torch.npu.is_initialized(); print('Installed MegaMoE extension verified')"
         )

@@ -38,6 +38,8 @@
 
 namespace MegaMoeBF16Impl {
 
+using MegaMoeImpl::Get;
+
 static constexpr AscendC::Reg::DivSpecificMode kBackwardDivMode = {AscendC::Reg::MaskMergeMode::ZEROING, true};
 static constexpr AscendC::Reg::CastTrait kBackwardCastBF16ToFP32 = {
     AscendC::Reg::RegLayout::ZERO, AscendC::Reg::SatMode::UNKNOWN, AscendC::Reg::MaskMergeMode::ZEROING,
@@ -397,7 +399,7 @@ public:
         LoadGateUpTiles(rowBase_ + mLoc, nLoc, singleM, singleN, l0cOutUbSecond_, extraA_);
 
         // Full 128x256 tiles consume this Gate/Up load without a second GM read.
-        if (singleM == kTileRows && singleN == kTileColumns && rowStrideInPlane == singleN) {
+        if (singleM == UbLayout::kTileRows && singleN == UbLayout::kTileColumns && rowStrideInPlane == singleN) {
             RunFusedFullTile(singleM, singleN, mLoc, nLoc);
             return;
         }
@@ -454,36 +456,17 @@ public:
 
 private:
     MegaMoeTrainTimerDevice* timer_ = nullptr;
-    static constexpr uint32_t kTileRows = tla::get<0>(L0TileShape_{});
-    static constexpr uint32_t kTileColumns = tla::get<1>(L0TileShape_{});
-    static constexpr uint32_t kTileElements = kTileRows * kTileColumns;
-    static constexpr uint32_t kTileBytes = kTileElements * sizeof(bfloat16_t);
-    static constexpr uint32_t kDecodeRows = 16;
-    static constexpr uint32_t kMxDataElements = kDecodeRows * kTileColumns;
-    static constexpr uint32_t kMxScaleRowBytes = 32;
-    static constexpr uint32_t kMxScaleBytes = kDecodeRows * kMxScaleRowBytes;
-    // DIST_INTLV stores ignore the mask and write 512 bytes on A5.
-    // Reserve their full footprint before the clipping masks.
-    static constexpr uint32_t kMxDualRegisterStoreBytes = 2U * 256U;
-    static constexpr uint32_t kMxScaleBf16Elements = kMxDualRegisterStoreBytes / sizeof(bfloat16_t);
-    static constexpr uint32_t kMxScaleBf16Bytes = kMxScaleBf16Elements * sizeof(bfloat16_t);
-    static constexpr uint32_t kMxScaleFp32Elements = kMxDualRegisterStoreBytes / sizeof(float);
-    static constexpr uint32_t kMxScaleFp32Bytes = kMxScaleFp32Elements * sizeof(float);
-    static constexpr uint32_t kMxDataOffset = 3U * kTileBytes;
-    static constexpr uint32_t kMxScaleOffset = kMxDataOffset + kMxDataElements;
-    static constexpr uint32_t kMxScaleBf16Offset = kMxScaleOffset + kMxScaleBytes;
-    static constexpr uint32_t kMxScaleFp32Offset = kMxScaleBf16Offset + kMxScaleBf16Bytes;
-    static constexpr uint32_t kClipMaskBytes = kTileRows * kMxScaleRowBytes;
-    static constexpr uint32_t kGateHighOffset = kMxScaleFp32Offset + kMxScaleFp32Bytes;
-    static constexpr uint32_t kUpLowOffset = kGateHighOffset + kClipMaskBytes;
-    static constexpr uint32_t kUpHighOffset = kUpLowOffset + kClipMaskBytes;
-    static constexpr uint32_t kMxScratchEnd = kUpHighOffset + kClipMaskBytes;
-    static_assert(kMxScratchEnd <= Catlass::Arch::Ascend950::UB_SIZE,
+    using UbLayout = MegaMoeBF16Training::BackwardSwigluUbLayout;
+    static_assert(tla::get<0>(L0TileShape_{}) == UbLayout::kTileRows &&
+                      tla::get<1>(L0TileShape_{}) == UbLayout::kTileColumns,
+                  "Backward SwiGLU tile must match its UB layout");
+    static_assert(UbLayout::kMxScratchEnd <= Catlass::Arch::Ascend950::UB_SIZE,
                   "The backward SwiGLU work tiles and MXFP8 decoder must fit in A5 UB");
-    static constexpr uint32_t kWeightBytes = (kTileRows * sizeof(TopkWeightT) + 31U) / 32U * 32U;
+    static constexpr uint32_t kWeightBytes = (UbLayout::kTileRows * sizeof(TopkWeightT) + 31U) / 32U * 32U;
     static constexpr uint32_t kWeightOffset = Catlass::Arch::Ascend950::UB_SIZE - kWeightBytes;
-    static_assert(kWeightOffset >= kMxScratchEnd, "Prefetched weights must not alias live MXFP8 decode or clip masks");
-    static_assert(kWeightOffset >= kMxScratchEnd + kTileRows * 8U * sizeof(float),
+    static_assert(kWeightOffset >= UbLayout::kMxScratchEnd,
+                  "Prefetched weights must not alias live MXFP8 decode or clip masks");
+    static_assert(kWeightOffset >= UbLayout::kMxScratchEnd + UbLayout::kTileRows * 8U * sizeof(float),
                   "Prefetched weights must not alias the SwiGLU dP scratch");
 
     __aicore__ inline void LoadPackedWeights(uint32_t rows, uint32_t mLoc)
@@ -533,9 +516,9 @@ private:
         const uint32_t scaleWidth = outputF_ / 32;
         const uint32_t groups = singleN / 32;
         const bool hasClipMask = params_.gateHighGmAddr != nullptr;
-        for (uint32_t chunkRow = 0; chunkRow < singleM; chunkRow += kDecodeRows) {
-            const uint16_t rows =
-                static_cast<uint16_t>(singleM - chunkRow > kDecodeRows ? kDecodeRows : singleM - chunkRow);
+        for (uint32_t chunkRow = 0; chunkRow < singleM; chunkRow += UbLayout::kDecodeRows) {
+            const uint16_t rows = static_cast<uint16_t>(
+                singleM - chunkRow > UbLayout::kDecodeRows ? UbLayout::kDecodeRows : singleM - chunkRow);
             const uint32_t globalRow = rowStart + chunkRow;
             const int64_t dataIndex = static_cast<int64_t>(globalRow) * outputF_ + nLoc;
             const int64_t scaleIndex = static_cast<int64_t>(globalRow) * scaleWidth + nLoc / 32;
@@ -549,14 +532,14 @@ private:
                     static_cast<int64_t>(globalRow) * maskWidthBytes + (nLoc / 32) * sizeof(uint32_t);
                 if (gatePlane) {
                     CopyMxRowsToUb(lowMaskGm, maskIndex, rows, groups * sizeof(uint32_t), maskWidthBytes,
-                                   gateHighMask_[chunkRow * kMxScaleRowBytes]);
+                                   gateHighMask_[chunkRow * UbLayout::kMxScaleRowBytes]);
                 } else {
                     CopyMxRowsToUb(lowMaskGm, maskIndex, rows, groups * sizeof(uint32_t), maskWidthBytes,
-                                   upLowMask_[chunkRow * kMxScaleRowBytes]);
+                                   upLowMask_[chunkRow * UbLayout::kMxScaleRowBytes]);
                 }
                 if (!gatePlane) {
                     CopyMxRowsToUb(highMaskGm, maskIndex, rows, groups * sizeof(uint32_t), maskWidthBytes,
-                                   upHighMask_[chunkRow * kMxScaleRowBytes]);
+                                   upHighMask_[chunkRow * UbLayout::kMxScaleRowBytes]);
                 }
             }
             AscendC::SyncFunc<AscendC::HardEvent::MTE2_V>();
@@ -594,7 +577,7 @@ private:
                     AscendC::Reg::RegTensor<fp8_e8m0_t> src;
                     AscendC::Reg::RegTensor<bfloat16_t> value;
                     AscendC::Reg::DataCopy<fp8_e8m0_t, AscendC::Reg::LoadDist::DIST_UNPACK_B8>(
-                        src, scales + row * kMxScaleRowBytes + i * bf16PerReg);
+                        src, scales + row * UbLayout::kMxScaleRowBytes + i * bf16PerReg);
                     AscendC::Reg::Cast<bfloat16_t, fp8_e8m0_t, fp8ToWide>(value, src, mask);
                     AscendC::Reg::DataCopy<bfloat16_t, AscendC::Reg::StoreDist::DIST_INTLV_B16>(
                         scaleBf16 + i * bf16PerReg * 2, value, value, mask);
@@ -654,7 +637,8 @@ private:
                     const uint32_t column = repeat * lanes;
                     MaskReg clipped;
                     // Each packed bit selects one BF16 element (two predicate bits).
-                    DataCopy<uint8_t, MaskDist::DIST_US>(clipped, maskBits + row * kMxScaleRowBytes + column / 8U);
+                    DataCopy<uint8_t, MaskDist::DIST_US>(clipped,
+                                                         maskBits + row * UbLayout::kMxScaleRowBytes + column / 8U);
                     auto valid = UpdateMask<uint16_t>(remaining);
                     And(clipped, clipped, valid, all);
                     DataCopy(dstBits + row * rowStride + column, value, clipped);
@@ -668,7 +652,7 @@ private:
     {
         constexpr uint16_t positiveInfinityBf16 = 0x7f80U;
         constexpr uint16_t negativeInfinityBf16 = 0xff80U;
-        const uint32_t offset = maskRow * kMxScaleRowBytes;
+        const uint32_t offset = maskRow * UbLayout::kMxScaleRowBytes;
         if (gatePlane) {
             SetClippedValues(dst, gateHighMask_[offset], rows, columns, columns, positiveInfinityBf16);
         } else {
@@ -915,7 +899,7 @@ private:
         auto* hp = (__ubuf__ bfloat16_t*)extraA_.GetPhyAddr();
         auto* weights = (__ubuf__ TopkWeightT*)packedWeightUb_.GetPhyAddr();
         auto* partials = (__ubuf__ float*)fusedDpUb_.GetPhyAddr();
-        constexpr uint16_t rows = kTileRows, columns = kTileColumns;
+        constexpr uint16_t rows = UbLayout::kTileRows, columns = UbLayout::kTileColumns;
         __VEC_SCOPE__
         {
             for (uint16_t row = 0; row < rows; ++row) {
@@ -931,7 +915,7 @@ private:
                     AscendC::Reg::DataCopy<float, AscendC::Reg::LoadDist::DIST_BRC_B32>(pFp, weights + row);
                 }
                 for (uint16_t col = 0; col < columns; col += 64U) {
-                    const uint32_t offset = static_cast<uint32_t>(row) * kTileColumns + col;
+                    const uint32_t offset = static_cast<uint32_t>(row) * UbLayout::kTileColumns + col;
                     AscendC::Reg::RegTensor<bfloat16_t> gBf, uBf, dHpBf;
                     AscendC::Reg::RegTensor<float> gateFp, upFp, dHpFp, dHFp;
                     AscendC::Reg::DataCopy<bfloat16_t, AscendC::Reg::LoadDist::DIST_UNPACK_B16>(gBf, dUp + offset);
@@ -1026,13 +1010,13 @@ private:
         }
         if constexpr (UseSavedClipMask) {
             AscendC::PipeBarrier<PIPE_V>();
-            ApplySavedClipGradientMask(kTileRows, kTileColumns, kTileColumns);
+            ApplySavedClipGradientMask(UbLayout::kTileRows, UbLayout::kTileColumns, UbLayout::kTileColumns);
         }
     }
 
     __aicore__ inline void RunFusedFullTile(uint32_t rows, uint32_t columns, uint32_t mLoc, uint32_t nLoc)
     {
-        static_assert(kMxScratchEnd + kTileRows * 32U <= kWeightOffset,
+        static_assert(UbLayout::kMxScratchEnd + UbLayout::kTileRows * 32U <= kWeightOffset,
                       "Fused partials overlap neither masks nor weights");
         if (params_.savedGateUpMode == MegaMoeBF16Training::kSaveMxFp8 && params_.gateHighGmAddr != nullptr) {
             ComputeFusedFullTile<true>();
@@ -1068,7 +1052,7 @@ private:
         SetClippedValues(l0cOutUbSecond_, upLowMask_, rows, columns, rowStride, 0U);
     }
 
-    // h = BF16(SiLU_FP32(gate)*up), stored in extraA_ at UB offset 2*kTileBytes.
+    // h = BF16(SiLU_FP32(gate)*up), stored in extraA_ at UB offset 2*UbLayout::kTileBytes.
     __aicore__ inline void ComputeSwigluRecompute(uint16_t mSize, uint16_t nSize, uint32_t rowStride)
     {
         constexpr uint16_t kElementsPerRepeat = 256U / sizeof(bfloat16_t);
@@ -1135,19 +1119,26 @@ private:
         }
     }
 
-    AscendC::LocalTensor<bfloat16_t> l0cOutUbFirst_{AscendC::TPosition::VECIN, 0, kTileElements};
-    AscendC::LocalTensor<bfloat16_t> l0cOutUbSecond_{AscendC::TPosition::VECIN, kTileBytes, kTileElements};
-    AscendC::LocalTensor<bfloat16_t> extraA_{AscendC::TPosition::VECIN, 2 * kTileBytes, kTileElements};
-    AscendC::LocalTensor<TopkWeightT> packedWeightUb_{AscendC::TPosition::VECIN, kWeightOffset, kTileRows};
-    AscendC::LocalTensor<float> fusedDpUb_{AscendC::TPosition::VECCALC, kMxScratchEnd, kTileRows * 8U};
-    AscendC::LocalTensor<int8_t> mxData_{AscendC::TPosition::VECIN, kMxDataOffset, kMxDataElements};
-    AscendC::LocalTensor<int8_t> mxScale_{AscendC::TPosition::VECIN, kMxScaleOffset, kMxScaleBytes};
-    AscendC::LocalTensor<bfloat16_t> mxScaleBf16_{AscendC::TPosition::VECCALC, kMxScaleBf16Offset,
-                                                  kMxScaleBf16Elements};
-    AscendC::LocalTensor<float> mxScaleFp32_{AscendC::TPosition::VECCALC, kMxScaleFp32Offset, kMxScaleFp32Elements};
-    AscendC::LocalTensor<int8_t> gateHighMask_{AscendC::TPosition::VECIN, kGateHighOffset, kClipMaskBytes};
-    AscendC::LocalTensor<int8_t> upLowMask_{AscendC::TPosition::VECIN, kUpLowOffset, kClipMaskBytes};
-    AscendC::LocalTensor<int8_t> upHighMask_{AscendC::TPosition::VECIN, kUpHighOffset, kClipMaskBytes};
+    AscendC::LocalTensor<bfloat16_t> l0cOutUbFirst_{AscendC::TPosition::VECIN, 0, UbLayout::kTileElements};
+    AscendC::LocalTensor<bfloat16_t> l0cOutUbSecond_{AscendC::TPosition::VECIN, UbLayout::kTileBytes,
+                                                     UbLayout::kTileElements};
+    AscendC::LocalTensor<bfloat16_t> extraA_{AscendC::TPosition::VECIN, 2 * UbLayout::kTileBytes,
+                                             UbLayout::kTileElements};
+    AscendC::LocalTensor<TopkWeightT> packedWeightUb_{AscendC::TPosition::VECIN, kWeightOffset, UbLayout::kTileRows};
+    AscendC::LocalTensor<float> fusedDpUb_{AscendC::TPosition::VECCALC, UbLayout::kMxScratchEnd,
+                                           UbLayout::kTileRows * 8U};
+    AscendC::LocalTensor<int8_t> mxData_{AscendC::TPosition::VECIN, UbLayout::kMxDataOffset, UbLayout::kMxDataElements};
+    AscendC::LocalTensor<int8_t> mxScale_{AscendC::TPosition::VECIN, UbLayout::kMxScaleOffset, UbLayout::kMxScaleBytes};
+    AscendC::LocalTensor<bfloat16_t> mxScaleBf16_{AscendC::TPosition::VECCALC, UbLayout::kMxScaleBf16Offset,
+                                                  UbLayout::kMxScaleBf16Elements};
+    AscendC::LocalTensor<float> mxScaleFp32_{AscendC::TPosition::VECCALC, UbLayout::kMxScaleFp32Offset,
+                                             UbLayout::kMxScaleFp32Elements};
+    AscendC::LocalTensor<int8_t> gateHighMask_{AscendC::TPosition::VECIN, UbLayout::kGateHighOffset,
+                                               UbLayout::kClipMaskBytes};
+    AscendC::LocalTensor<int8_t> upLowMask_{AscendC::TPosition::VECIN, UbLayout::kUpLowOffset,
+                                            UbLayout::kClipMaskBytes};
+    AscendC::LocalTensor<int8_t> upHighMask_{AscendC::TPosition::VECIN, UbLayout::kUpHighOffset,
+                                             UbLayout::kClipMaskBytes};
 
     AscendC::GlobalTensor<bfloat16_t> gatePlaneGm_;
     AscendC::GlobalTensor<bfloat16_t> upPlaneGm_;

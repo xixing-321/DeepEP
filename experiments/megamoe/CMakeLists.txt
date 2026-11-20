@@ -108,8 +108,8 @@ add_custom_target(megamoe_device DEPENDS "${kernel_library}")
 add_library(megamoe_kernel SHARED IMPORTED)
 set_target_properties(megamoe_kernel PROPERTIES IMPORTED_LOCATION "${kernel_library}")
 
-pybind11_add_module(megamoe_ext csrc/bindings.cpp csrc/forward.cpp
-    csrc/backward.cpp)
+pybind11_add_module(megamoe_ext csrc/bindings.cpp csrc/plan_quantized.cpp csrc/plan_bf16.cpp
+    csrc/forward.cpp csrc/backward.cpp)
 set_target_properties(megamoe_ext PROPERTIES OUTPUT_NAME _C
     INSTALL_RPATH "$ORIGIN" INSTALL_RPATH_USE_LINK_PATH FALSE)
 target_include_directories(megamoe_ext PRIVATE ${quantized_include_dirs} ${bf16_include_dirs}

@@ -143,7 +143,7 @@ def runtime_identity():
         ),
         "test_sources": {
             name: fingerprint(Path(__file__).with_name(name))
-            for name in ("test_mega_moe.py", "npu_baseline.py", "mxfp8_diagnostics.py")
+            for name in ("test_mega_moe.py", "accuracy.py", "npu_baseline.py", "mxfp8_diagnostics.py")
         },
     }
 

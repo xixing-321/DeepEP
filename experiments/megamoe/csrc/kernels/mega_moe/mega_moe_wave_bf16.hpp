@@ -111,23 +111,6 @@ private:
     __aicore__ inline void UnpermuteV2();
     __aicore__ inline void CrossRankSyncInWorldSize();
 
-    __aicore__ inline void TilingByCore(int32_t totalLen, int32_t& coreLen, int32_t& coreOffset,
-                                        int32_t align = ALIGN_32)
-    {
-        int32_t coreIdx = GetBlockIdx();
-        int32_t coreNum = GetBlockNum() * 2;  // 取到vec核总数
-        int32_t lenPerCore = Ops::Base::CeilDiv(static_cast<uint32_t>(totalLen), static_cast<uint32_t>(coreNum));
-        int32_t lenPerCoreAlign = Ops::Base::CeilAlign(static_cast<uint32_t>(lenPerCore), static_cast<uint32_t>(align));
-        coreLen = lenPerCoreAlign;
-        coreOffset = coreIdx * lenPerCoreAlign;
-        if (coreOffset + coreLen >= totalLen) {
-            coreLen = totalLen - coreOffset;
-        }
-        if (coreOffset >= totalLen) {
-            coreLen = 0;
-        }
-    }
-
     __aicore__ inline int64_t TokenPerExpertLayout(int64_t dim0, int64_t dim1, int64_t dim2)
     {
         return dim0 * perRankStridesInTokenPerExpert_ + dim1 * expertPerRank_ + dim2;
@@ -714,7 +697,7 @@ __aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::UnpermuteV2()
         return;
     }
     int32_t coreLen, coreOffset;
-    TilingByCore(m_, coreLen, coreOffset, 1);
+    MegaMoeImpl::TilingByCore(m_, coreLen, coreOffset, 1);
     if (MegaMoeBF16Routing::TryUnpermute<TopkWeightT>(params_.workspaceInfo.expandedRowIdxGather,
                                                       params_.peermemInfo.ptrD, params_.y2GmAddr, k_, topK_, coreOffset,
                                                       coreLen, Catlass::Arch::Ascend950::UB_SIZE, params_.probsGmAddr,
@@ -1126,30 +1109,31 @@ __aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::CombineSlice(const WaveS
     using namespace MegaMoeBF16Training::Wave;
     const PeerRowLayout<UbPeerPrefix> layout{{waveCumsum_}, {waveSourcePrefix_}, worldSize_, expertPerRank_, rankId_};
     auto* sliceOutput = reinterpret_cast<__gm__ bfloat16_t*>(SliceOutput(scratchRow));
-    layout.ForEachSpan(
-        slice, begin, end, combinePeerLimits_, [&](const PeerTransfer& t, uint64_t packedRow) __aicore__ {
-            const uint32_t source = t.sourceRank, rows = t.rowCount;
-            const uint64_t remoteRow = layout.SourceRow(slice, t);
-            GlobalTensor<bfloat16_t> input, output;
-            input.SetGlobalBuffer(sliceOutput + (packedRow - slice.packed) * k_);
-            input.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
-            const uint64_t returnOffset = params_.peermemInfo.ptrD - params_.peermemInfo.ptrBase;
-            output.SetGlobalBuffer(
-                reinterpret_cast<__gm__ bfloat16_t*>(::GetRankWinAddrWithOffset(source, returnOffset)) + remoteRow * k_);
-            for (uint32_t row = 0; row < rows; ++row) {
-                const uint32_t ping = waveCombineSequence_ & 1U;
-                const TEventID event = ping ? EVENT_ID7 : EVENT_ID6;
-                WaitFlag<HardEvent::MTE3_MTE2>(event);
-                DataCopy(buffers[ping], input[static_cast<uint64_t>(row) * k_], k_);
-                SetFlag<HardEvent::MTE2_MTE3>(event);
-                WaitFlag<HardEvent::MTE2_MTE3>(event);
-                DataCopy(output[static_cast<uint64_t>(row) * k_], buffers[ping], k_);
-                SetFlag<HardEvent::MTE3_MTE2>(event);
-                ++waveCombineSequence_;
-                // Keep the completion cursor moving while this slice's token sends are in flight.
-                PollDownCompletion();
-            }
-        });
+    layout.ForEachSpan(slice, begin, end, combinePeerLimits_,
+                       [&](const PeerTransfer& t, uint64_t packedRow) __aicore__ {
+                           const uint32_t source = t.sourceRank, rows = t.rowCount;
+                           const uint64_t remoteRow = layout.SourceRow(slice, t);
+                           GlobalTensor<bfloat16_t> input, output;
+                           input.SetGlobalBuffer(sliceOutput + (packedRow - slice.packed) * k_);
+                           input.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
+                           const uint64_t returnOffset = params_.peermemInfo.ptrD - params_.peermemInfo.ptrBase;
+                           output.SetGlobalBuffer(
+                               reinterpret_cast<__gm__ bfloat16_t*>(::GetRankWinAddrWithOffset(source, returnOffset)) +
+                               remoteRow * k_);
+                           for (uint32_t row = 0; row < rows; ++row) {
+                               const uint32_t ping = waveCombineSequence_ & 1U;
+                               const TEventID event = ping ? EVENT_ID7 : EVENT_ID6;
+                               WaitFlag<HardEvent::MTE3_MTE2>(event);
+                               DataCopy(buffers[ping], input[static_cast<uint64_t>(row) * k_], k_);
+                               SetFlag<HardEvent::MTE2_MTE3>(event);
+                               WaitFlag<HardEvent::MTE2_MTE3>(event);
+                               DataCopy(output[static_cast<uint64_t>(row) * k_], buffers[ping], k_);
+                               SetFlag<HardEvent::MTE3_MTE2>(event);
+                               ++waveCombineSequence_;
+                               // Keep the completion cursor moving while this slice's token sends are in flight.
+                               PollDownCompletion();
+                           }
+                       });
 }
 
 template <typename TopkWeightT>

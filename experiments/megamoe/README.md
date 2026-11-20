@@ -259,7 +259,7 @@ python -m pip install -r experiments/megamoe/tests/requirements.txt
 python -m pytest experiments/megamoe/tests -q
 ```
 
-保留公开 API、数值参考、Golden 缓存、打包、主机协调与计时解析测试。
+公共接口、打包和跨 rank 性能统计的测试在 `tests/`，W4A8 和 BF16 的专项测试分别在 `tests/w4a8/` 和 `tests/bf16/`。
 CPU 检查不启动设备 kernel，也不作为设备验证结果。Ascend950 设备验证记录按以下维度区分：
 
 - MegaMoE 开启/关闭、timer 开启/关闭的构建安装验证。
@@ -348,7 +348,7 @@ dP乘积与归约为FP32，最后转换为p的dtype；GMM的Hp、dZ保持BF16。
 临时workspace由Host Plan持有，相同shape/type/保存配置复用。
 训练时 `SymmBuffer(..., save_dispatched_x=True)` 默认将专家端 X 和 TopK weight 保存在本次前向的 autograd context 中。行序依次为本地专家、源 EP rank、源内 token/TopK slot。BF16、MXFP8 的 Gate/Up 也按此顺序保存，MXFP8 的 scale 和 clipping 掩码与对应行对齐。
 
-框架自行重建时设置 `save_dispatched_x=False`，并在每次前向前设置 `sym_buffer.dispatch_rebuilder` 为该 microbatch 的无参函数。反向调用该函数取得连续的设备端 UInt8 缓冲。缓冲依次存放 `[max_recv_tokens, H]` BF16 X 和 `[max_recv_tokens]` 原 dtype 的 p，两段分别按 512 字节对齐。异步重建时，回调须让调用流等待生产端事件。每个前向独立记录回调，支持多前向后逆序反向。直接调用原生 Plan 的框架可以在 `forward_out(..., save_dispatched_x=False)` 后将重建张量传入 `backward`。
+框架自行重建时设置 `save_dispatched_x=False`，并在每次前向前设置 `sym_buffer.dispatch_rebuilder` 为该 microbatch 的无参函数。反向调用该函数取得连续的设备端 UInt8 缓冲。缓冲依次存放 `[max_recv_tokens, H]` BF16 X 和 `[max_recv_tokens]` 原 dtype 的 p，两段分别按 512 字节对齐。异步重建时，回调须让调用流等待生产端事件。每个前向独立记录回调，支持多前向后逆序反向。直接调用原生 Plan 的框架可以在 `plan.forward(..., capture_timer=False, save_dispatched_x=False)` 后将重建张量传入 `backward`。
 跨rank使用相同调用顺序、p dtype及配置。debug_collectives=True可开启跨rank dtype/阶段诊断，默认关闭。
 
 BF16 推理（`need_grad=False`）固定使用模式 0，按 Wave 交错执行 GMM1 和 GMM2，与 W4A8 的调度方式一致。BF16 训练（`need_grad=True`）默认也使用模式 0；编译时设置 `DEEPEP_MEGAMOE_BF16_FORWARD_SCHEDULE=1` 可切换为分阶段调度。
@@ -363,3 +363,18 @@ python experiments/megamoe/tests/bf16/test_mega_moe.py 0,1,2,3,4,5,6,7 --seq 409
 
 CPU FP64真值、小算子参考、输入生成与评价口径保留在同一测试入口。
 运行 `--help` 查看精度、性能及Timer选项。源码职责见 [BF16设计说明](docs/bf16_design.md)。
+
+两卡生命周期回归使用同一 SymmBuffer，先后排入不同的 microbatch，再按相反顺序做反向。每个 microbatch 的输出和梯度与其串行结果逐字节比较。可加 `--stress-iterations 32` 检查连续复用。
+
+```bash
+torchrun --standalone --nproc-per-node=2 experiments/megamoe/tests/bf16/bf16_lifecycle.py
+```
+
+性能报告中的 `event_tail_half_rank_max_mean_ms` 取正式调用的后半段，每次先取所有 EP rank 中最长的 Event 耗时，再对这些耗时求平均。
+
+同一个 BF16 测试入口还支持以下两种对照，shape、路由、TopK weight 类型和 seed 沿用上面的参数。
+
+- `--skip performance --bitwise-bigop`：在双标杆检查之外，将每个 rank 的 Y、dX、dP、dW1、dW2 与未压缩 BigOp 逐元素比较原始字节。counts 单独检查整数值。报告给出每项差异元素数和首个差异的展平索引，任一差异使测试失败。选 MXFP8 时，对照仍是未压缩 BigOp。
+- `--compare-forward`：在同一台机器上依次启动 MegaMoE、BigOp、DeepEP MC，逐 rank 核对输入指纹。需要同时构建 MegaMoE 和 EP_GMM_FUSED。MC 使用 `alltoallv_gmm` 和 `gmm_alltoallv`，与 BigOp 共用乘权、激活和 TopK 归并。两条拼接路径预先准备路由计划和权重布局，计时覆盖每次前向的数据重排、通信和计算。MegaMoE 按指定模式执行训练前向；MC 关闭 AllToAllV 输出导出。
+
+三路性能报告分别列出 NPU Event 和设备 kernel 耗时（ms）。Event 单独采样；kernel 耗时取同一 rank、同一次前向的 profiler 设备任务区间并集，含通信，重叠部分只计一次。两列均按正式轮次后半段，逐轮取最慢 rank 再求平均。各 rank 的原始样本和 profiler 导出保存在 `--output` 指定的新目录。

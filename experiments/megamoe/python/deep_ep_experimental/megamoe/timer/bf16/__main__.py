@@ -8,22 +8,12 @@ import argparse
 import json
 from pathlib import Path
 
+from .. import parse_rank_list
 from .trace_parser import export_rank
 
 
 def parse_ranks(value):
-    ranks = []
-    for part in value.split(","):
-        bounds = part.split("-")
-        if len(bounds) == 1:
-            ranks.append(int(part))
-        elif len(bounds) == 2 and int(bounds[0]) <= int(bounds[1]):
-            ranks.extend(range(int(bounds[0]), int(bounds[1]) + 1))
-        else:
-            raise ValueError("Use ranks such as 0-7 or 0,3,7")
-    if not ranks or min(ranks) < 0 or max(ranks) >= 1024 or len(set(ranks)) != len(ranks):
-        raise ValueError("Timer ranks must be unique and within [0,1023]")
-    return ranks
+    return parse_rank_list(value, 1024)
 
 
 def export(directory, ranks, *, include_wait=False, merge=True):

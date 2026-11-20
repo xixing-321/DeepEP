@@ -62,6 +62,12 @@
 
 namespace MegaMoeBF16BackwardCatlassImpl {
 
+using MegaMoeImpl::Get;
+using MegaMoeImpl::NotifyCube;
+using MegaMoeImpl::NotifyVector;
+using MegaMoeImpl::WaitForCube;
+using MegaMoeImpl::WaitForVector;
+
 using ArchTag = Catlass::Arch::Ascend950;
 using RowMajor = Catlass::layout::RowMajor;
 using ColumnMajor = Catlass::layout::ColumnMajor;

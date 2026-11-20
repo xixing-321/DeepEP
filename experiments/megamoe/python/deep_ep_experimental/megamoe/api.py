@@ -256,9 +256,10 @@ class SymmBuffer:
     def _prepare(self, bs, limit=0.0, save_type=None):
         integer("BS", bs, 1, self.num_max_tokens_per_rank)
         if self.mma_type == "bf16xbf16":
-            from ._bf16 import prepare
+            from ._bf16 import prepare_plan, validate_buffer_inputs
 
-            return prepare(self, bs, limit, save_type)
+            validate_buffer_inputs(self, bs)
+            return prepare_plan(self, bs, limit, save_type)
         if self._plan_bs == bs:
             return
         # 只保留当前 BS 的计划，不让不同 BS 的最坏容量 workspace 累积占满 HBM。

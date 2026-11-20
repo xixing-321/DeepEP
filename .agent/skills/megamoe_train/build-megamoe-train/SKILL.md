@@ -181,7 +181,7 @@ print("Training extension:", train_native.__file__)
 print("BF16 API:", bf16_mega_moe.__name__)
 assert train_native.bf16_enabled
 assert callable(bf16_mega_moe)
-assert hasattr(train_native.BF16Plan, "forward_out")
+assert callable(train_native.BF16Plan.forward) and callable(train_native.BF16Plan.backward)
 print("PASS: installed training extensions load")
 PY
 )
