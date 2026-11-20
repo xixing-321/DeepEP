@@ -14,7 +14,7 @@ public:
     using FixedTiming = typename Schema::FixedTiming;
 
     __aicore__ inline void Init(GM_ADDR timerAddr, int cores = Schema::N_CORE_COUNT,
-                                int capacity = Schema::MAX_DYNAMIC_ITER)
+                                int capacity = Schema::MAX_DYNAMIC_ITER, bool recordWaveIds = Schema::kWaveIds)
     {
 #ifdef DEEPEP_MEGAMOE_TIMER
         timerAddr_ = timerAddr;
@@ -51,6 +51,9 @@ public:
         } else {
             coreId_ = blockId * coresPerGroup;
         }
+        if constexpr (Schema::kWaveIds) {
+            waveBase_ = recordWaveIds ? WaveOffset() + coreId_ * WaveStride() : -1;
+        }
         for (int typeId = 0; typeId < Schema::DYNAMIC_TYPE_COUNT; ++typeId) {
             dynamicCounts_[typeId] = 0;
         }
@@ -86,7 +89,7 @@ public:
     {
         if (!Enabled()) return -1;
         AscendC::PipeBarrier<PIPE_ALL>();
-        return BeginRaw(static_cast<int>(type), AscendC::GetSystemCycle());
+        return BeginRaw(static_cast<int>(type), AscendC::GetSystemCycle(), waveId_);
     }
     __aicore__ inline void EndInterval(typename Schema::DynamicTimingType type, int index)
     {
@@ -101,7 +104,7 @@ public:
         if (!Enabled()) return -1;
         nStart_ = n;
         nTile_ = n == static_cast<uint32_t>(-1) ? -1 : static_cast<int>(n / tileN);
-        return BeginRaw(static_cast<int>(type), AscendC::GetSystemCycle());
+        return BeginRaw(static_cast<int>(type), AscendC::GetSystemCycle(), waveId_);
     }
     __aicore__ inline void EndPassiveInterval(typename Schema::DynamicTimingType type, int index)
     {
@@ -156,7 +159,7 @@ public:
         nTile_ = n == static_cast<uint32_t>(-1) ? -1 : static_cast<int>(n / tileN);
         activeType_ = static_cast<int>(type);
         activeWaveId_ = waveId_;
-        activeIndex_ = BeginRaw(activeType_, AscendC::GetSystemCycle());
+        activeIndex_ = BeginRaw(activeType_, AscendC::GetSystemCycle(), activeWaveId_);
         return true;
     }
 
@@ -203,7 +206,7 @@ public:
         AscendC::PipeBarrier<PIPE_ALL>();
         activeType_ = static_cast<int>(type);
         activeWaveId_ = waveId_;
-        activeIndex_ = BeginRaw(activeType_, AscendC::GetSystemCycle());
+        activeIndex_ = BeginRaw(activeType_, AscendC::GetSystemCycle(), activeWaveId_);
     }
 
     __aicore__ inline void EndSpan(typename Schema::DynamicTimingType type)
@@ -239,7 +242,7 @@ public:
             if (!tileActive_ && activeType_ >= 0) {
                 EndRaw(activeType_, activeIndex_, cycle);
             }
-            waitIndex_ = BeginRaw(waitType_, cycle);
+            waitIndex_ = BeginRaw(waitType_, cycle, activeType_ >= 0 ? activeWaveId_ : waveId_);
         }
         return true;
     }
@@ -259,7 +262,7 @@ public:
                 WriteStart(DynamicTimingIndex(activeType_, activeIndex_), cycle);
             }
         } else if (!tileActive_ && activeType_ >= 0) {
-            activeIndex_ = BeginRaw(activeType_, cycle);
+            activeIndex_ = BeginRaw(activeType_, cycle, activeWaveId_);
         }
     }
 
@@ -310,6 +313,7 @@ private:
     }
     GM_ADDR timerAddr_ = nullptr;
     int coreId_ = -1;
+    int waveBase_ = -1;
     int64_t waveId_ = Schema::NO_WAVE;
     int64_t activeWaveId_ = Schema::NO_WAVE;
     int dynamicCounts_[Schema::DYNAMIC_TYPE_COUNT]{};
@@ -346,7 +350,7 @@ private:
         }
     }
 
-    __aicore__ inline int BeginRaw(int typeId, int64_t cycle)
+    __aicore__ inline int BeginRaw(int typeId, int64_t cycle, int64_t wave)
     {
         int index = dynamicCounts_[typeId]++;
         // 即使溢出也保留实际计数，主机必须报错，不能静默输出截断流水。
@@ -354,7 +358,7 @@ private:
             return -1;
         }
         WriteMetadata(typeId, index);
-        WriteWave(DynamicTimingIndex(typeId, index), activeWaveId_);
+        WriteWave(DynamicTimingIndex(typeId, index), wave);
         WriteStart(DynamicTimingIndex(typeId, index), cycle);
         return index;
     }
@@ -386,7 +390,7 @@ private:
     __aicore__ inline void WriteWave(int timingId, int64_t waveId)
     {
         if constexpr (Schema::kWaveIds) {
-            WriteValue(WaveOffset() + coreId_ * WaveStride() + timingId, waveId);
+            if (waveBase_ >= 0) WriteValue(waveBase_ + timingId, waveId);
         }
     }
 

@@ -66,6 +66,7 @@ enum DynamicTimingType {
 
 constexpr int64_t kMagic = 0x44455054524e5431LL;  // DEPTRNT1
 constexpr int64_t kVersion = 1;
+constexpr int64_t kForwardWaveVersion = 2;
 constexpr int kHeaderWords = 16;
 constexpr int kMetadataWords = 7;
 constexpr int kMaxCoreGroups = 64;
@@ -96,9 +97,11 @@ struct Layout {
     {
         return CountsOffset() + cores * CountStride();
     }
-    constexpr int64_t Elements() const
+    constexpr int64_t Elements(bool withWaves) const
     {
-        return MetadataOffset() + static_cast<int64_t>(cores) * DYNAMIC_TYPE_COUNT * capacity * kMetadataWords;
+        const int64_t metadataEnd =
+            MetadataOffset() + static_cast<int64_t>(cores) * DYNAMIC_TYPE_COUNT * capacity * kMetadataWords;
+        return metadataEnd + (withWaves ? static_cast<int64_t>(cores) * ((Items() + 15) / 16 * 16) : 0);
     }
 };
 

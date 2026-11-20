@@ -16,16 +16,17 @@ def parse_ranks(value):
     return parse_rank_list(value, 1024)
 
 
-def export(directory, ranks, *, include_wait=False, merge=True):
+def export(directory, ranks, *, include_wait=False, merge=True, output_dir=None):
     directory = Path(directory)
+    output = Path(output_dir) if output_dir is not None else directory
     combined = []
     for rank in ranks:
-        combined.extend(export_rank(directory, rank, include_wait=include_wait))
+        combined.extend(export_rank(directory, rank, include_wait=include_wait, output_dir=output))
     if merge:
         for phase in ("forward", "backward", None):
             selected = combined if phase is None else [e for e in combined if e["args"]["phase"] == phase]
             suffix = "" if phase is None else f"_{phase}"
-            (directory / f"all_rank{suffix}_trace.json").write_text(
+            (output / f"all_rank{suffix}_trace.json").write_text(
                 json.dumps(selected, ensure_ascii=False), encoding="utf-8"
             )
     return len(combined)
@@ -34,11 +35,14 @@ def export(directory, ranks, *, include_wait=False, merge=True):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("directory", type=Path)
+    parser.add_argument("--output-dir", type=Path, help="write traces here (default: alongside the raw buffers)")
     parser.add_argument("--ranks", type=parse_ranks, default=parse_ranks("0-7"))
     parser.add_argument("--include-wait", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--merge", action=argparse.BooleanOptionalAction, default=True)
     args = parser.parse_args()
-    count = export(args.directory, args.ranks, include_wait=args.include_wait, merge=args.merge)
+    count = export(
+        args.directory, args.ranks, include_wait=args.include_wait, merge=args.merge, output_dir=args.output_dir
+    )
     print(f"[TIMER] exported {count} events; rank-local clocks, common forward/backward origin per rank")
 
 

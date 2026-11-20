@@ -26,11 +26,12 @@ def decode(path, rank):
     if sys.byteorder != "little":
         raw.byteswap()
     header = list(raw[: p.HEADER_WORDS])
-    if header[:2] != [p.MAGIC, p.VERSION]:
+    with_waves = header[1] == p.FORWARD_WAVE_VERSION
+    if header[0] != p.MAGIC or not (header[1] == p.VERSION or (with_waves and header[4] == 0)):
         raise ValueError(f"{path}: unsupported training Timer protocol")
     if header[4] not in (0, 1) or header[5:8] != [len(p.FIXED_NAMES), len(p.DYNAMIC_NAMES), p.METADATA_WORDS]:
         raise ValueError(f"{path}: inconsistent training Timer event schema")
-    layout = p.layout(header[2], header[3])
+    layout = p.layout(header[2], header[3], with_waves=with_waves)
     if len(raw) != layout["elements"]:
         raise ValueError(f"{path}: training Timer size differs from header")
     phase = "forward" if header[4] == 0 else "backward"
@@ -84,6 +85,14 @@ def decode(path, rank):
                     )
                 if name in ("AIC_SYNC_WAIT", "AIV_SYNC_WAIT"):
                     task = {}
+            wave = {}
+            if with_waves:
+                wave_id = raw[layout["waves"] + core * layout["wave_stride"] + slot]
+                drain = name == "AIV_COMBINE" and task.get("task_flags") == 2
+                scheduled = name in ("AIV_DISPATCH", "AIC_GMM1", "AIV_SWIGLU", "AIC_GMM2", "AIV_COMBINE") and not drain
+                if wave_id < -1 or (wave_id == -1 and scheduled) or ((family is None or drain) and wave_id != -1):
+                    raise ValueError(f"rank={rank} core={core} {name}: invalid Wave ID {wave_id}")
+                wave = {"wave_id": wave_id}
             events.append(
                 dict(
                     name=name,
@@ -96,6 +105,7 @@ def decode(path, rank):
                     start_cycle=start,
                     end_cycle=end,
                     slot=index,
+                    **wave,
                     task=task,
                 )
             )
@@ -125,6 +135,7 @@ def chrome_events(events, origin, *, include_wait=True):
     for event in events:
         if event["name"].endswith("WAIT"):
             waits[event["core_id"]].append((event["start_cycle"], event["end_cycle"]))
+    waits = {core: merge_intervals(spans) for core, spans in waits.items()}
     result = []
     for event in events:
         name = event["name"]
@@ -133,7 +144,7 @@ def chrome_events(events, origin, *, include_wait=True):
             continue
         intervals = [(event["start_cycle"], event["end_cycle"])]
         if event["slot"] is not None and not is_wait:
-            for left, right in merge_intervals(waits[event["core_id"]]):
+            for left, right in waits.get(event["core_id"], ()):
                 intervals = [(a, min(b, left)) for a, b in intervals if a < left] + [
                     (max(a, right), b) for a, b in intervals if b > right
                 ]
@@ -142,6 +153,8 @@ def chrome_events(events, origin, *, include_wait=True):
                 continue
             task = event["task"]
             label = name + (f" e{task['expert_id']} m{task['row_start']} n{task['n_start']}" if task else "")
+            if event.get("wave_id", -1) >= 0:
+                label = f"wave_{event['wave_id']}_{label}"
             result.append(
                 dict(
                     name=label,
@@ -159,6 +172,7 @@ def chrome_events(events, origin, *, include_wait=True):
                         task_id=event["slot"],
                         start_cycle=start,
                         end_cycle=end,
+                        **({"wave_id": event["wave_id"]} if "wave_id" in event else {}),
                         **task,
                     ),
                 )
@@ -256,8 +270,50 @@ def expert_events(events, origin, *, include_wait=False):
     return sorted(result, key=lambda event: (event["args"]["core_id"], event["ts"], event["name"]))
 
 
-def export_rank(directory, rank, *, include_wait=False):
+def wave_events(detail, *, include_wait=False):
+    """Keep measured work fragments on their physical lane, including gaps between successive tiles."""
+    counters = defaultdict(int)
+    labels = {}
+    result = []
+    for event in detail:
+        args = event["args"]
+        family = args["event_family"]
+        is_wait = event["cat"] == "wait"
+        if family in ("KERNEL_TIMING", "AIV_SAVE_GATE_UP") or (
+            is_wait and (not include_wait or family.endswith("_UB_WAIT"))
+        ):
+            continue
+        core, wave, slot = args["core_id"], args["wave_id"], args["task_id"]
+        group, engine, sub = core_info(core)
+        label = family
+        if wave >= 0:
+            key = (core, wave, family)
+            task = (*key, slot)
+            if task not in labels:
+                labels[task] = counters[key]
+                counters[key] += 1
+            if is_wait and labels[task] != 0:
+                continue
+            label = f"wave_{wave}_{family}_{labels[task]}"
+        elif family == "AIV_COMBINE" and args.get("task_flags") == 2:
+            label = "AIV_COMBINE_DRAIN"
+        result.append(
+            dict(
+                event,
+                name=label,
+                pid=f"rank{args['rank']}",
+                tid=f"group_{group}_{engine}_{sub}",
+                cat="dependency_wait" if is_wait else ("aic_op" if engine == "AIC" else "aiv_op"),
+                args=dict(args, is_wait=is_wait),
+            )
+        )
+    return sorted(result, key=lambda event: (event["args"]["core_id"], event["ts"], event["name"]))
+
+
+def export_rank(directory, rank, *, include_wait=False, output_dir=None):
     directory = Path(directory)
+    output = Path(output_dir) if output_dir is not None else directory
+    output.mkdir(parents=True, exist_ok=True)
     phases = {}
     for phase in ("forward", "backward"):
         path = directory / f"rank_{rank}_{phase}_time.bin"
@@ -266,12 +322,15 @@ def export_rank(directory, rank, *, include_wait=False):
             if info["phase"] != phase:
                 raise ValueError(f"{path}: phase does not match filename")
             phases[phase] = events
-            (directory / f"rank_{rank}_{phase}_info.json").write_text(json.dumps(info, indent=2), encoding="utf-8")
-            with (directory / f"rank_{rank}_{phase}_parsed.csv").open("w", newline="", encoding="utf-8") as stream:
+            (output / f"rank_{rank}_{phase}_info.json").write_text(json.dumps(info, indent=2), encoding="utf-8")
+            with (output / f"rank_{rank}_{phase}_parsed.csv").open("w", newline="", encoding="utf-8") as stream:
                 writer = csv.writer(stream)
-                writer.writerow(["rank", "core", "phase", "event", "start_cycle", "end_cycle", "task"])
+                columns = ["rank", "core", "phase", "event", "start_cycle", "end_cycle", "task"]
+                has_waves = info["protocol_version"] == p.FORWARD_WAVE_VERSION
+                writer.writerow(columns + (["wave_id"] if has_waves else []))
                 writer.writerows(
                     (rank, e["core_id"], phase, e["name"], e["start_cycle"], e["end_cycle"], json.dumps(e["task"]))
+                    + ((e["wave_id"],) if has_waves else ())
                     for e in events
                 )
     if not phases:
@@ -279,7 +338,13 @@ def export_rank(directory, rank, *, include_wait=False):
     all_events = [e for events in phases.values() for e in events]
     origin = min(e["start_cycle"] for e in all_events if e["name"] == "KERNEL_TIMING")
     detail = chrome_events(all_events, origin)
-    combined = expert_events(all_events, origin, include_wait=include_wait)
+    combined = []
+    for phase, events in phases.items():
+        if "wave_id" in events[0]:
+            forward_detail = [event for event in detail if event["args"]["phase"] == phase]
+            combined.extend(wave_events(forward_detail, include_wait=include_wait))
+        else:
+            combined.extend(expert_events(events, origin, include_wait=include_wait))
     for phase in phases:
         selected = [event for event in combined if event["args"]["phase"] == phase]
         selected_detail = [event for event in detail if event["args"]["phase"] == phase]
@@ -292,7 +357,7 @@ def export_rank(directory, rank, *, include_wait=False):
             )
             for e in selected_detail
         ]
-        write_summary(summary_events, directory / f"rank_{rank}_{phase}_summary.csv")
+        write_summary(summary_events, output / f"rank_{rank}_{phase}_summary.csv")
         lanes = defaultdict(lambda: defaultdict(list))
         for event in selected_detail:
             lanes[event["args"]["event_family"]][event["args"]["core_id"]].append(
@@ -306,14 +371,13 @@ def export_rank(directory, rank, *, include_wait=False):
             )
             for name, by_core in lanes.items()
         }
-        (directory / f"rank_{rank}_{phase}_breakdown.json").write_text(
-            json.dumps(breakdown, indent=2), encoding="utf-8"
-        )
-        (directory / f"rank_{rank}_{phase}_trace.json").write_text(
+        (output / f"rank_{rank}_{phase}_breakdown.json").write_text(json.dumps(breakdown, indent=2), encoding="utf-8")
+        (output / f"rank_{rank}_{phase}_trace.json").write_text(
             json.dumps(selected, ensure_ascii=False), encoding="utf-8"
         )
-        (directory / f"rank_{rank}_{phase}_detail_trace.json").write_text(
-            json.dumps(selected_detail, ensure_ascii=False), encoding="utf-8"
+        (output / f"rank_{rank}_{phase}_detail_trace.json").write_text(
+            json.dumps([e for e in selected_detail if include_wait or e["cat"] != "wait"], ensure_ascii=False),
+            encoding="utf-8",
         )
-    (directory / f"rank_{rank}_trace.json").write_text(json.dumps(combined, ensure_ascii=False), encoding="utf-8")
+    (output / f"rank_{rank}_trace.json").write_text(json.dumps(combined, ensure_ascii=False), encoding="utf-8")
     return combined

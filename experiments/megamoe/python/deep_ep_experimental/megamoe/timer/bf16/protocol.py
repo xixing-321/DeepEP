@@ -2,10 +2,11 @@
 # Modified by xixing 2026
 # Modified by guofanfeng 2026
 
-"""Training Timer v1 protocol; matrix coordinates are stage-specific."""
+"""BF16 training Timer protocol; matrix coordinates are stage-specific."""
 
 MAGIC = 0x44455054524E5431
 VERSION = 1
+FORWARD_WAVE_VERSION = 2
 HEADER_WORDS = 16
 METADATA_WORDS = 7
 CYCLE_TO_US = 1000.0
@@ -62,7 +63,7 @@ DYNAMIC_NAMES = [
 ]
 
 
-def layout(cores, capacity):
+def layout(cores, capacity, *, with_waves=False):
     if not 0 < cores <= 192 or cores % 3 or not 0 < capacity <= 16384:
         raise ValueError("invalid training Timer lane count or capacity")
     items = len(FIXED_NAMES) + len(DYNAMIC_NAMES) * capacity
@@ -70,7 +71,8 @@ def layout(cores, capacity):
     count_stride = (len(DYNAMIC_NAMES) + 15) // 16 * 16
     counts = HEADER_WORDS + cores * stride
     metadata = counts + cores * count_stride
-    elements = metadata + cores * len(DYNAMIC_NAMES) * capacity * METADATA_WORDS
+    waves = metadata + cores * len(DYNAMIC_NAMES) * capacity * METADATA_WORDS
+    wave_stride = (items + 15) // 16 * 16
     return dict(
         cores=cores,
         capacity=capacity,
@@ -78,5 +80,7 @@ def layout(cores, capacity):
         count_stride=count_stride,
         counts=counts,
         metadata=metadata,
-        elements=elements,
+        waves=waves,
+        wave_stride=wave_stride,
+        elements=waves + (cores * wave_stride if with_waves else 0),
     )

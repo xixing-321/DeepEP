@@ -18,7 +18,7 @@ struct MegaMoeTrainTimerSchema {
     static constexpr int NO_WAVE = -1;
     static constexpr int kHeaderWords = MegaMoeTrainTimer::kHeaderWords;
     static constexpr int kMetadataWords = MegaMoeTrainTimer::kMetadataWords;
-    static constexpr bool kWaveIds = false, kPairWaitSlots = false, kStandaloneWait = true;
+    static constexpr bool kWaveIds = true, kPairWaitSlots = false, kStandaloneWait = true;
     static constexpr bool kIndependentSpans = true;
     __aicore__ static inline bool DrainTile(int)
     {
@@ -33,15 +33,17 @@ public:
     __aicore__ inline void Init(GM_ADDR address)
     {
         int cores = 0, capacity = 0;
+        bool withWaves = false;
 #ifdef DEEPEP_MEGAMOE_TIMER
         if (address != nullptr) {
             AscendC::GlobalTensor<int64_t> header;
             header.SetGlobalBuffer(reinterpret_cast<__gm__ int64_t*>(address));
             cores = static_cast<int>(header.GetValue(2));
             capacity = static_cast<int>(header.GetValue(3));
+            withWaves = header.GetValue(1) == MegaMoeTrainTimer::kForwardWaveVersion;
         }
 #endif
-        BasicAscendTimerDevice::Init(address, cores, capacity);
+        BasicAscendTimerDevice::Init(address, cores, capacity, withWaves);
     }
 
     __aicore__ inline void SetSlice(int expert, uint32_t rowStart, uint32_t rows)

@@ -930,6 +930,7 @@ __aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::CopyWavePayload(uint32_t
 template <typename TopkWeightT>
 __aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::DispatchWave(const WaveRange& range)
 {
+    if (timer_ != nullptr) timer_->SetWave(range.begin.wave);
     using namespace MegaMoeBF16Training::Wave;
     const WaveCounts counts{waveExpertRows_};
     // Match inference: partition the complete Wave across all AIV1 workers,
@@ -972,6 +973,7 @@ __aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::Gmm1Wave(
     const WaveRange& range, MegaMoeBF16ForwardCatlassImpl::WaveMatmul<TransW>& matmul, uint32_t& startBlock,
     uint32_t& sequence)
 {
+    if (timer_ != nullptr) timer_->SetWave(range.begin.wave);
     using namespace MegaMoeBF16Training::Wave;
     const WaveCounts counts{waveExpertRows_};
     auto cursor = range.begin;
@@ -989,6 +991,7 @@ template <uint32_t SaveMode, class Epilogue>
 __aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::SwigluWave(const WaveRange& range, Epilogue& epilogue,
                                                                    uint32_t& startBlock, uint32_t& sequence)
 {
+    if (timer_ != nullptr) timer_->SetWave(range.begin.wave);
     using namespace MegaMoeBF16Training::Wave;
     using namespace MegaMoeBF16ForwardCatlassImpl;
     const uint32_t f = params_.tilingData->n / 2U;
@@ -1040,6 +1043,7 @@ __aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::Gmm2Wave(
     const WaveRange& range, MegaMoeBF16ForwardCatlassImpl::WaveMatmul<TransW>& matmul, uint32_t& startBlock,
     int32_t& issued)
 {
+    if (timer_ != nullptr) timer_->SetWave(range.begin.wave);
     using namespace MegaMoeBF16Training::Wave;
     const WaveCounts counts{waveExpertRows_};
     auto cursor = range.begin;
@@ -1085,6 +1089,7 @@ __aicore__ inline bool MegaMoeBF16Forward<TopkWeightT>::PollDownCompletion()
         return false;
     // issued only queues a notification. FULL establishes the actual FIX completion boundary.
     const auto& slice = state.slice;
+    if (timer_ != nullptr) timer_->SetWave(state.cursor.wave);
     MegaMoeTrainTimerPassiveScope completion(timer_, MegaMoeTrainTimer::AIV_COMBINE_WAIT, slice.expert, slice.row,
                                              slice.rows, uint32_t(-1), kGmm2Rows, kTileColumns,
                                              params_.tilingData->n / 2U, k_, 1U);
@@ -1230,6 +1235,7 @@ __aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::ProcessWave(TPipe& first
                     dispatch.valid && (reuseInput ? InputsConsumed(priorInput) : OutputSlotAvailable(dispatchWave));
                 if (ready && ((params_.tilingData->forwardSchedule == 0U && preferCombine) || !canDispatch)) {
                     const auto sent = combineCursor.wave;
+                    if (timer_ != nullptr) timer_->SetWave(sent);
                     CombineSlice(combine, scratch_.Row(sent, combineFirstRow, combine.packed));
                     hasCombine = NextWaveSlice(combineCursor, combineGroups, combine);
                     if (!hasCombine || sent != combineCursor.wave) {
@@ -1258,6 +1264,7 @@ __aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::ProcessWave(TPipe& first
             }
             // Retire both row buffers before the final cross-core/rank synchronization.
             if (timer_ != nullptr && timer_->Enabled() && combine.rows != 0U) {
+                timer_->SetWave(MegaMoeTrainTimerSchema::NO_WAVE);
                 timer_->SetSlice(combine.expert, combine.row, combine.rows);
                 timer_->SetTaskShape(kGmm2Rows, k_, 0U, 0U, k_);
                 timer_->SetTaskContext(-1, 2U);
@@ -1325,6 +1332,7 @@ __aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::ProcessWave(TPipe& first
         Gmm2AivCompletion::Drain(GetTPipePtr()->FetchEventID(HardEvent::FIX_S));
     }
     PipeBarrier<PIPE_ALL>();
+    if (timer_ != nullptr) timer_->SetWave(MegaMoeTrainTimerSchema::NO_WAVE);
     if (timer_ != nullptr && combineDrainIndex >= 0) {
         timer_->EndPassiveInterval(MegaMoeTrainTimer::AIV_COMBINE, combineDrainIndex);
     }

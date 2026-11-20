@@ -6,6 +6,7 @@
 
 from array import array
 import importlib
+import json
 from pathlib import Path
 import re
 
@@ -21,15 +22,17 @@ def timer(monkeypatch):
     return importlib.import_module("deep_ep_experimental.megamoe.timer.bf16.trace_parser")
 
 
-def raw_buffer(timer, phase=0):
+def raw_buffer(timer, phase=0, *, with_waves=False):
     p = timer.p
-    layout = p.layout(3, 2)
+    layout = p.layout(3, 2, with_waves=with_waves)
     raw = array("q", [0]) * layout["elements"]
+    if with_waves:
+        raw[layout["waves"] :] = array("q", [-1]) * (layout["elements"] - layout["waves"])
     raw[:16] = array(
         "q",
         [
             p.MAGIC,
-            p.VERSION,
+            p.FORWARD_WAVE_VERSION if with_waves else p.VERSION,
             3,
             2,
             phase,
@@ -50,10 +53,12 @@ def raw_buffer(timer, phase=0):
     return raw, layout
 
 
-def put_event(timer, raw, layout, name, index, start, end, *, m=384, tile_m=192):
+def put_event(timer, raw, layout, name, index, start, end, *, m=384, tile_m=192, wave=None):
     p = timer.p
     family = p.DYNAMIC_NAMES.index(name)
     logical = len(p.FIXED_NAMES) + family * layout["capacity"] + index
+    if wave is not None:
+        raw[layout["waves"] + logical] = wave
     raw[16 + logical * 2 : 18 + logical * 2] = array("q", [start, end])
     raw[layout["counts"] + family] = index + 1
     offset = layout["metadata"] + (family * layout["capacity"] + index) * 7
@@ -151,3 +156,39 @@ def test_expert_view_uses_existing_names_and_excludes_pre_dependency_preparation
     waits = [e for e in with_wait if e["args"]["is_wait"]]
     assert len(waits) == 1 and waits[0]["name"] == "AIC_GMM1_WAIT_2"
     assert waits[0]["ts"] == 1 and waits[0]["dur"] == 4
+
+
+def test_forward_wave_export_keeps_gaps_and_wait_toggle_across_ranks(timer, tmp_path):
+    export = importlib.import_module(timer.__package__ + ".__main__").export
+    for rank in (0, 1):
+        raw, layout = raw_buffer(timer, with_waves=True)
+        put_event(timer, raw, layout, "AIC_GMM1", 0, 101000, 105000, wave=1)
+        put_event(timer, raw, layout, "AIC_GMM1_WAIT", 0, 102000, 103000, wave=1)
+        put_event(timer, raw, layout, "AIC_GMM2", 0, 106000, 110000, wave=0)
+        put_event(timer, raw, layout, "AIC_GMM1", 1, 111000, 116000, wave=1)
+        (tmp_path / f"rank_{rank}_forward_time.bin").write_bytes(raw.tobytes())
+    plain, waits = tmp_path / "plain", tmp_path / "waits"
+    export(tmp_path, (0, 1), output_dir=plain)
+    export(tmp_path, (0, 1), include_wait=True, output_dir=waits)
+    for file in ("rank_0_forward_trace.json", "rank_0_forward_detail_trace.json", "all_rank_forward_trace.json"):
+        hidden = json.loads((plain / file).read_text())
+        visible = json.loads((waits / file).read_text())
+        assert hidden == [e for e in visible if e["cat"] not in ("wait", "dependency_wait")]
+        assert len(visible) > len(hidden)
+    merged = json.loads((plain / "all_rank_forward_trace.json").read_text())
+    assert {e["pid"] for e in merged} == {"rank0", "rank1"}
+    assert [(e["name"], e["ts"], e["dur"]) for e in merged if e["pid"] == "rank0"] == [
+        ("wave_1_AIC_GMM1_0", 1, 1),
+        ("wave_1_AIC_GMM1_0", 3, 2),
+        ("wave_0_AIC_GMM2_0", 6, 4),
+        ("wave_1_AIC_GMM1_1", 11, 5),
+    ]
+
+
+def test_forward_wave_protocol_rejects_missing_wave(timer, tmp_path):
+    raw, layout = raw_buffer(timer, with_waves=True)
+    put_event(timer, raw, layout, "AIC_GMM2", 0, 105000, 109000)
+    path = tmp_path / "rank_0_forward_time.bin"
+    path.write_bytes(raw.tobytes())
+    with pytest.raises(ValueError, match="invalid Wave ID"):
+        timer.decode(path, 0)

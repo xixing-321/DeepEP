@@ -355,6 +355,17 @@ BF16 推理（`need_grad=False`）固定使用模式 0，按 Wave 交错执行 G
 BF16主函数和buffer不暴露调度及Timer参数。Timer由 `DEEPEP_MEGAMOE_TIMER=ON` 编译，
 通过 `deep_ep_experimental.megamoe.timer.bf16.capture.TimerCapture` 采集，独立于常规性能测量。
 
+前向时间线在每个物理核上按实际 Wave 标记 Dispatch、GMM1、SwiGLU、GMM2 和 Combine。例如 `wave_1_AIC_GMM1_0` 是该核在 Wave 1 上的第一个 GMM1 任务。事件详情含专家号和行段。同一专家跨 Wave 时分别显示，准备和收尾阶段单独显示。反向和旧版前向原始文件仍按专家展示。
+
+同一组 EP8 原始文件可以导出两种视图。默认隐藏等待；带等待的前向主图展示各核每个 Wave 的首个阶段等待，详细图保留采集到的全部等待。
+
+```bash
+python -m deep_ep_experimental.megamoe.timer.bf16 timer --ranks 0-7 --no-include-wait --output-dir traces/work
+python -m deep_ep_experimental.megamoe.timer.bf16 timer --ranks 0-7 --include-wait --output-dir traces/with-wait
+```
+
+打开 `all_rank_forward_trace.json` 查看 8 个 rank，或打开 `rank_0_forward_trace.json` 单看一张卡。每个 rank 使用自己的前向起点，跨卡横坐标表示相对进度。
+
 ### BF16测试
 
 ```bash
