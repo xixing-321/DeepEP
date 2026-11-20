@@ -60,8 +60,12 @@ def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("devices", type=parse_devices, nargs="?", default=None)
     parser.add_argument("--bitwise-bigop", action="store_true", help="Require bitwise equality to uncompressed BigOp")
-    parser.add_argument(
-        "--compare-forward", action="store_true", help="Compare MegaMoE, BigOp and DeepEP MC forward Event/kernel time"
+    comparison = parser.add_mutually_exclusive_group()
+    comparison.add_argument("--compare-forward", action="store_true", help="Compare three BF16 forward paths")
+    comparison.add_argument(
+        "--compare-backward",
+        action="store_true",
+        help="Compare training forward and full backward for MegaMoE, BigOp and DeepEP MC (save=bf16)",
     )
     parser.add_argument(
         "--atk", action="store_true", help="Explicit ATK request; all precision runs use ATK by default"
@@ -161,7 +165,10 @@ def parse_args(argv=None):
     args = parser.parse_args(argv)
     if args.bitwise_bigop and args.skip == "precision":
         parser.error("--bitwise-bigop requires a precision run")
-    if args.compare_forward and (
+    compare = args.compare_forward or args.compare_backward
+    if args.compare_backward and args.save_gmm1_output != "bf16":
+        parser.error("--compare-backward requires --save-gmm1-output bf16")
+    if compare and (
         args.suite
         or args.skip
         or args.bitwise_bigop
@@ -172,7 +179,7 @@ def parse_args(argv=None):
         or args.diagnose_mxfp8
         or "RANK" in os.environ
     ):
-        parser.error("--compare-forward is a standalone three-way forward benchmark; run once with python")
+        parser.error("The three-way comparison is a standalone benchmark; run once with python")
     # Keep earlier standalone commands usable while publishing only F in the
     # new manifest/report schema. N denotes GMM1's full Gate+Up width, 2*F.
     if args.gmm_n is not None:
@@ -194,7 +201,7 @@ def parse_args(argv=None):
         parser.error("Internal suite workers require --output and persistent execution")
     if args.atk and args.skip == "precision":
         parser.error("--atk requires precision; use --skip performance for accuracy only")
-    args.atk = args.skip != "precision" and not args.compare_forward
+    args.atk = args.skip != "precision" and not compare
     if args.diagnose_mxfp8 and args.skip != "performance":
         parser.error("--diagnose-mxfp8 requires --skip performance")
     if args.atk_ratios is not None and (
@@ -227,7 +234,7 @@ def parse_args(argv=None):
         parse_devices(inherited) if inherited else list(range(int(os.environ.get("LOCAL_WORLD_SIZE", "2"))))
     )
     world = int(os.environ.get("WORLD_SIZE", str(len(args.devices))))
-    if args.compare_forward and world > 8:
+    if compare and world > 8:
         parser.error("DeepEP MC supports at most 8 ranks")
     if not 2 <= world <= 1024 or not 1 <= args.seq <= 16384 or not 1 <= args.expert_per_rank <= 32:
         parser.error("Requires EP in 2..1024, seq in 1..16384 and local experts in 1..32")
@@ -1399,7 +1406,7 @@ def main(argv=None):
         return run_suite(args)
     os.environ["ASCEND_RT_VISIBLE_DEVICES"] = ",".join(map(str, args.devices))
     installed_root()
-    if args.compare_forward:
+    if args.compare_forward or args.compare_backward:
         from forward_compare import compare_forward
 
         return compare_forward(args)

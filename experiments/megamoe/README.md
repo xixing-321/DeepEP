@@ -383,9 +383,10 @@ torchrun --standalone --nproc-per-node=2 experiments/megamoe/tests/bf16/bf16_lif
 
 性能报告中的 `event_tail_half_rank_max_mean_ms` 取正式调用的后半段，每次先取所有 EP rank 中最长的 Event 耗时，再对这些耗时求平均。
 
-同一个 BF16 测试入口还支持以下两种对照，shape、路由、TopK weight 类型和 seed 沿用上面的参数。
+同一个 BF16 测试入口还支持以下三种对照，shape、路由、TopK weight 类型和 seed 沿用上面的参数。
 
 - `--skip performance --bitwise-bigop`：在双标杆检查之外，将每个 rank 的 Y、dX、dP、dW1、dW2 与未压缩 BigOp 逐元素比较原始字节。counts 单独检查整数值。报告给出每项差异元素数和首个差异的展平索引，任一差异使测试失败。选 MXFP8 时，对照仍是未压缩 BigOp。
 - `--compare-forward`：在同一台机器上依次启动 MegaMoE、BigOp、DeepEP MC，逐 rank 核对输入指纹。需要同时构建 MegaMoE 和 EP_GMM_FUSED。MC 使用 `alltoallv_gmm` 和 `gmm_alltoallv`，与 BigOp 共用乘权、激活和 TopK 归并。两条拼接路径预先准备路由计划和权重布局，计时覆盖每次前向的数据重排、通信和计算。MegaMoE 按指定模式执行训练前向；MC 关闭 AllToAllV 输出导出。
+- `--compare-backward` 同时测训练前向和完整反向，使用 `save=bf16`。MC 前向导出专家端 X，反向用 AllToAllV-GMM 计算 dHp 并导出 dO，用 GMM-AllToAllV 回传各路 dX。三路共享输入和 dY，逐 rank 核对 Y、dX、dP、dW1、dW2。反向 Event 和 kernel 耗时均排除前向建图，报告位于 `summary.json`。
 
-三路性能报告分别列出 NPU Event 和设备 kernel 耗时（ms）。Event 单独采样；kernel 耗时取同一 rank、同一次前向的 profiler 设备任务区间并集，含通信，重叠部分只计一次。两列均按正式轮次后半段，逐轮取最慢 rank 再求平均。各 rank 的原始样本和 profiler 导出保存在 `--output` 指定的新目录。
+三路性能报告分别列出 NPU Event 和设备 kernel 耗时（ms）。Event 单独采样。kernel 耗时按 rank 和轮次统计，分别对一次前向或反向中的计算、通信区间取并集，重叠部分只计一次。两列均取正式轮次的后半段，逐轮取最慢 rank 再求平均。各 rank 的原始样本和 profiler 导出保存在 `--output` 指定的新目录。

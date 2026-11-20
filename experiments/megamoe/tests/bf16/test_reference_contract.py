@@ -20,7 +20,13 @@ class RunnerConfiguration(unittest.TestCase):
         args = self.runner.parse_args(["0,1", "--bitwise-bigop", "--skip", "performance"])
         self.assertIn("--bitwise-bigop", self.runner.launch_options(args))
         self.assertTrue(self.runner.parse_args(["0,1", "--compare-forward"]).compare_forward)
-        for flags in (["--bitwise-bigop", "--skip", "precision"], ["--compare-forward", "--suite", "model"]):
+        self.assertTrue(self.runner.parse_args(["0,1", "--compare-backward"]).compare_backward)
+        for flags in (
+            ["--bitwise-bigop", "--skip", "precision"],
+            ["--compare-forward", "--suite", "model"],
+            ["--compare-forward", "--compare-backward"],
+            ["--compare-backward", "--save-gmm1-output", "none"],
+        ):
             with self.assertRaises(SystemExit):
                 self.runner.parse_args(["0,1", *flags])
 
@@ -33,6 +39,7 @@ class RunnerConfiguration(unittest.TestCase):
             path = Path(folder) / "kernel_details.csv"
             path.write_text("Step Id,Device_id,Start Time(us),Duration(us)\n1,0,10,100\n1,0,30,150\n2,0,1000,40\n")
             self.assertEqual(kernel_rounds(folder, 2), [0.17, 0.04])
+            self.assertEqual(kernel_rounds(folder, 1, paired_steps=True), [0.04])
             with self.assertRaises(ValueError):
                 kernel_rounds(folder, 3)
 
