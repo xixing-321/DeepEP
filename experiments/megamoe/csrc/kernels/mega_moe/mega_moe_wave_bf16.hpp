@@ -1023,8 +1023,7 @@ __aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::SwigluWave(const WaveRan
                     MegaMoeTrainTimerPassiveScope save(timer_, MegaMoeTrainTimer::AIV_SAVE_GATE_UP, slice.expert,
                                                        slice.row + m, shape.m(), n, kGmm1Rows, kPairedColumns, k_, f);
 #endif
-                    const GmPeerPrefix prefix{reinterpret_cast<__gm__ int32_t*>(params_.workspaceInfo.ptrcumsumMM)};
-                    const PeerRowLayout<GmPeerPrefix> layout{prefix, {}, worldSize_, expertPerRank_, rankId_};
+                    const PeerRowLayout<UbPeerPrefix> layout{{waveCumsum_}, {}, worldSize_, expertPerRank_, rankId_};
                     const uint64_t first = slice.packed + m;
                     layout.ForEachSpan(slice, first, first + shape.m(), savePeerLimits_,
                                        [&](const PeerTransfer& t, uint64_t packed) __aicore__ {
@@ -1276,6 +1275,13 @@ __aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::ProcessWave(TPipe& first
         } else {
             GateUpCompletion::InitConsumer();
             Epilogue epilogue;
+            if constexpr (SaveMode != MegaMoeBF16Training::kSaveNone) {
+                const uint32_t entries = worldSize_ * expertPerRank_;
+                waveCumsum_ = epilogue.SavedRowPrefix((entries + 7U) / 8U * 8U);
+                const DataCopyExtParams copy{1U, entries * uint32_t(sizeof(int32_t)), 0U, 0U, 0U};
+                DataCopyPad(waveCumsum_, cumsumInWorkSpace_, copy, DataCopyPadExtParams<int32_t>{false, 0U, 0U, 0});
+                SyncFunc<HardEvent::MTE2_S>();
+            }
             epilogue.Init({params_.workspaceInfo.ptrA2, params_.workspaceInfo.ptrA2Scale, waveReadyBase_, waveWeights_,
                            nullptr, nullptr, nullptr, kGmm1Rows, kPairedColumns, params_.tilingData->swigluLimit,
                            params_.workspaceInfo.ptrSavedGate, params_.workspaceInfo.ptrSavedUp,
@@ -1351,8 +1357,7 @@ __aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::SaveDispatchWeights()
     GlobalTensor<TopkWeightT> src, dst;
     src.SetGlobalBuffer(reinterpret_cast<__gm__ TopkWeightT*>(waveWeights_));
     dst.SetGlobalBuffer(reinterpret_cast<__gm__ TopkWeightT*>(params_.workspaceInfo.ptrDispatchedTopkWeights));
-    const GmPeerPrefix prefix{reinterpret_cast<__gm__ int32_t*>(params_.workspaceInfo.ptrcumsumMM)};
-    const PeerRowLayout<GmPeerPrefix> layout{prefix, {}, worldSize_, expertPerRank_, rankId_};
+    const PeerRowLayout<UbPeerPrefix> layout{{waveCumsum_}, {}, worldSize_, expertPerRank_, rankId_};
     const WaveCounts counts{waveExpertRows_};
     Cursor cursor{};
     WaveSlice slice{};
