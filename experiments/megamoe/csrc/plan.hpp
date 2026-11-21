@@ -20,6 +20,7 @@ struct TrainingSavedStateLayout;
 
 namespace deepep::megamoe {
 
+uint32_t InferenceMaxRecvTokens(uint32_t max_tokens, uint32_t world, uint32_t topk, uint32_t local_experts);
 void FillPeerAddresses(uint64_t* addresses, void* window, int64_t world);
 
 // 一个 BS 对应一个准备好的计划；Python owner 保证同流串行复用及销毁顺序。

@@ -31,7 +31,7 @@ def _extension():
         extension = importlib.import_module(__package__ + "._C")
     except ImportError as error:
         raise ImportError("Cannot load MegaMoE Beta: check matching Torch, torch_npu, CANN and SHMEM") from error
-    if getattr(extension, "api_protocol", None) != 5:
+    if getattr(extension, "api_protocol", None) != 6:
         raise RuntimeError("MegaMoE Python/native versions differ; rebuild and reinstall the complete Beta wheel")
     return extension
 
@@ -157,12 +157,16 @@ class SymmBuffer:
             if gmm1_save_type not in {"bf16", "none", "mxfp8"}:
                 raise ValueError("gmm1_save_type must be bf16, none or mxfp8")
             if bf16:
+                if max_recv_tokens is None and not need_grad:
+                    max_recv_tokens = _extension()._inference_max_recv_tokens(
+                        num_max_tokens_per_rank, size, num_topk, num_experts // size
+                    )
                 integer("max_recv_tokens", max_recv_tokens, 1, (1 << 31) - 1)
             elif not save_dispatched_x or need_grad or max_recv_tokens is not None or gmm1_save_type != "bf16":
                 raise ValueError("Training and receive-capacity settings require bf16xbf16")
             if ranks_per_node and size % ranks_per_node:
                 raise ValueError("ranks_per_node must divide EP (contiguous node-major ranks)")
-        except (TypeError, ValueError) as failure:
+        except (TypeError, ValueError, ImportError, RuntimeError) as failure:
             error = str(failure)
         # 在进入 SHMEM 之前共同校验布局，不能各 rank 各自选择通信偏移。
         config = (

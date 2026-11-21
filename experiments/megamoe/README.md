@@ -330,7 +330,13 @@ y须为独立、连续且预先不要求梯度的BF16 Tensor，不与输入重�
 
 BF16支持EP=2～1024、每卡1～32专家、总专家数不超过2048、M=1～16384、TopK≤32且不超过总专家数。
 H/F为256的倍数；实际shape还须满足Dispatch及激活UB预算。当前设备验收范围为单节点。
-max_recv_tokens是本rank接收route行数的显式上限，按路由峰值设置，不按源token数直接替代。
+`max_recv_tokens` 以每个 rank 接收的 route 行数为单位。BF16 推理可以省略，默认与 W4A8 共用上限
+`num_max_tokens_per_rank × EP × min(TopK, 每卡专家数)`。每个 token 的 TopK 专家互不重复，因此该上限也覆盖热卡。
+已知路由峰值时，推理仍可显式传入较紧的上限。BF16 训练继续要求显式传入。
+
+每张源卡在 SHMEM 中按 token 存一份前向 X，反向在同一区域存一份 dY。专家卡按路由索引取行。
+路由索引、前乘所需的 p 和 Combine 回传槽按每卡源 token 数乘以 TopK 分配。
+每次反向使用对应前向保存的索引，支持多个 microbatch 连续前向后逆序反向。
 
 ### BF16语义与状态
 

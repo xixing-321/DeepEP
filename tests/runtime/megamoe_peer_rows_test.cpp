@@ -33,6 +33,16 @@ int main()
     static_assert(MegaMoeImpl::GetGmmFirstOwnedTile(0, 4, 1) == 3);
     static_assert(MegaMoeImpl::GetGmmFirstOwnedTile(0, 4, 1, true) == 2);
     static_assert(MegaMoeImpl::GetGmmNextStartBlock(3, 3, 4) == 2);
+    // Source tokens are shared by all TopK slots; indices, weights and returns are per route.
+    constexpr uint64_t payloadBase = 8192, sourceRows = 129, hidden = 256, topK = 3;
+    constexpr MegaMoeBF16Training::PeerPayloadLayout bf16Payload(payloadBase, sourceRows, hidden, topK, 2);
+    constexpr MegaMoeBF16Training::PeerPayloadLayout fp32Payload(payloadBase, sourceRows, hidden, topK, 4);
+    static_assert(bf16Payload.routeIndexOffset == payloadBase + sourceRows * hidden * 2);
+    static_assert(bf16Payload.weightOffset == bf16Payload.routeIndexOffset + 2048);
+    static_assert(fp32Payload.weightOffset == bf16Payload.weightOffset);
+    static_assert(bf16Payload.returnOffset == bf16Payload.weightOffset + 1024);
+    static_assert(fp32Payload.returnOffset == fp32Payload.weightOffset + 2048);
+    static_assert(fp32Payload.totalBytes == fp32Payload.returnOffset + sourceRows * topK * hidden * 2);
     assert(kGmm1Rows == 256 && kGmm2Rows == 256 && GroupsPerWave(32, 3072, 7168) == 3);
     using MegaMoeBF16Training::BackwardWorkspaceLayout;
     const BackwardWorkspaceLayout largeEp(4, 24576, 7168, 6144, 128, 32, 4, MegaMoeBF16Training::kSaveBf16);

@@ -56,41 +56,11 @@ __simt_vf__ __aicore__ LAUNCH_BOUND(256) inline void InvertRows(__gm__ int32_t* 
     }
 }
 
-// Two DMA slots batch up to four complete token rows. Wide rows use bounded column tiles.
-__aicore__ inline void PackTokens(GlobalTensor<int32_t>& rows, GM_ADDR input, GM_ADDR packed, uint32_t begin,
-                                  uint32_t end, uint32_t topK, uint32_t hidden)
-{
-    constexpr uint32_t slotElements = 32768;
-    const PackTile tile(hidden, slotElements);
-    TPipe pipe;
-    constexpr uint32_t indexBatch = 256;
-    TBuf<> storage, indexStorage;
-    pipe.InitBuffer(indexStorage, indexBatch * sizeof(int32_t));
-    auto localRows = indexStorage.Get<int32_t>();
-    pipe.InitBuffer(storage, 2 * tile.rows * tile.stride * sizeof(bfloat16_t));
-    auto buf = storage.Get<bfloat16_t>();
-    GlobalTensor<bfloat16_t> x, out;
-    x.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(input));
-    out.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(packed));
-    BeginPackRows();
-    uint32_t ping = 0;
-    for (uint32_t chunk = begin; chunk < end; chunk += indexBatch) {
-        const uint32_t count = end - chunk < indexBatch ? end - chunk : indexBatch;
-        DataCopyPad(localRows, rows[chunk], {1U, count * 4U, 0U, 0U, 0U},
-                    DataCopyPadExtParams<int32_t>{false, 0U, 0U, 0U});
-        SyncFunc<HardEvent::MTE2_S>();
-        PackRows(localRows, x, out[static_cast<uint64_t>(chunk) * hidden], buf, tile, count, hidden, topK, ping);
-        SyncFunc<HardEvent::S_MTE2>();
-    }
-    DrainPackRows();
-    pipe.Destroy();
-}
-
 }  // namespace Bf16Route
 
-__aicore__ inline void InitBf16Routes(GM_ADDR idsAddr, GM_ADDR x, GM_ADDR packed, GM_ADDR countsAddr, GM_ADDR rowsAddr,
-                                      GM_ADDR inverseAddr, uint32_t items, uint32_t topK, uint32_t hidden,
-                                      uint32_t experts, uint32_t core, uint32_t cores)
+__aicore__ inline void InitBf16Routes(GM_ADDR idsAddr, GM_ADDR x, GM_ADDR sourceTokens, GM_ADDR routeIndices,
+                                      GM_ADDR countsAddr, GM_ADDR rowsAddr, GM_ADDR inverseAddr, uint32_t items,
+                                      uint32_t topK, uint32_t hidden, uint32_t experts, uint32_t core, uint32_t cores)
 {
     using namespace AscendC;
     using namespace Bf16Route;
@@ -126,9 +96,14 @@ __aicore__ inline void InitBf16Routes(GM_ADDR idsAddr, GM_ADDR x, GM_ADDR packed
     const uint32_t end = (static_cast<uint64_t>(items) * (core + 1)) / cores;
     if (begin < end) {
         Simt::VF_CALL<InvertRows>(Simt::Dim3{256, 1, 1}, rowPtr, inverse, begin, end);
-        PackTokens(rows, x, packed, begin, end, topK, hidden);
     }
+    TPipe pipe;
+    TBuf<> storage;
+    pipe.InitBuffer(storage, MegaMoeForwardSave::kCopyBufferBytes);
+    PublishDispatchInput(x, sourceTokens, rowsAddr, routeIndices, items / topK, hidden, topK, core, cores,
+                         storage.Get<uint8_t>());
     PipeBarrier<PIPE_ALL>();
+    pipe.Destroy();
 }
 
 }  // namespace MegaMoeImpl

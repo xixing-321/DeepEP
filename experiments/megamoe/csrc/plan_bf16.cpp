@@ -25,7 +25,6 @@ using deepep::megamoe::CeilDiv;
 constexpr int64_t ALIGN_128 = 128;
 constexpr int64_t ALIGN_256 = 256;
 constexpr int64_t ALIGN_512 = 512;
-constexpr int64_t PEERMEM_DATA_OFFSET = 60 * 1024;
 constexpr int64_t INT_CACHELINE = 16;
 constexpr int64_t SWIGLU_N_HALF = 2;
 constexpr int64_t SIZE_BF_16 = 2;
@@ -50,23 +49,6 @@ size_t CalcWorkspaceSize(const MegaMoeBf16TilingData& td)
 inline size_t CalcBf16EarlyTopkWeightWorkspaceSize(const MegaMoeBf16TilingData& td)
 {
     return AlignUp(static_cast<int64_t>(td.maxOutputSize) * MegaMoeBF16Training::TopkWeightBytes(td.topkWeightType),
-                   ALIGN_512);
-}
-
-size_t CalcPeermemSize(const MegaMoeBf16TilingData& td)
-{
-    // Keep this host calculation consistent with device-side PeermemInfo.
-    size_t bytes = PEERMEM_DATA_OFFSET;
-    bytes += td.epWorldSize * AlignUp(static_cast<int64_t>(td.epWorldSize) * td.expertPerRank, ALIGN_128) * SIZE_INT_32;
-    // Source-side packed X and returned expert outputs each hold one BF16 row per route.
-    bytes += 2 * static_cast<int64_t>(td.m) * td.topK * td.k * SIZE_BF_16;
-
-    return bytes;
-}
-
-inline size_t CalcBf16EarlyTopkWeightPeermemSize(const MegaMoeBf16TilingData& td)
-{
-    return AlignUp(static_cast<int64_t>(td.m) * td.topK * MegaMoeBF16Training::TopkWeightBytes(td.topkWeightType),
                    ALIGN_512);
 }
 
@@ -177,20 +159,9 @@ BufferSizes MakeBf16Tiling(MegaMoeBf16TilingData& tiling, int64_t m, int64_t k, 
                 "BF16 forward Dispatch/Combine buffers and routing metadata exceed the AIV1 UB budget");
     tiling.compactTokenCountExchange = ResolveCompactTokenCountExchange(world_size, expert_per_rank) ? 1U : 0U;
     const auto workspaceBytes = optiling::CalcWorkspaceSize(tiling);
-
-    uint64_t peerBytes = optiling::CalcPeermemSize(tiling);
-    {
-        // CalcPeermemSize retains the 60 KiB legacy header used by the
-        // non-BF16 and experimental variants. Ordinary BF16 uses its 72 KiB
-        // synchronization header and, at large EP, an aligned compact-count
-        // inbox before the unchanged dense token-count table.
-        const MegaMoeBF16Training::CompactTokenCountExchangeLayout countLayout(static_cast<uint64_t>(world_size),
-                                                                               static_cast<uint64_t>(expert_per_rank),
-                                                                               tiling.compactTokenCountExchange != 0);
-        peerBytes += countLayout.tokenCountsOffset - MegaMoeBF16Training::kPeerBaseDataOffset;
-    }
-    return {workspaceBytes + optiling::CalcBf16EarlyTopkWeightWorkspaceSize(tiling),
-            peerBytes + optiling::CalcBf16EarlyTopkWeightPeermemSize(tiling)};
+    const CompactTokenCountExchangeLayout counts(world_size, expert_per_rank, tiling.compactTokenCountExchange != 0);
+    const PeerPayloadLayout payload(counts.payloadOffset, m, k, topk, TopkWeightBytes(topk_weight_type));
+    return {workspaceBytes + optiling::CalcBf16EarlyTopkWeightWorkspaceSize(tiling), payload.totalBytes};
 }
 
 constexpr std::size_t kDeviceLargePageBytes = 2 * 1024 * 1024;

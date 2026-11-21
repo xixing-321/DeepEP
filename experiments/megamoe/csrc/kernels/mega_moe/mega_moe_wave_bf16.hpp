@@ -772,14 +772,14 @@ __aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::ProcessWithSaveMode()
         CrossRankSyncInWorldSize();
     }
     int64_t oriOverflowMode = GetCtrlSpr<kBf16OverflowModeBit, kBf16OverflowModeBit>();
-    // 1. Initialize routing and pack BF16 tokens without quantization.
+    // Publish one BF16 row per source token and the route-to-token lookup.
     {
         MegaMoeTrainTimerFixedScope timerStage(timer_, MegaMoeTrainTimer::AIV_INIT_ROUTING);
         if constexpr (g_coreType == AscendC::AIV) {
-            InitBf16Routes(params_.expertIdxGmAddr, params_.aGmAddr, params_.peermemInfo.ptrA0,
-                           tokenPerExpertCurRankAddr_, params_.workspaceInfo.expandedRowIdx,
-                           params_.workspaceInfo.expandedRowIdxGather, m_ * topK_, topK_, k_,
-                           worldSize_ * expertPerRank_, aivCoreIdx_, blockAivNum_);
+            InitBf16Routes(params_.expertIdxGmAddr, params_.aGmAddr, params_.peermemInfo.sourceTokens,
+                           params_.peermemInfo.routeIndices, tokenPerExpertCurRankAddr_,
+                           params_.workspaceInfo.expandedRowIdx, params_.workspaceInfo.expandedRowIdxGather, m_ * topK_,
+                           topK_, k_, worldSize_ * expertPerRank_, aivCoreIdx_, blockAivNum_);
         }
     }
 
@@ -800,10 +800,6 @@ __aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::ProcessWithSaveMode()
     TPipe firstPipe;
     FirstBuffInit(&firstPipe);
 
-    // Use the same sorted-row order as ptrA0 so Dispatch can move each token
-    // row and its BF16 routing weight with identical source/destination spans.
-    // The large-table fallback uses FirstBuffInit's UB staging buffer and
-    // the same MTE3 publication boundary as the batched path above.
     if (!routedWeightsReady) {
         GatherRoutedTopkWeights();
     }
@@ -858,8 +854,13 @@ __aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::CopyWavePayload(uint32_t
     LocalTensor<bfloat16_t> x1{TPosition::VECIN, dispatchBase + copyElements * 2U, copyElements};
     GlobalTensor<bfloat16_t> sourceX, targetX, savedX;
     sourceX.SetGlobalBuffer(
-        reinterpret_cast<__gm__ bfloat16_t*>(::GetRankWinAddrWithOffset(source, params_.peermemInfo.payloadOffset)) +
-        static_cast<uint64_t>(sourceRow) * k_);
+        reinterpret_cast<__gm__ bfloat16_t*>(::GetRankWinAddrWithOffset(source, params_.peermemInfo.payloadOffset)));
+    GlobalTensor<int32_t> routeIds;
+    routeIds.SetGlobalBuffer(reinterpret_cast<__gm__ int32_t*>(::GetRankWinAddrWithOffset(
+                                 source, params_.peermemInfo.routeIndices - params_.peermemInfo.ptrBase)) +
+                             sourceRow);
+    // The weight scratch is free until the last indexed X read has been issued.
+    LocalTensor<int32_t> indices{TPosition::VECIN, dispatchBase + 4U * copyElements, Bf16Route::kIndexBatch};
     targetX.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(waveX) + uint64_t(localRow) * k_);
     if (params_.workspaceInfo.ptrA) {
         savedX.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(params_.workspaceInfo.ptrA) + savedRow * k_);
@@ -868,37 +869,37 @@ __aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::CopyWavePayload(uint32_t
     SetFlag<HardEvent::MTE3_MTE2>(EVENT_ID0);
     SetFlag<HardEvent::MTE3_MTE2>(EVENT_ID1);
     uint32_t ping = 0;
-    uint32_t pendingRow = 0, pendingRows = 0, pendingPing = 0;
-    for (uint32_t row = 0; row < rows; row += rowsPerPing) {
-        const uint32_t count = rows - row < rowsPerPing ? rows - row : rowsPerPing;
+    uint32_t pendingRow = 0, pendingPing = 0;
+    bool pending = false;
+    Bf16Route::ForEachSourceToken(routeIds, indices, rows, topK_, [&](uint32_t row, uint32_t token) __aicore__ {
         const TEventID event = ping ? EVENT_ID1 : EVENT_ID0;
         auto buffer = ping ? x1 : x0;
         WaitFlag<HardEvent::MTE3_MTE2>(event);
-        DataCopy(buffer, sourceX[static_cast<uint64_t>(row) * k_], count * k_);
+        DataCopy(buffer, sourceX[static_cast<uint64_t>(token) * k_], k_);
         SetFlag<HardEvent::MTE2_MTE3>(event);
         // Issue the next read before consuming the preceding chunk's read-complete event.
-        if (pendingRows) {
+        if (pending) {
             const TEventID previousEvent = pendingPing ? EVENT_ID1 : EVENT_ID0;
             auto previousBuffer = pendingPing ? x1 : x0;
             WaitFlag<HardEvent::MTE2_MTE3>(previousEvent);
-            DataCopy(targetX[static_cast<uint64_t>(pendingRow) * k_], previousBuffer, pendingRows * k_);
+            DataCopy(targetX[static_cast<uint64_t>(pendingRow) * k_], previousBuffer, k_);
             if (params_.workspaceInfo.ptrA) {
-                DataCopy(savedX[static_cast<uint64_t>(pendingRow) * k_], previousBuffer, pendingRows * k_);
+                DataCopy(savedX[static_cast<uint64_t>(pendingRow) * k_], previousBuffer, k_);
             }
             SetFlag<HardEvent::MTE3_MTE2>(previousEvent);
         }
         pendingRow = row;
-        pendingRows = count;
+        pending = true;
         pendingPing = ping;
         ping = 1U - ping;
-    }
-    if (pendingRows) {
+    });
+    if (pending) {
         const TEventID event = pendingPing ? EVENT_ID1 : EVENT_ID0;
         auto buffer = pendingPing ? x1 : x0;
         WaitFlag<HardEvent::MTE2_MTE3>(event);
-        DataCopy(targetX[static_cast<uint64_t>(pendingRow) * k_], buffer, pendingRows * k_);
+        DataCopy(targetX[static_cast<uint64_t>(pendingRow) * k_], buffer, k_);
         if (params_.workspaceInfo.ptrA) {
-            DataCopy(savedX[static_cast<uint64_t>(pendingRow) * k_], buffer, pendingRows * k_);
+            DataCopy(savedX[static_cast<uint64_t>(pendingRow) * k_], buffer, k_);
         }
         SetFlag<HardEvent::MTE3_MTE2>(event);
     }

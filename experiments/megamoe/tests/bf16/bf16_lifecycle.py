@@ -39,7 +39,7 @@ def main():
     size = dist.get_world_size()
     torch.manual_seed(20260825)
     device = f"npu:{torch.npu.current_device()}"
-    m, h, f, e, topk = 129, 256, 512, 2, 4
+    m, h, f, e, topk = 129, 256, 512, 3, 4
     ids = (torch.arange(m * topk, dtype=torch.int32).reshape(m, topk) % (size * e)).to(device)
     # Use the same expert weights throughout the sequential and queued runs.
     w1 = (torch.randn(e, 2 * f, h) * 0.02).to(device=device, dtype=torch.bfloat16)

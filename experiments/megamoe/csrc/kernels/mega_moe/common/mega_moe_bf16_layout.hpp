@@ -46,9 +46,6 @@ MEGA_MOE_BF16_HOST_DEVICE constexpr uint64_t TopkWeightBytes(uint32_t type)
 // rank and 8 KiB for per-AIV generation counters. The shared 72 KiB header
 // keeps Host allocation, forward and backward offsets independent of EP.
 constexpr uint64_t kPeerRankSyncSlotBytes = 64;
-// CalcPeermemSize still includes the common 60 KiB legacy header; ordinary
-// BF16 Host allocation adds the difference to the fixed data offset below.
-constexpr uint64_t kPeerBaseDataOffset = 60 * 1024;
 constexpr uint64_t kPeerSyncCountOffset = 64 * 1024;
 constexpr uint64_t kPeerDataOffset = 72 * 1024;
 constexpr uint64_t kCompactTokenCountAutoMinEp = 512;
@@ -122,6 +119,20 @@ struct CompactTokenCountExchangeLayout {
           tokenCountStride(AlignUp(worldSize * expertPerRank, kAlignment128)),
           tokenCountsBytes(worldSize * tokenCountStride * kInt32Bytes),
           payloadOffset(tokenCountsOffset + tokenCountsBytes)
+    {
+    }
+};
+
+// One X (forward) or dY (backward) per source token; indices and returns use route order.
+struct PeerPayloadLayout {
+    uint64_t routeIndexOffset, weightOffset, returnOffset, totalBytes;
+
+    MEGA_MOE_BF16_HOST_DEVICE constexpr PeerPayloadLayout(uint64_t base, uint64_t m, uint64_t h, uint64_t topK,
+                                                          uint64_t weightBytes)
+        : routeIndexOffset(base + m * h * kBf16Bytes),
+          weightOffset(routeIndexOffset + AlignUp(m * topK * kInt32Bytes, kAlignment512)),
+          returnOffset(weightOffset + AlignUp(m * topK * weightBytes, kAlignment512)),
+          totalBytes(returnOffset + m * topK * h * kBf16Bytes)
     {
     }
 };

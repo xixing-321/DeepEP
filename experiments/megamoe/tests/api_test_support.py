@@ -145,6 +145,9 @@ def quantized_backend(monkeypatch):
             if self.closed:
                 raise RuntimeError("Buffer runtime has been destroyed")
 
+        def barrier(self):
+            events.append("barrier")
+
         def close(self):
             events.append("close")
             self.closed = True
