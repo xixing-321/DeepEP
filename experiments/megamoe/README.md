@@ -298,7 +298,7 @@ python -m pip install --force-reinstall --no-deps dist/*.whl
 
 ### BF16使用示例
 
-各EP rank先设置当前NPU、相同SHMEM endpoint并初始化ep_group。以下为EP8、每卡4专家：
+各EP rank先设置当前NPU、相同SHMEM endpoint并初始化ep_group。BF16 可使用已有的 PyTorch ProcessGroup，也可通过 `StoreGroup.from_env(bf16=True)` 建组。EP 上限为 1024，每卡最多 32 个专家，总计最多 2048 个。以下为EP8、每卡4专家：
 
 ```python
 import torch
