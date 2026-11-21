@@ -29,21 +29,26 @@ def decode(path, rank):
     with_waves = header[1] == p.FORWARD_WAVE_VERSION
     if header[0] != p.MAGIC or not (header[1] == p.VERSION or (with_waves and header[4] == 0)):
         raise ValueError(f"{path}: unsupported training Timer protocol")
-    if header[4] not in (0, 1) or header[5:8] != [len(p.FIXED_NAMES), len(p.DYNAMIC_NAMES), p.METADATA_WORDS]:
+    fixed_count = header[5]
+    if (
+        header[4] not in (0, 1)
+        or fixed_count not in (p.FIXED_NAMES.index("AIV_RESET") + 1, len(p.FIXED_NAMES))
+        or header[6:8] != [len(p.DYNAMIC_NAMES), p.METADATA_WORDS]
+    ):
         raise ValueError(f"{path}: inconsistent training Timer event schema")
-    layout = p.layout(header[2], header[3], with_waves=with_waves)
+    layout = p.layout(header[2], header[3], with_waves=with_waves, fixed_count=fixed_count)
     if len(raw) != layout["elements"]:
         raise ValueError(f"{path}: training Timer size differs from header")
     phase = "forward" if header[4] == 0 else "backward"
     events = []
     for core in range(layout["cores"]):
         group, engine, sub = core_info(core)
-        slots = [(name, i, None, None) for i, name in enumerate(p.FIXED_NAMES)]
+        slots = [(name, i, None, None) for i, name in enumerate(p.FIXED_NAMES[:fixed_count])]
         for family, name in enumerate(p.DYNAMIC_NAMES):
             count = raw[layout["counts"] + core * layout["count_stride"] + family]
             if not 0 <= count <= layout["capacity"]:
                 raise ValueError(f"rank={rank} core={core} {name}: Timer overflow ({count})")
-            slots.extend((name, len(p.FIXED_NAMES) + family * layout["capacity"] + i, family, i) for i in range(count))
+            slots.extend((name, fixed_count + family * layout["capacity"] + i, family, i) for i in range(count))
         for name, slot, family, index in slots:
             offset = p.HEADER_WORDS + core * layout["stride"] + slot * 2
             start, end = raw[offset : offset + 2]

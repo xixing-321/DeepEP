@@ -110,7 +110,17 @@ def _swiglu_backward_fp32(grad_h, gate_up, limit, raw=None):
 
 
 @torch.no_grad()
-def run_baseline(inputs, device, expert_start, save_mode="bf16", swiglu_limit=0.0, *, reference="megamoe", trace=None):
+def run_baseline(
+    inputs,
+    device,
+    expert_start,
+    save_mode="bf16",
+    swiglu_limit=0.0,
+    *,
+    reference="megamoe",
+    trace=None,
+    inference=False,
+):
     """Run the selected reference with public w1=[E,2F,H], w2=[E,H,F].
 
     Pack expert-major, then source-rank/token order. The reference names select
@@ -133,9 +143,13 @@ def run_baseline(inputs, device, expert_start, save_mode="bf16", swiglu_limit=0.
         "reference": reference,
         "topk_weight_dtype": inputs["p"].dtype,
     }
+    if inference:
+        result["weights"] = inputs["p"]
     if trace is not None:
         trace.update(rows=rows.clone(), slots=slots.clone(), counts=counts.clone())
     if not rows.numel():
+        if inference:
+            return result
         result.update(
             dw1=torch.zeros(inputs["w1"].shape, dtype=torch.bfloat16, device="cpu"),
             dw2=torch.zeros(inputs["w2"].shape, dtype=torch.bfloat16, device="cpu"),
@@ -145,12 +159,17 @@ def run_baseline(inputs, device, expert_start, save_mode="bf16", swiglu_limit=0.
     def tensor(value):
         return value.to(device=device, dtype=torch.bfloat16).contiguous()
 
-    x, dy = tensor(inputs["x"][rows]), tensor(inputs["dy"][rows])
-    p = inputs["p"][rows, slots, None].to(device=device).contiguous()
+    x = tensor(inputs["x"][rows])
     weight1 = tensor(inputs["w1"].transpose(1, 2))
     weight2 = tensor(inputs["w2"].transpose(1, 2))
     forward_z = _grouped_matmul(x, weight1, counts)
     forward_h = _swiglu_fp32(forward_z, swiglu_limit)
+    if inference:
+        expert_y = _grouped_matmul(forward_h.to(forward_z.dtype), weight2, counts)
+        result["routes"].append({"rows": rows, "slots": slots, "y": expert_y.cpu()})
+        return result
+    dy = tensor(inputs["dy"][rows])
+    p = inputs["p"][rows, slots, None].to(device=device).contiguous()
     forward_hp = (forward_h * p.float()).to(forward_z.dtype)
     y = _grouped_matmul(forward_hp, weight2, counts)
 

@@ -1353,6 +1353,7 @@ __aicore__ inline void MegaMoeBF16Forward<TopkWeightT>::SaveDispatchWeights()
     const uint64_t chunk = ((maxOutputSize_ + blockNum_ * line - 1) / (blockNum_ * line)) * line;
     const uint64_t lo = chunk * blockIdx_, hi = lo + chunk;
     if (lo >= maxOutputSize_) return;
+    MegaMoeTrainTimerFixedScope timerSave(timer_, MegaMoeTrainTimer::AIV_SAVE_DISPATCH_WEIGHTS);
     LocalTensor<TopkWeightT> buffer{TPosition::VECIN, 0, elements};
     GlobalTensor<TopkWeightT> src, dst;
     src.SetGlobalBuffer(reinterpret_cast<__gm__ TopkWeightT*>(waveWeights_));

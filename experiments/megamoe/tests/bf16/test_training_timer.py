@@ -22,9 +22,11 @@ def timer(monkeypatch):
     return importlib.import_module("deep_ep_experimental.megamoe.timer.bf16.trace_parser")
 
 
-def raw_buffer(timer, phase=0, *, with_waves=False):
+def raw_buffer(timer, phase=0, *, with_waves=False, fixed_count=None):
     p = timer.p
-    layout = p.layout(3, 2, with_waves=with_waves)
+    if fixed_count is None:
+        fixed_count = len(p.FIXED_NAMES)
+    layout = p.layout(3, 2, with_waves=with_waves, fixed_count=fixed_count)
     raw = array("q", [0]) * layout["elements"]
     if with_waves:
         raw[layout["waves"] :] = array("q", [-1]) * (layout["elements"] - layout["waves"])
@@ -36,7 +38,7 @@ def raw_buffer(timer, phase=0, *, with_waves=False):
             3,
             2,
             phase,
-            len(p.FIXED_NAMES),
+            fixed_count,
             len(p.DYNAMIC_NAMES),
             7,
             258,
@@ -56,7 +58,7 @@ def raw_buffer(timer, phase=0, *, with_waves=False):
 def put_event(timer, raw, layout, name, index, start, end, *, m=384, tile_m=192, wave=None):
     p = timer.p
     family = p.DYNAMIC_NAMES.index(name)
-    logical = len(p.FIXED_NAMES) + family * layout["capacity"] + index
+    logical = raw[5] + family * layout["capacity"] + index
     if wave is not None:
         raw[layout["waves"] + logical] = wave
     raw[16 + logical * 2 : 18 + logical * 2] = array("q", [start, end])
@@ -96,6 +98,15 @@ def test_real_tile_coordinates_and_multiple_wait_intervals(timer, tmp_path):
     assert sum(e["dur"] for e in trace if e["args"]["event_family"] == "AIC_GMM1") == 7
     assert sum(e["dur"] for e in trace if e["cat"] == "wait") == 3
     assert not any(e["cat"] == "wait" for e in timer.chrome_events(events, 100000, include_wait=False))
+
+
+def test_decode_capture_before_dispatch_weight_timer(timer, tmp_path):
+    raw, layout = raw_buffer(timer, fixed_count=15)
+    put_event(timer, raw, layout, "AIC_GMM2", 0, 101000, 112000)
+    path = tmp_path / "rank_0_forward_time.bin"
+    path.write_bytes(raw.tobytes())
+    events, _ = timer.decode(path, 0)
+    assert [(e["name"], e["start_cycle"]) for e in events] == [("KERNEL_TIMING", 100000), ("AIC_GMM2", 101000)]
 
 
 def test_weight_gradient_coordinates_keep_reduction_dimension(timer, tmp_path):

@@ -12,6 +12,20 @@ def combine_baseline(partial, args, rank, world, device):
     from npu_baseline import unpermute_routes
 
     m, h = args.seq, args.hidden
+    if args.inference:
+        weights = partial["weights"][rank * m : (rank + 1) * m].to(device=device, dtype=torch.float32)
+        for destination in range(world):
+            buffer = torch.zeros((m, args.topk, h), dtype=torch.float32)
+            for route in partial["routes"]:
+                mask = route["rows"] // m == destination
+                buffer[route["rows"][mask] % m, route["slots"][mask]] = route["y"][mask].float()
+            dist.reduce(buffer.view(torch.int32), dst=destination, op=dist.ReduceOp.BOR)
+            if destination == rank:
+                routes = buffer.to(device)
+                y = routes[:, 0] * weights[:, 0:1]
+                for slot in range(1, args.topk):
+                    y += routes[:, slot] * weights[:, slot : slot + 1]
+        return {"y": y.bfloat16().cpu()}
     for destination in range(world):
         # Every row/slot has one owning expert. FP32 carries BF16 y/dx and
         # either BF16 or FP32 dp exactly; no route contributions are combined.
@@ -38,9 +52,11 @@ def local_truth(inputs, args, rank):
 
     from cpu_reference import run_reference
 
-    result = run_reference(inputs, rank * args.expert_per_rank, args.chunk_rows, args.swiglu_limit)
+    result = run_reference(
+        inputs, rank * args.expert_per_rank, args.chunk_rows, args.swiglu_limit, forward_only=args.inference
+    )
     sl = slice(rank * args.seq, (rank + 1) * args.seq)
-    for name in ("y", "dx", "dtopk_weights"):
+    for name in ("y",) if args.inference else ("y", "dx", "dtopk_weights"):
         dist.all_reduce(result[name])
         result[name] = result[name][sl].clone()
     return result
@@ -60,6 +76,7 @@ def prepare_references(inputs, args, rank, world, device, mode, trace, phase):
                 "bf16",
                 args.swiglu_limit,
                 reference="bigop",
+                inference=args.inference,
                 trace=trace if mode == "bf16" else None,
             ),
             args,
@@ -67,7 +84,7 @@ def prepare_references(inputs, args, rank, world, device, mode, trace, phase):
             world,
             device,
         )
-    if mode == "bf16":
+    if args.inference or mode == "bf16":
         # Both checks use the same uncompressed small-op reference.
         mixed_baseline = raw_baseline
     else:
@@ -84,37 +101,36 @@ def prepare_references(inputs, args, rank, world, device, mode, trace, phase):
 
 def bitwise_bigop(actual, baseline):
     """Compare native bytes per element. Count an element once even if several bytes differ."""
-    import torch
-
-    from precision_metrics import OUTPUTS
+    from precision_metrics import OUTPUTS, compare_bits
 
     checks = {}
     for name in OUTPUTS:
         a, b = actual[name], baseline[name]
-        if a.shape != b.shape or a.dtype != b.dtype:
+        result = compare_bits(a, b)
+        if "numel" in result:
+            checks[name] = dict(
+                passed=result["passed"],
+                numel=result["numel"],
+                mismatches=result["different_elements"],
+                first_flat=result["first_flat_index"],
+            )
+        else:
             checks[name] = {"passed": False, "error": f"{a.shape}/{a.dtype} vs {b.shape}/{b.dtype}"}
-            continue
-        width = a.element_size()
-        lhs = a.contiguous().view(torch.uint8).reshape(a.numel(), width)
-        rhs = b.contiguous().view(torch.uint8).reshape(b.numel(), width)
-        mismatches, first = 0, None
-        for start in range(0, a.numel(), 1 << 20):
-            stop = start + (1 << 20)
-            unequal = (lhs[start:stop] != rhs[start:stop]).any(dim=1)
-            count = int(unequal.sum())
-            if count and first is None:
-                first = start + int(unequal.nonzero()[0, 0])
-            mismatches += count
-        checks[name] = {"passed": mismatches == 0, "numel": a.numel(), "mismatches": mismatches, "first_flat": first}
     return {"passed": all(check["passed"] for check in checks.values()), "outputs": checks}
 
 
 def check_accuracy(values, mixed_baseline, raw_baseline, truth, expected, args, phase, output, rank):
-    from precision_metrics import evaluate
+    import torch
+    from precision_metrics import evaluate, compare_bits
 
     with phase("precision_metrics"):
         actual = {name: value.detach().cpu().clone() for name, value in values.items()}
-        result = evaluate(actual, mixed_baseline, expected)
+        result = evaluate(actual, mixed_baseline, expected, outputs=tuple(mixed_baseline))
+        if args.bitwise:
+            exact = {name: compare_bits(actual[name], ref) for name, ref in mixed_baseline.items()}
+            exact["counts"] = compare_bits(actual["counts"], expected.to(torch.int32))
+            result["bitwise"] = exact
+            result["passed"] &= all(check["passed"] for check in exact.values())
         if args.bitwise_bigop:
             result["bitwise_bigop"] = bitwise_bigop(actual, raw_baseline)
             result["passed"] &= result["bitwise_bigop"]["passed"]
@@ -128,6 +144,7 @@ def check_accuracy(values, mixed_baseline, raw_baseline, truth, expected, args, 
                 truth,
                 output / f"atk_rank_{rank}",
                 args.atk_ratios or DEFAULT_RATIOS,
+                outputs=tuple(raw_baseline),
             )
         result["passed"] &= result["atk"]["passed"]
     return actual, result

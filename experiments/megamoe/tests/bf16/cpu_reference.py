@@ -15,7 +15,7 @@ import torch.nn.functional as F
 
 
 @torch.enable_grad()
-def run_reference(inputs, expert_start, chunk_rows=256, swiglu_limit=0.0):
+def run_reference(inputs, expert_start, chunk_rows=256, swiglu_limit=0.0, *, forward_only=False):
     """Return owned expert contributions; the runner reduces token results.
 
     Inputs are CPU Tensor snapshots with canonical w1=[E,2F,H], w2=[E,H,F].
@@ -41,30 +41,38 @@ def run_reference(inputs, expert_start, chunk_rows=256, swiglu_limit=0.0):
     limit = torch.tensor(swiglu_limit, dtype=torch.float32, device="cpu").item()
     if not math.isfinite(limit):
         raise ValueError("swiglu_limit must be representable as finite FP32")
-    x, p, dy = x.double(), p.double(), dy.double()
+    x, p = x.double(), p.double()
     result = {
         "y": torch.zeros_like(x),
-        "dx": torch.zeros_like(x),
-        "dtopk_weights": torch.zeros_like(p),
-        "dw1": torch.zeros(w1.shape, dtype=torch.float64, device="cpu"),
-        "dw2": torch.zeros(w2.shape, dtype=torch.float64, device="cpu"),
         "counts": torch.zeros(len(w1), dtype=torch.int64, device="cpu"),
     }
+    if not forward_only:
+        dy = dy.double()
+        result.update(
+            dx=torch.zeros_like(x),
+            dtopk_weights=torch.zeros_like(p),
+            dw1=torch.zeros_like(w1, dtype=torch.float64),
+            dw2=torch.zeros_like(w2, dtype=torch.float64),
+        )
     for expert in range(len(w1)):
         rows, slots = (ids == expert_start + expert).nonzero(as_tuple=True)
         result["counts"][expert] = rows.numel()
         if not rows.numel():
             continue
-        a = w1[expert].double().requires_grad_(True)
-        b = w2[expert].double().requires_grad_(True)
+        a = w1[expert].double().requires_grad_(not forward_only)
+        b = w2[expert].double().requires_grad_(not forward_only)
         for start in range(0, rows.numel(), chunk_rows):
             token, route = rows[start : start + chunk_rows], slots[start : start + chunk_rows]
-            chunk_x = x[token].detach().requires_grad_(True)
-            probability = p[token, route, None].detach().requires_grad_(True)
+            chunk_x = x[token].detach().requires_grad_(not forward_only)
+            probability = p[token, route, None].detach().requires_grad_(not forward_only)
             gate, up = (chunk_x @ a.T).chunk(2, dim=-1)
             if limit > 0:
                 gate, up = gate.clamp_max(limit), up.clamp(-limit, limit)
-            output = ((F.silu(gate) * up) * probability) @ b.T
+            activation = F.silu(gate) * up
+            if forward_only:
+                result["y"].index_add_(0, token, (activation @ b.T) * probability)
+                continue
+            output = (activation * probability) @ b.T
             dx, dp, dw1, dw2 = torch.autograd.grad(output, (chunk_x, probability, a, b), grad_outputs=dy[token])
             with torch.no_grad():
                 result["y"].index_add_(0, token, output.detach())

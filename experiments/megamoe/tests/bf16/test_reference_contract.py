@@ -57,6 +57,32 @@ class RunnerConfiguration(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self.runner.parse_args(["0,1", "--topk-weight-values", "full-precision"])
 
+    def test_group_percentiles_follow_the_slowest_rank_in_each_round(self):
+        reports = [
+            {"performance": {"forward_ms": {"samples": xs}, "forward_kernel_ms": {"samples": ks}}}
+            for xs, ks in (([1, 9, 1], [1, 4, 1]), ([8, 1, 7], [3, 1, 2]))
+        ]
+        result = self.runner.group_performance(reports)
+        self.assertEqual(result["forward_ms"]["samples"], [8, 9, 7])
+        self.assertEqual(result["forward_ms"]["median"], 8)
+        self.assertAlmostEqual(result["forward_ms"]["p95"], 8.9)
+        self.assertEqual(result["forward_kernel_ms"]["samples"], [3, 4, 2])
+        self.assertAlmostEqual(result["forward_kernel_ms"]["p95"], 3.9)
+        from perf_compare import event_stats
+
+        self.assertEqual(event_stats([3])["p95"], 3)
+
+    @unittest.skipIf(torch is None, "requires torch")
+    def test_bitwise_detects_signed_zero_and_type_mismatch(self):
+        from precision_metrics import compare_bits
+
+        a = torch.tensor([1.0, 0.0, 2.0])
+        b = torch.tensor([1.0, -0.0, 2.0])
+        result = compare_bits(a, b, chunk_elements=1)
+        self.assertEqual(result["different_elements"], 1)
+        self.assertEqual(result["first_flat_index"], 1)
+        self.assertFalse(compare_bits(a, a.bfloat16())["passed"])
+
     def test_ffn_schema_accepts_the_original_gmm_n_command(self):
         modern = self.runner.parse_args(["0,1", "--ffn", "2048"])
         legacy = self.runner.parse_args(["0,1", "--gmm-n", "4096"])

@@ -26,6 +26,7 @@ FIXED_NAMES = [
     "AIV_BW_DP_REDUCE",
     "AIV_BW_TOPK_UNPERMUTE",
     "AIV_RESET",
+    "AIV_SAVE_DISPATCH_WEIGHTS",
 ]
 DYNAMIC_NAMES = [
     "AIV_DISPATCH",
@@ -63,10 +64,10 @@ DYNAMIC_NAMES = [
 ]
 
 
-def layout(cores, capacity, *, with_waves=False):
+def layout(cores, capacity, *, with_waves=False, fixed_count=len(FIXED_NAMES)):
     if not 0 < cores <= 192 or cores % 3 or not 0 < capacity <= 16384:
         raise ValueError("invalid training Timer lane count or capacity")
-    items = len(FIXED_NAMES) + len(DYNAMIC_NAMES) * capacity
+    items = fixed_count + len(DYNAMIC_NAMES) * capacity
     stride = (items * 2 + 15) // 16 * 16
     count_stride = (len(DYNAMIC_NAMES) + 15) // 16 * 16
     counts = HEADER_WORDS + cores * stride

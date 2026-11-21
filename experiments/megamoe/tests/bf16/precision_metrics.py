@@ -65,15 +65,38 @@ def mixed_tolerance(actual, reference, dtype):
     }
 
 
-def evaluate(actual, mode_baseline, expected_counts):
-    missing = [name for name in (*OUTPUTS, "counts") if actual.get(name) is None]
+def compare_bits(actual, reference, chunk_elements=1 << 20):
+    """Compare all output elements in their original dtype, including signed zeros."""
+    report = {"dtype": str(actual.dtype), "shape": list(actual.shape), "passed": False}
+    if actual.dtype != reference.dtype or actual.shape != reference.shape:
+        return {**report, "reference_dtype": str(reference.dtype), "reference_shape": list(reference.shape)}
+    a, b = (_cpu_flat(t).contiguous() for t in (actual, reference))
+    different, first = 0, None
+    for begin in range(0, a.numel(), chunk_elements):
+        left, right = a[begin : begin + chunk_elements], b[begin : begin + chunk_elements]
+        mismatch = (left.view(torch.uint8) != right.view(torch.uint8)).reshape(-1, a.element_size()).any(dim=1)
+        count = int(mismatch.sum())
+        if count and first is None:
+            first = begin + int(mismatch.nonzero()[0, 0])
+        different += count
+    return {
+        **report,
+        "numel": a.numel(),
+        "different_elements": different,
+        "first_flat_index": first,
+        "passed": different == 0,
+    }
+
+
+def evaluate(actual, mode_baseline, expected_counts, *, outputs=OUTPUTS):
+    missing = [name for name in (*outputs, "counts") if actual.get(name) is None]
     if missing:
         return {"passed": False, "error": f"Missing outputs/gradients: {missing}"}
     counts = actual["counts"].detach().to(device="cpu", dtype=torch.int64)
     expected_counts = expected_counts.detach().to(device="cpu", dtype=torch.int64)
     counts_ok = counts.shape == expected_counts.shape and torch.equal(counts, expected_counts)
     report = {"passed": counts_ok, "counts_passed": counts_ok, "outputs": {}}
-    for name in OUTPUTS:
+    for name in outputs:
         mixed = mixed_tolerance(actual[name], mode_baseline[name], actual[name].dtype)
         report["outputs"][name] = {"mixed_tolerance": mixed}
         report["passed"] &= mixed["passed"]

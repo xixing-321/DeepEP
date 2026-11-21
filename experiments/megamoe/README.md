@@ -391,6 +391,8 @@ torchrun --standalone --nproc-per-node=2 experiments/megamoe/tests/bf16/bf16_lif
 
 同一个 BF16 测试入口还支持以下三种对照，shape、路由、TopK weight 类型和 seed 沿用上面的参数。
 
+- `--skip performance --bitwise` 按所选保存模式与设备小算子做全张量逐 bit 比较，包含专家计数。加 `--inference` 验证后乘权推理的 Y 和计数。
+- 训练性能分别测前向、反向、完整前反向。每轮取 EP 组最慢 rank，再计算 P50 和线性插值 P95，见 `summary.json` 的 `ep_performance`。加 `--profile-forward-kernel` 可单独采集设备 kernel。推理用 `--inference --skip precision` 连续下发前向。各 rank 的 `shmem_bytes` 取自实际分配的对称窗口。
 - `--skip performance --bitwise-bigop`：在双标杆检查之外，将每个 rank 的 Y、dX、dP、dW1、dW2 与未压缩 BigOp 逐元素比较原始字节。counts 单独检查整数值。报告给出每项差异元素数和首个差异的展平索引，任一差异使测试失败。选 MXFP8 时，对照仍是未压缩 BigOp。
 - `--compare-forward`：在同一台机器上依次启动 MegaMoE、BigOp、DeepEP MC，逐 rank 核对输入指纹。需要同时构建 MegaMoE 和 EP_GMM_FUSED。MC 使用 `alltoallv_gmm` 和 `gmm_alltoallv`，与 BigOp 共用乘权、激活和 TopK 归并。两条拼接路径预先准备路由计划和权重布局，计时覆盖每次前向的数据重排、通信和计算。MegaMoE 按指定模式执行训练前向；MC 关闭 AllToAllV 输出导出。
 - `--compare-backward` 同时测训练前向和完整反向，使用 `save=bf16`。MC 前向导出专家端 X，反向用 AllToAllV-GMM 计算 dHp 并导出 dO，用 GMM-AllToAllV 回传各路 dX。三路共享输入和 dY，逐 rank 核对 Y、dX、dP、dW1、dW2。反向 Event 和 kernel 耗时均排除前向建图，报告位于 `summary.json`。

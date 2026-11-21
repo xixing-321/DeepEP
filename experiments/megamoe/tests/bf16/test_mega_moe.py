@@ -27,7 +27,7 @@ from urllib.parse import urlsplit
 from uuid import uuid4
 
 from accuracy import check_accuracy, combine_baseline, prepare_references
-from perf_compare import fused_forward, measure, performance_summary, summarize_event_rounds
+from perf_compare import group_performance, fused_forward, measure, performance_summary, summarize_event_rounds
 
 
 DATA_PROFILES = (
@@ -144,7 +144,28 @@ def parse_args(argv=None):
         "--timer", action="store_true", help="One separate forward/backward Timer capture after measurement"
     )
     parser.add_argument("--timer-ranks", default=None, help="Selected EP ranks, e.g. 0-7 or 0,3; default first eight")
+    parser.add_argument("--inference", action="store_true", help="Run the postweighted BF16 inference forward")
+    parser.add_argument(
+        "--bitwise",
+        action="store_true",
+        help="Require exact output and gradient bits against the NPU small-op reference for the selected save mode",
+    )
     parser.add_argument("--warmup", type=int, default=5)
+    parser.add_argument(
+        "--tensor-hashes",
+        action="store_true",
+        help="Record full input and result SHA-256 outside timing for comparisons across builds",
+    )
+    parser.add_argument(
+        "--save-topk-grad",
+        action="store_true",
+        help="Save each rank's complete dTopK tensor on CPU for offline bitwise comparison",
+    )
+    parser.add_argument(
+        "--profile-forward-kernel",
+        action="store_true",
+        help="Profile training forward in a separate pass and report device kernel P50/P95",
+    )
     parser.add_argument("--loops", type=int, default=20)
     parser.add_argument(
         "--log",
@@ -158,7 +179,12 @@ def parse_args(argv=None):
         default="on",
         help="Time the small-operator baseline next to the MegaMoE BF16 operator; off skips it",
     )
-    parser.add_argument("--local-mem-size", type=int, default=None, help="SHMEM bytes; default auto, aligned to 2 MiB")
+    parser.add_argument(
+        "--local-mem-size",
+        type=int,
+        default=None,
+        help="Legacy size hint; the report uses the symmetric buffer capacity allocated by the operator",
+    )
     parser.add_argument("--timeout", type=int, default=120)
     parser.add_argument("--shmem-ip-port", default="tcp://127.0.0.1:29862")
     parser.add_argument("--output", type=Path, default=None, help="New report directory")
@@ -199,6 +225,16 @@ def parse_args(argv=None):
         parser.error("--isolate-cases requires --suite")
     if args.suite_worker and (args.isolate_cases or args.output is None):
         parser.error("Internal suite workers require --output and persistent execution")
+    if args.inference and (args.bitwise_bigop or args.compare_forward or args.compare_backward):
+        parser.error("--inference uses --bitwise for its postweighted forward reference")
+    if args.inference and (args.diagnose_mxfp8 or args.timer):
+        parser.error("--inference supports accuracy and performance; the training backward Timer requires training")
+    if args.bitwise and args.skip == "precision":
+        parser.error("--bitwise requires precision")
+    if args.profile_forward_kernel and (args.inference or args.skip == "performance"):
+        parser.error("--profile-forward-kernel requires training performance")
+    if args.save_topk_grad and args.inference:
+        parser.error("--save-topk-grad requires training")
     if args.atk and args.skip == "precision":
         parser.error("--atk requires precision; use --skip performance for accuracy only")
     args.atk = args.skip != "precision" and not compare
@@ -330,6 +366,16 @@ def launch_options(args):
         value = getattr(args, key)
         if value is not None:
             argv += ["--" + key.replace("_", "-"), str(value)]
+    if args.inference:
+        argv.append("--inference")
+    if args.bitwise:
+        argv.append("--bitwise")
+    if args.tensor_hashes:
+        argv.append("--tensor-hashes")
+    if args.save_topk_grad:
+        argv.append("--save-topk-grad")
+    if args.profile_forward_kernel:
+        argv.append("--profile-forward-kernel")
     if args.atk:
         argv += ["--atk"]
     if args.bitwise_bigop:
@@ -408,11 +454,19 @@ def read_case_result(args, report_file, result_code=None):
             if (
                 check.get("provider") != "private"
                 or check.get("standard") != "cv_fused_double_benchmark"
-                or set(outputs) != set(OUTPUTS)
+                or set(outputs) != ({"y"} if args.inference else set(OUTPUTS))
                 or check.get("passed") != all(value.get("passed", False) for value in outputs.values())
                 or (rank["passed"] and not check.get("passed"))
             ):
                 raise RuntimeError(f"Incomplete/inconsistent ATK results in {report_file}, rank={rank['rank']}")
+    if args.bitwise:
+        from precision_metrics import OUTPUTS
+
+        expected = {"y", "counts"} if args.inference else {*OUTPUTS, "counts"}
+        for rank in ranks:
+            exact = rank.get("precision", {}).get("bitwise", {})
+            if set(exact) != expected or (rank["passed"] and not all(value["passed"] for value in exact.values())):
+                raise RuntimeError(f"Incomplete/inconsistent bitwise results in {report_file}, rank={rank['rank']}")
     return {
         "status": "PASS" if result["passed"] else "FAIL",
         "report": str(report_file),
@@ -948,8 +1002,8 @@ def make_buffer(operator_type, group, args, world):
         args.hidden,
         args.ffn,
         mma_type="bf16xbf16",
-        need_grad=True,
-        max_recv_tokens=args.seq * args.topk * world,
+        need_grad=not args.inference,
+        max_recv_tokens=None if args.inference else args.seq * args.topk * world,
         timeout=args.timeout,
     )
 
@@ -978,14 +1032,6 @@ def phase_timer(rank, phase_seconds):
                 print(f"[TIME] rank={rank} {name}={elapsed:.3f}s", flush=True)
 
     return phase
-
-
-def local_mem_bytes(args, world):
-    needed = (72 << 10) + world * math.ceil(world * args.expert_per_rank / 128) * 128 * 4
-    weight_bytes = 4 if args.topk_weight_dtype == "fp32" else 2
-    needed += 4 * args.seq * args.topk * args.hidden
-    needed += math.ceil(weight_bytes * args.seq * args.topk / 512) * 512 + (2 << 20)
-    return args.local_mem_size or math.ceil(max(2 << 30, needed) / (2 << 20)) * (2 << 20)
 
 
 def prepare_worker(local_rank, args, rank, world, phase_seconds):
@@ -1017,13 +1063,22 @@ def prepare_worker(local_rank, args, rank, world, phase_seconds):
     return SymmBuffer
 
 
-def execute_case(local_rank, args, rank, world, op, local_mem, phase_seconds, execution_mode):
+def tensor_hash(value):
+    import hashlib
+    import torch
+
+    data = value.detach().cpu().contiguous().view(torch.uint8).numpy()
+    return hashlib.sha256(memoryview(data)).hexdigest()
+
+
+def execute_case(local_rank, args, rank, world, op, phase_seconds, execution_mode):
     import torch
     import torch.distributed as dist
 
     from npu_baseline import BIGOP_REFERENCE_VERSION
 
     phase = phase_timer(rank, phase_seconds)
+    local_mem = op.symmetric_buffer_bytes
     config = {key: value for key, value in vars(args).items() if key not in ("devices", "output")}
     configurations = [None] * world
     dist.all_gather_object(configurations, config)
@@ -1046,6 +1101,8 @@ def execute_case(local_rank, args, rank, world, op, local_mem, phase_seconds, ex
     if rank == 0:
         output.mkdir(parents=True, exist_ok=False)
     dist.barrier()
+    if rank != 0:
+        output.mkdir(parents=True, exist_ok=True)
     precision = args.skip != "precision"
     performance = args.skip != "performance"
     with phase("prepare_inputs"):
@@ -1065,12 +1122,10 @@ def execute_case(local_rank, args, rank, world, op, local_mem, phase_seconds, ex
             flush=True,
         )
     expected = inputs["all_counts"][rank * args.expert_per_rank : (rank + 1) * args.expert_per_rank]
-    capacity = (
-        math.ceil(int(inputs["all_counts"].reshape(world, args.expert_per_rank).sum(dim=1).max().item()) / 128) * 128
-    )
+    capacity = op.max_recv_tokens if args.inference else math.ceil(max(routing["received_rows_per_rank"]) / 128) * 128
     raw_baseline = mixed_baseline = truth = None
     trace = {} if args.diagnose_mxfp8 else None
-    mode = args.save_gmm1_output
+    mode = "none" if args.inference else args.save_gmm1_output
     if precision:
         truth, raw_baseline, mixed_baseline = prepare_references(
             inputs, args, rank, world, f"npu:{local_rank}", mode, trace, phase
@@ -1082,11 +1137,11 @@ def execute_case(local_rank, args, rank, world, op, local_mem, phase_seconds, ex
 
     with phase("inputs_to_npu"):
         x, ids, p, w1, w2, dy = (
-            tensor(inputs["x"][sl], grad=True),
+            tensor(inputs["x"][sl], grad=not args.inference),
             tensor(inputs["ids"][sl], torch.int32),
-            tensor(inputs["p"][sl], inputs["p"].dtype, grad=True),
-            tensor(inputs["w1"], grad=True),
-            tensor(inputs["w2"], grad=True),
+            tensor(inputs["p"][sl], inputs["p"].dtype, grad=not args.inference),
+            tensor(inputs["w1"], grad=not args.inference),
+            tensor(inputs["w2"], grad=not args.inference),
             tensor(inputs["dy"][sl]),
         )
     tensors = (x, ids, p, w1, w2, dy)
@@ -1112,9 +1167,12 @@ def execute_case(local_rank, args, rank, world, op, local_mem, phase_seconds, ex
             swiglu_limit=args.swiglu_limit,
             api=args.api,
         )
-        y.backward(dy)
+        if not args.inference:
+            y.backward(dy)
         torch.npu.synchronize()
-    values = dict(y=y, dx=x.grad, dtopk_weights=p.grad, dw1=w1.grad, dw2=w2.grad, counts=counts)
+    values = dict(y=y, counts=counts)
+    if not args.inference:
+        values.update(dx=x.grad, dtopk_weights=p.grad, dw1=w1.grad, dw2=w2.grad)
     if any(value is None for value in values.values()):
         raise RuntimeError("Fused forward/backward did not produce every required result")
     if counts.dtype != torch.int32 or tuple(counts.shape) != (args.expert_per_rank,):
@@ -1138,6 +1196,11 @@ def execute_case(local_rank, args, rank, world, op, local_mem, phase_seconds, ex
             "bigop_version": BIGOP_REFERENCE_VERSION,
         },
     }
+    if args.tensor_hashes:
+        report["input_sha256"] = {key: tensor_hash(t) for key, t in zip(("x", "ids", "p", "w1", "w2", "dy"), tensors)}
+        report["output_sha256"] = {key: tensor_hash(t) for key, t in values.items()}
+    if args.save_topk_grad:
+        torch.save(values["dtopk_weights"].detach().cpu().contiguous(), output / f"rank_{rank}_dtopk_weights.pt")
     if precision:
         actual, report["precision"] = check_accuracy(
             values, mixed_baseline, raw_baseline, truth, expected, args, phase, output, rank
@@ -1224,7 +1287,12 @@ def execute_case(local_rank, args, rank, world, op, local_mem, phase_seconds, ex
     failed = torch.tensor(int(not report["passed"]), dtype=torch.int32)
     dist.all_reduce(failed)
     if not int(failed.item()) and performance:
-        report["performance"], counts = measure(op, tensors, capacity, args, mode)
+        if args.inference:
+            from inference_performance import measure_inference
+
+            report["performance"], counts = measure_inference(op, tensors, args, output / f"rank_{rank}_profiler")
+        else:
+            report["performance"], counts = measure(op, tensors, capacity, args, mode, output)
         report["performance_run"] = True
         counts_ok = torch.equal(counts.cpu().to(torch.int64), expected)
         report["performance"]["passed"] = counts_ok
@@ -1303,7 +1371,11 @@ def write_case_reports(args, rank, world, report, output):
     dist.all_gather_object(reports, report)
     passed = all(value["passed"] for value in reports)
     if rank == 0:
-        event_ms = summarize_event_rounds(reports) if performance and all(r["performance_run"] for r in reports) else {}
+        event_ms = (
+            summarize_event_rounds(reports)
+            if performance and not args.inference and all(r["performance_run"] for r in reports)
+            else {}
+        )
         write_report(
             output / "summary.json",
             {
@@ -1320,6 +1392,7 @@ def write_case_reports(args, rank, world, report, output):
                 ),
                 "performance_run": all(value["performance_run"] for value in reports),
                 "event_tail_half_rank_max_mean_ms": event_ms,
+                "ep_performance": group_performance(reports) if all(r["performance_run"] for r in reports) else {},
                 "ranks": reports,
                 "precision_reference_version": BIGOP_REFERENCE_VERSION,
             },
@@ -1332,7 +1405,10 @@ def write_case_reports(args, rank, world, report, output):
                     + " ".join(f"{scope}={ms:.3f}ms" for scope, ms in timings.items()),
                     flush=True,
                 )
-            for line in performance_summary(reports):
+            for key, stats in group_performance(reports).items():
+                if key.endswith("_ms") and isinstance(stats, dict) and "p95" in stats:
+                    print(f"[EP] {key}: P50={stats['median']:.3f} P95={stats['p95']:.3f} ms", flush=True)
+            for line in [] if args.inference else performance_summary(reports):
                 print(line, flush=True)
     return passed
 
@@ -1346,11 +1422,10 @@ def run_rank(local_rank, args, rank=None, world=None):
     import torch.distributed as dist
 
     try:
-        local_mem = local_mem_bytes(args, world)
         os.environ["DEEPEP_SHMEM_ENDPOINT"] = args.shmem_ip_port
         with phase("operator_init"):
             op = make_buffer(operator_type, dist.group.WORLD, args, world)
-        report, output = execute_case(local_rank, args, rank, world, op, local_mem, phase_seconds, "isolated")
+        report, output = execute_case(local_rank, args, rank, world, op, phase_seconds, "isolated")
         with phase("operator_close"):
             op.destroy()
         passed = write_case_reports(args, rank, world, report, output)
@@ -1365,20 +1440,21 @@ def run_suite_rank(local_rank, args, cases, output):
     lifetime_seconds = {}
     phase = phase_timer(rank, lifetime_seconds)
     configs = [parse_args(case_argv(args, case, 0, output / case["id"])) for case in cases]
-    local_mem = max(local_mem_bytes(config, world) for config in configs)
     operator_type = prepare_worker(local_rank, args, rank, world, lifetime_seconds)
     import torch.distributed as dist
 
     os.environ["DEEPEP_SHMEM_ENDPOINT"] = args.shmem_ip_port
+    peak_shmem_bytes = 0
     for case, config in zip(cases, configs, strict=True):
         with phase("operator_init"):
             op = make_buffer(operator_type, dist.group.WORLD, config, world)
+            peak_shmem_bytes = max(peak_shmem_bytes, op.symmetric_buffer_bytes)
         # Barriers keep begin/end markers outside all ranks' case output.
         dist.barrier()
         if rank == 0:
             print(f"[CASE_BEGIN] {case['id']}", flush=True)
         dist.barrier()
-        report, case_output = execute_case(local_rank, config, rank, world, op, local_mem, {}, "per-configuration")
+        report, case_output = execute_case(local_rank, config, rank, world, op, {}, "per-configuration")
         write_case_reports(config, rank, world, report, case_output)
         # Different shapes use different fixed buffer configurations.
         with phase("operator_close"):
@@ -1392,7 +1468,7 @@ def run_suite_rank(local_rank, args, cases, output):
     dist.all_gather_object(lifetime, {"rank": rank, "phase_seconds": lifetime_seconds})
     if rank == 0:
         (output / "suite_runtime.json").write_text(
-            json.dumps({"shmem_bytes": local_mem, "ranks": lifetime}, indent=2) + "\n", encoding="utf-8"
+            json.dumps({"shmem_bytes": peak_shmem_bytes, "ranks": lifetime}, indent=2) + "\n", encoding="utf-8"
         )
     dist.barrier()
     dist.destroy_process_group()

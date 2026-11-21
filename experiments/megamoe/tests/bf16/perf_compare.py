@@ -3,6 +3,8 @@
 
 """NPU Event measurements for the BF16 training forward, backward and full call."""
 
+import json
+import time
 import statistics
 
 
@@ -14,17 +16,18 @@ BASELINE_BUDGET_BYTES = 16 << 30  # packed-route working set the baseline may al
 
 
 def event_stats(samples):
-    """Sample list plus the source's mean/median/min/max summary."""
+    """Keep paired rounds and use an inclusive, linearly interpolated P95."""
     return {
         "samples": list(samples),
         "median": statistics.median(samples),
+        "p95": statistics.quantiles(samples, n=100, method="inclusive")[94] if len(samples) > 1 else samples[0],
         "mean": statistics.mean(samples),
         "min": min(samples),
         "max": max(samples),
     }
 
 
-def bench_scope(body, prepare, args):
+def bench_scope(body, prepare, args, host_samples=None):
     """warmup+loops Event windows, synchronized before and after every window.
 
     The source synchronizes each iteration and rebuilds a forward graph for
@@ -40,7 +43,11 @@ def bench_scope(body, prepare, args):
             torch.npu.synchronize()
         start, end = torch.npu.Event(enable_timing=True), torch.npu.Event(enable_timing=True)
         start.record()
+        if host_samples is not None:
+            started = time.perf_counter_ns()
         body(state)
+        if host_samples is not None and iteration >= args.warmup:
+            host_samples.append((started, time.perf_counter_ns()))
         end.record()
         torch.npu.synchronize()
         if iteration >= args.warmup:
@@ -319,7 +326,35 @@ def fused_forward(op, x, ids, weights, w1, w2, capacity, *, save_gmm1_output, sw
     return y, counts
 
 
-def measure(op, tensors, capacity, args, mode):
+def profile_training_forward(forward, args, path):
+    import torch
+    import torch.distributed as dist
+    import torch_npu.profiler as profiler
+
+    with profiler.profile(activities=[profiler.ProfilerActivity.CPU, profiler.ProfilerActivity.NPU]) as prof:
+        dist.barrier()
+        for _ in range(args.warmup + args.loops):
+            forward()
+            torch.npu.synchronize()
+    prof.export_chrome_trace(str(path))
+    trace = json.loads(path.read_bytes())
+    events = trace if isinstance(trace, list) else trace["traceEvents"]
+    kernels = sorted(
+        (
+            e
+            for e in events
+            if e.get("ph") == "X"
+            and "mega_moe_bf16_forward" in e.get("name", "")
+            and e.get("args", {}).get("Task Type", "").startswith("KERNEL")
+        ),
+        key=lambda e: float(e["ts"]),
+    )
+    if len(kernels) != args.warmup + args.loops:
+        raise ValueError(f"{path}: expected {args.warmup + args.loops} forward kernels, found {len(kernels)}")
+    return event_stats([float(e["dur"]) / 1000 for e in kernels[args.warmup :]])
+
+
+def measure(op, tensors, capacity, args, mode, output):
     """Three Event scopes for the MegaMoE BF16 operator, optional small-operator baseline.
 
     Ported protocol: identical warmup/loop counts for both sides, one window per
@@ -366,19 +401,27 @@ def measure(op, tensors, capacity, args, mode):
 
     stage(f"scopes start warmup={args.warmup} loops={args.loops}")
     megamoe = {}
+    host_forward = []
     for name, body, prepare in (
         ("forward", lambda state: megamoe_forward(), None),
         ("backward", lambda state: state[0].backward(dy), megamoe_forward),
         ("complete", lambda state: megamoe_complete(), None),
     ):
-        megamoe[f"{name}_ms"] = event_stats(bench_scope(body, prepare, args))
+        megamoe[f"{name}_ms"] = event_stats(
+            bench_scope(body, prepare, args, host_forward if name == "forward" else None)
+        )
         stage(f"{name} scope done")
     y, counts = megamoe_complete(collect_counts=True)
     if not all(bool(torch.isfinite(value).all().item()) for value in (y, x.grad, p.grad, w1.grad, w2.grad)):
         raise RuntimeError("Non-finite output or gradient after timing")
     stage("megamoe_bf16 valid")
+    if args.profile_forward_kernel:
+        megamoe["forward_kernel_ms"] = profile_training_forward(
+            megamoe_forward, args, output / f"rank_{rank}_forward_profiler.json"
+        )
     report = {
         "operator": "megamoe_bf16",
+        "forward_host_monotonic_ns": host_forward,
         "warmup": args.warmup,
         "loops": args.loops,
         "scope": (
@@ -562,3 +605,32 @@ def performance_summary(reports):
             row += f" speedup={other_speed['forward']:.2f}/{other_speed['backward']:.2f}/{other_speed['complete']:.2f}x"
         lines.append(row)
     return lines
+
+
+def group_performance(reports):
+    """Combine corresponding rounds before computing percentiles."""
+    per_rank = [record["performance"] for record in reports]
+    summary = {}
+    for scope in ("forward", "backward", "complete"):
+        key = f"{scope}_ms"
+        if key not in per_rank[0]:
+            continue
+        rounds = zip(*(perf[key]["samples"] for perf in per_rank), strict=True)
+        summary[key] = event_stats([max(values) for values in rounds])
+        if all(perf.get("baseline", {}).get("status") == "RUN" for perf in per_rank):
+            rounds = zip(*(perf["baseline"][key]["samples"] for perf in per_rank), strict=True)
+            baseline = event_stats([max(values) for values in rounds])
+            summary.setdefault("baseline", {})[key] = baseline
+            summary["baseline"].setdefault("speedup", {})[scope] = baseline["median"] / summary[key]["median"]
+        if scope in per_rank[0].get("mfu", {}):
+            flops = per_rank[0]["mfu"][scope]["flops"]
+            summary.setdefault("mfu", {})[scope] = 100 * flops / (PEAK_TFLOPS * 1e9 * summary[key]["median"])
+    if "batch_ms_per_call" in per_rank[0]:
+        summary["batch_ms_per_call"] = max(p["batch_ms_per_call"] for p in per_rank)
+        summary["kernel_rank_min_mean_ms"] = statistics.mean(
+            min(values) for values in zip(*(p["forward_ms"]["samples"] for p in per_rank), strict=True)
+        )
+    if "forward_kernel_ms" in per_rank[0]:
+        rounds = zip(*(p["forward_kernel_ms"]["samples"] for p in per_rank), strict=True)
+        summary["forward_kernel_ms"] = event_stats([max(values) for values in rounds])
+    return summary
