@@ -70,6 +70,16 @@ public:
     };
 
     using Params = Arguments;
+    // Counts are read by Scalar while Gate/Up, encoded activations and p occupy UB.
+    __aicore__ inline AscendC::LocalTensor<int32_t> SavedRowPrefix(uint32_t elements) const
+    {
+        constexpr auto maxElements = MegaMoeBF16Training::kMaxTotalExperts;
+        constexpr uint32_t offset = kWeightOffset - maxElements * sizeof(int32_t);
+        static_assert(kWeightOffset >= maxElements * sizeof(int32_t) +
+                      2U * kTileElements * sizeof(bfloat16_t));
+        static_assert(kWeightOffset >= maxElements * sizeof(int32_t) + QuantSave::Layout::totalBytesWithClipMasks);
+        return AscendC::LocalTensor<int32_t>{AscendC::TPosition::VECCALC, offset, elements};
+    }
     using BlockShape = AscendC::Shape<int64_t, int64_t, int64_t, int64_t>;
     using BlockCoord = AscendC::Coord<int64_t, int64_t, int64_t, int64_t, int64_t, int64_t>;
     using ProblemShape = AscendC::Shape<int64_t, int64_t, int64_t, int64_t>;
@@ -173,6 +183,8 @@ private:
     static constexpr uint32_t kTileColumns = tla::get<1>(L0TileShape_{});
     static constexpr uint32_t kTileElements = kTileRows * kTileColumns;
     using QuantSave = std::conditional_t<QuantizedSave, SavedGateUpMxFp8<kTileRows, kTileColumns>, NoSavedGateUpQuant>;
+    static constexpr uint32_t kWeightBytes = (kTileRows * sizeof(TopkWeightT) + 31) / 32 * 32;
+    static constexpr uint32_t kWeightOffset = Catlass::Arch::Ascend950::UB_SIZE - kWeightBytes;
     static_assert(2U * kTileElements * sizeof(bfloat16_t) <= Catlass::Arch::Ascend950::UB_SIZE,
                   "The BF16 SwiGLU input tiles must fit in A5 UB");
 
@@ -186,11 +198,9 @@ private:
         auto* up = (__ubuf__ bfloat16_t*)l0cOutUbSecond_.GetPhyAddr();
         // Place weights beyond every MXFP8 data/scale/clamp-mask buffer: Save
         // may still have MTE3 readers. No alias and no early pipeline drain.
-        constexpr uint32_t weightBytes = (kTileRows * sizeof(TopkWeightT) + 31) / 32 * 32;
-        constexpr uint32_t weightOffset = Catlass::Arch::Ascend950::UB_SIZE - weightBytes;
-        static_assert(weightOffset >= 2U * kTileElements * sizeof(bfloat16_t));
-        static_assert(weightOffset >= QuantSave::Layout::totalBytesWithClipMasks);
-        AscendC::LocalTensor<TopkWeightT> weightUb{AscendC::TPosition::VECIN, weightOffset, kTileRows};
+        static_assert(kWeightOffset >= 2U * kTileElements * sizeof(bfloat16_t));
+        static_assert(kWeightOffset >= QuantSave::Layout::totalBytesWithClipMasks);
+        AscendC::LocalTensor<TopkWeightT> weightUb{AscendC::TPosition::VECIN, kWeightOffset, kTileRows};
         if (params_.applyTopkWeight) {
             AscendC::SyncFunc<AscendC::HardEvent::V_MTE2>();
             AscendC::DataCopyExtParams p{1, uint32_t(mSize * sizeof(TopkWeightT)), 0, 0, 0};
