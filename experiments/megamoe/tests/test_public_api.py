@@ -106,7 +106,7 @@ def test_store_group_ep256_with_eight_bf16_experts_per_rank(backend, monkeypatch
             api.SymmBuffer(group, 256 * 8, 17, 2, 1024, 256, mma_type=mma_type)
     buf = api.SymmBuffer(group, 256 * 8, 17, 2, 1024, 256, **options)
     try:
-        backend.ext.bf16_buffer_size.assert_called_once_with(17, 1024, 256, 2, 256, 8, 128)
+        backend.ext.bf16_buffer_size.assert_called_once_with(17, 1024, 256, 2, 256, 8, 128, True)
     finally:
         buf.destroy()
 
@@ -157,6 +157,6 @@ def test_bf16_receive_capacity(backend, need_grad, capacity):
         else:
             backend.ext._inference_max_recv_tokens.assert_not_called()
             assert buf.max_recv_tokens == capacity
-        backend.ext.bf16_buffer_size.assert_called_once_with(17, 1024, 256, 3, 2, 4, buf.max_recv_tokens)
+        backend.ext.bf16_buffer_size.assert_called_once_with(17, 1024, 256, 3, 2, 4, buf.max_recv_tokens, need_grad)
     finally:
         buf.destroy()

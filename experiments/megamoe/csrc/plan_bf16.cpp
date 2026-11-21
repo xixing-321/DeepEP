@@ -161,7 +161,8 @@ BufferSizes MakeBf16Tiling(MegaMoeBf16TilingData& tiling, int64_t m, int64_t k, 
     const auto workspaceBytes = optiling::CalcWorkspaceSize(tiling);
     const CompactTokenCountExchangeLayout counts(world_size, expert_per_rank, tiling.compactTokenCountExchange != 0);
     const PeerPayloadLayout payload(counts.payloadOffset, m, k, topk, TopkWeightBytes(topk_weight_type));
-    return {workspaceBytes + optiling::CalcBf16EarlyTopkWeightWorkspaceSize(tiling), payload.totalBytes};
+    const auto peerBytes = tiling.routeWeightBeforeGmm2 ? payload.totalBytes : payload.topkGradOffset;
+    return {workspaceBytes + optiling::CalcBf16EarlyTopkWeightWorkspaceSize(tiling), peerBytes};
 }
 
 constexpr std::size_t kDeviceLargePageBytes = 2 * 1024 * 1024;
@@ -346,9 +347,10 @@ BF16Plan::BF16Plan(uintptr_t address, int64_t bytes, int rank, int world_size, t
 }
 
 int64_t buffer_size(int64_t max_tokens, int64_t hidden, int64_t intermediate, int64_t topk, int64_t world,
-                    int64_t local_experts, int64_t max_recv)
+                    int64_t local_experts, int64_t max_recv, bool need_grad)
 {
     MegaMoeBf16TilingData tiling{};
+    tiling.routeWeightBeforeGmm2 = need_grad ? 1U : 0U;
     const auto host = MakeBf16Tiling(tiling, max_tokens, hidden, intermediate, topk, world, local_experts, max_recv, 0,
                                      0.0, "bf16", MegaMoeBF16Training::kTopkWeightFp32, GetPlatformInfo());
     const uint64_t total = host.peer_bytes;

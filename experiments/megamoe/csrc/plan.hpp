@@ -130,5 +130,5 @@ private:
 };
 
 int64_t buffer_size(int64_t max_tokens, int64_t hidden, int64_t intermediate, int64_t topk, int64_t world,
-                    int64_t local_experts, int64_t max_recv);
+                    int64_t local_experts, int64_t max_recv, bool need_grad);
 }  // namespace deepep::megamoe::bf16

@@ -270,6 +270,7 @@ struct Bf16PeermemInfo {
     GM_ADDR routeIndices;
     GM_ADDR ptrRoutedTopkWeights;
     GM_ADDR ptrD;
+    GM_ADDR ptrTopkGrad;
     uint64_t tokenCountsOffset;
     uint64_t payloadOffset;
     bool compactTokenCountExchange;
@@ -294,6 +295,7 @@ struct Bf16PeermemInfo {
         routeIndices = base + layout.routeIndexOffset;
         ptrRoutedTopkWeights = base + layout.weightOffset;
         ptrD = base + layout.returnOffset;
+        ptrTopkGrad = base + layout.topkGradOffset;
     }
 };
 

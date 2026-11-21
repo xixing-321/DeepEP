@@ -23,7 +23,9 @@ PYBIND11_MODULE(_C, module)
         .def("forward", &Plan::forward)
         .def_property_readonly("workspace_bytes", &Plan::workspace_bytes);
     module.attr("bf16_enabled") = true;
-    module.def("bf16_buffer_size", &deepep::megamoe::bf16::buffer_size);
+    module.def("bf16_buffer_size", &deepep::megamoe::bf16::buffer_size, py::arg("max_tokens"), py::arg("hidden"),
+               py::arg("intermediate"), py::arg("topk"), py::arg("world"), py::arg("local_experts"),
+               py::arg("max_recv"), py::arg("need_grad") = true);
     using deepep::megamoe::bf16::BF16Plan;
     using deepep::megamoe::bf16::ForwardResult;
     using deepep::megamoe::bf16::BackwardResult;

@@ -200,6 +200,7 @@ class SymmBuffer:
                     size,
                     num_experts // size,
                     max_recv_tokens,
+                    need_grad,
                 )
             )
         else:

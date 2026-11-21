@@ -125,14 +125,15 @@ struct CompactTokenCountExchangeLayout {
 
 // One X (forward) or dY (backward) per source token; indices and returns use route order.
 struct PeerPayloadLayout {
-    uint64_t routeIndexOffset, weightOffset, returnOffset, totalBytes;
+    uint64_t routeIndexOffset, weightOffset, returnOffset, topkGradOffset, totalBytes;
 
     MEGA_MOE_BF16_HOST_DEVICE constexpr PeerPayloadLayout(uint64_t base, uint64_t m, uint64_t h, uint64_t topK,
                                                           uint64_t weightBytes)
         : routeIndexOffset(base + m * h * kBf16Bytes),
           weightOffset(routeIndexOffset + AlignUp(m * topK * kInt32Bytes, kAlignment512)),
           returnOffset(weightOffset + AlignUp(m * topK * weightBytes, kAlignment512)),
-          totalBytes(returnOffset + m * topK * h * kBf16Bytes)
+          topkGradOffset(returnOffset + m * topK * h * kBf16Bytes),
+          totalBytes(topkGradOffset + AlignUp(m * topK * weightBytes, kAlignment512))
     {
     }
 };

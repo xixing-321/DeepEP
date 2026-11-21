@@ -1183,11 +1183,34 @@ __aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::CopyTopkGradBatch(uint6
     SyncFunc<HardEvent::V_MTE3>();
     GlobalTensor<TopkWeightT> output;
     output.SetGlobalBuffer(reinterpret_cast<__gm__ TopkWeightT*>(
-        ::GetRankWinAddrWithOffset(rank, params_.peermemInfo.ptrD - params_.peermemInfo.ptrBase)));
+        ::GetRankWinAddrWithOffset(rank, params_.peermemInfo.ptrTopkGrad - params_.peermemInfo.ptrBase)));
     MegaMoeTrainTimerPassiveScope send(timer_, MegaMoeTrainTimer::AIV_BW_DP_SEND, expert, expertRow, rows, uint32_t(-1),
                                        rows, 1U, partialTiles, 1U, 0U, rank);
-    DataCopyPad(output[remoteRow], routeBuf,
-                DataCopyExtParams{1U, static_cast<uint32_t>(rows * sizeof(TopkWeightT)), 0U, 0U, 0U});
+    const DataCopyExtParams batchCopy{1U, static_cast<uint32_t>(rows * sizeof(TopkWeightT)), 0U, 0U, 0U};
+    output.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
+    DataCopyPad(output[remoteRow], routeBuf, batchCopy);
+    if (rank != rankId_) {
+        // The AIV exchanging barrier signals can differ from the one posting this DMA.
+        // Acknowledge the bytes at the destination before this writer joins the barrier.
+        using Bits = std::conditional_t<std::is_same_v<TopkWeightT, float>, uint32_t, uint16_t>;
+        auto received = partialBuf.template ReinterpretCast<TopkWeightT>();
+        auto receivedBits = received.template ReinterpretCast<Bits>();
+        auto expectedBits = routeBuf.template ReinterpretCast<Bits>();
+        SyncFunc<HardEvent::MTE3_MTE2>();
+        bool arrived;
+        do {
+            DataCopyPad(received, output[remoteRow], batchCopy, DataCopyPadExtParams<TopkWeightT>{false, 0U, 0U, 0U});
+            SyncFunc<HardEvent::MTE2_S>();
+            arrived = true;
+            for (uint32_t i = 0; i < rows; ++i) {
+                if (receivedBits.GetValue(i) != expectedBits.GetValue(i)) {
+                    arrived = false;
+                    break;
+                }
+            }
+            SyncFunc<HardEvent::S_MTE2>();
+        } while (!arrived);
+    }
     SyncFunc<HardEvent::MTE3_V>();
 }
 
@@ -1323,7 +1346,7 @@ __aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::UnpermuteTopkGrad()
     MegaMoeImpl::TilingByCore(static_cast<int32_t>(m_ * topK_), coreLen, coreOffset, 1);
     __gm__ int32_t* routeToPacked = reinterpret_cast<__gm__ int32_t*>(params_.workspaceInfo.expandedRowIdxGather);
     using GradientBits = std::conditional_t<std::is_same_v<TopkWeightT, float>, uint32_t, uint16_t>;
-    __gm__ GradientBits* routedDp = reinterpret_cast<__gm__ GradientBits*>(params_.peermemInfo.ptrD);
+    __gm__ GradientBits* routedDp = reinterpret_cast<__gm__ GradientBits*>(params_.peermemInfo.ptrTopkGrad);
     __gm__ GradientBits* gradTopk = reinterpret_cast<__gm__ GradientBits*>(gradTopkWeightsGmAddr_);
     for (int32_t route = coreOffset; route < coreOffset + coreLen; ++route) {
         const GradientBits dpBits = ReadGmByPassDCache(routedDp + routeToPacked[route]);
@@ -1543,8 +1566,7 @@ __aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::Process()
         unpermutePipe.Destroy();
         SyncAll<true>();
 
-        // All ranks must finish reading dX before ptrD is reused for dp.
-
+        // Finish the dX phase on all ranks before starting the dP exchange.
         CrossRankSyncInWorldSize();
 
         TPipe topkGradPipe;
@@ -1555,7 +1577,7 @@ __aicore__ inline void MegaMoeBF16Backward<TopkWeightT>::Process()
         topkGradPipe.Destroy();
         SyncAll<true>();
 
-        // Finish remote dp writes before any rank reads ptrD.
+        // Finish remote dP writes before the source ranks restore TopK order.
 
         CrossRankSyncInWorldSize();
 

@@ -42,7 +42,10 @@ int main()
     static_assert(fp32Payload.weightOffset == bf16Payload.weightOffset);
     static_assert(bf16Payload.returnOffset == bf16Payload.weightOffset + 1024);
     static_assert(fp32Payload.returnOffset == fp32Payload.weightOffset + 2048);
-    static_assert(fp32Payload.totalBytes == fp32Payload.returnOffset + sourceRows * topK * hidden * 2);
+    static_assert(fp32Payload.topkGradOffset == fp32Payload.returnOffset + sourceRows * topK * hidden * 2);
+    static_assert(bf16Payload.topkGradOffset == bf16Payload.returnOffset + sourceRows * topK * hidden * 2);
+    static_assert(fp32Payload.totalBytes == fp32Payload.topkGradOffset + 2048);
+    static_assert(bf16Payload.totalBytes == bf16Payload.topkGradOffset + 1024);
     assert(kGmm1Rows == 256 && kGmm2Rows == 256 && GroupsPerWave(32, 3072, 7168) == 3);
     using MegaMoeBF16Training::BackwardWorkspaceLayout;
     const BackwardWorkspaceLayout largeEp(4, 24576, 7168, 6144, 128, 32, 4, MegaMoeBF16Training::kSaveBf16);
