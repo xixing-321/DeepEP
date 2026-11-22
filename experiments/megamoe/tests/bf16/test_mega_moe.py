@@ -1360,6 +1360,7 @@ def collect_timer(op, tensors, capacity, args, rank, world, output):
 
 
 def write_case_reports(args, rank, world, report, output):
+    import torch
     import torch.distributed as dist
 
     from precision_metrics import write_report
@@ -1367,10 +1368,14 @@ def write_case_reports(args, rank, world, report, output):
 
     precision, performance = report["precision_run"], report["performance_run"]
     write_report(output / f"rank_{rank}.json", report)
-    reports = [None] * world
-    dist.all_gather_object(reports, report)
-    passed = all(value["passed"] for value in reports)
+    passed_flag = torch.tensor(int(report["passed"]), dtype=torch.int32, device="cpu")
+    dist.all_reduce(passed_flag, op=dist.ReduceOp.MIN)
+    passed = bool(passed_flag.item())
+    reports = [None] * world if rank == 0 else None
+    dist.gather_object(report, reports, dst=0)
     if rank == 0:
+        if [value["rank"] for value in reports] != list(range(world)):
+            raise ValueError("Incomplete or out-of-order EP rank reports")
         event_ms = (
             summarize_event_rounds(reports)
             if performance and not args.inference and all(r["performance_run"] for r in reports)
