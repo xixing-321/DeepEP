@@ -18,7 +18,7 @@ struct BackwardWorkspaceLayout {
     uint64_t dzOffset, hpOffset, dpOffset, dispatchReadyOffset, aivReadyOffset, hDoneOffset;
     uint64_t dhpReadyOffset, dzReadyOffset, dxReadyOffset, doReleasedOffset, progressOffset;
     uint64_t controlOffset, totalBytes;
-    uint64_t sliceSlots, dhpSlicesOffset, recomputeSlicesOffset, dxSlicesOffset;
+    uint64_t stagedReadyOffset;
     bool gmDataGrad, recompute;
     MEGA_MOE_WORKSPACE_HD constexpr BackwardWorkspaceLayout(uint64_t e, uint64_t r, uint64_t h, uint64_t n,
                                                             uint64_t world, uint64_t producers, uint32_t splitExperts,
@@ -39,10 +39,7 @@ struct BackwardWorkspaceLayout {
           progressOffset(0),
           controlOffset(0),
           totalBytes(0),
-          sliceSlots(0),
-          dhpSlicesOffset(0),
-          recomputeSlicesOffset(0),
-          dxSlicesOffset(0),
+          stagedReadyOffset(0),
           gmDataGrad(UseGmForBackwardDataGrad(savedMode)),
           recompute(savedMode == kSaveNone)
     {
@@ -74,15 +71,10 @@ struct BackwardWorkspaceLayout {
         if (gmDataGrad) offset += AlignUp(4 * e * 16, 128);
         progressOffset = AlignUp(offset, 64);
         totalBytes = BackwardDispatchProgressLayout::TotalBytes(offset, splitExperts, world, producers, savedMode);
-        sliceSlots = (DEEPEP_MEGAMOE_BF16_BACKWARD_SLICES || DEEPEP_MEGAMOE_BF16_BACKWARD_COMBINE_SLICES) && gmDataGrad
-                         ? (r + 127U) / 128U + e
-                         : 0U;
-        dhpSlicesOffset = AlignUp(totalBytes, 64);
-        recomputeSlicesOffset = dhpSlicesOffset + (DEEPEP_MEGAMOE_BF16_BACKWARD_SLICES ? sliceSlots * 64 : 0U);
-        dxSlicesOffset =
-            recomputeSlicesOffset + (recompute && DEEPEP_MEGAMOE_BF16_BACKWARD_SLICES ? sliceSlots * 64 : 0U);
-        if (sliceSlots)
-            totalBytes = dxSlicesOffset + (DEEPEP_MEGAMOE_BF16_BACKWARD_COMBINE_SLICES ? sliceSlots * 64 : 0U);
+        if (splitExperts && UseBackwardStagedWave(savedMode, n / 2)) {
+            stagedReadyOffset = AlignUp(totalBytes, 64);
+            totalBytes = stagedReadyOffset + ((r + 127U) / 128U + e) * 64;
+        }
     }
     template <typename Tiling>
     MEGA_MOE_WORKSPACE_HD explicit BackwardWorkspaceLayout(const Tiling& t, uint32_t splitExperts)

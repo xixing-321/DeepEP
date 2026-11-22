@@ -245,12 +245,9 @@ def test_bf16_builds_use_distinct_cache_and_record_actual_options(monkeypatch, t
     published = []
     monkeypatch.setattr(build, "publish_source_native", published.append)
     ext = Extension("deep_ep._C", sources=[])
-    import itertools
 
-    for schedule, slices, combine in itertools.product((0, 1), (False, True), (False, True)):
-        configuration["megamoe"].update(
-            bf16_forward_schedule=str(schedule), bf16_backward_slices=slices, bf16_backward_combine_slices=combine
-        )
+    for schedule in (0, 1):
+        configuration["megamoe"]["bf16_forward_schedule"] = str(schedule)
         command = build.CMakeBuild(Distribution({"ext_modules": [ext]}))
         command.ensure_finalized()
         command.build_temp = str(tmp_path / "temp")
@@ -261,18 +258,14 @@ def test_bf16_builds_use_distinct_cache_and_record_actual_options(monkeypatch, t
         args = configure_calls[-1]
         assert "-DDEEPEP_BUILD_MEGAMOE=ON" in args
         assert f"-DDEEPEP_MEGAMOE_BF16_FORWARD_SCHEDULE={schedule}" in args
-        assert f"-DDEEPEP_MEGAMOE_BF16_BACKWARD_SLICES={'ON' if slices else 'OFF'}" in args
-        assert f"-DDEEPEP_MEGAMOE_BF16_BACKWARD_COMBINE_SLICES={'ON' if combine else 'OFF'}" in args
         info = json.loads((destination / "_build_info.json").read_text(encoding="utf-8"))
         assert info["megamoe"] == {
             "enabled": True,
             "timer": False,
             "bf16_forward_schedule": str(schedule),
-            "bf16_backward_slices": slices,
-            "bf16_backward_combine_slices": combine,
         }
         assert info["shmem_runtime"] == {"test": "hash"}
         assert published[-1] == destination.resolve()
     object_directories = [args[args.index("-B") + 1] for args in configure_calls]
-    assert len(set(object_directories)) == 8
-    assert len(published) == 8
+    assert len(set(object_directories)) == 2
+    assert len(published) == 2

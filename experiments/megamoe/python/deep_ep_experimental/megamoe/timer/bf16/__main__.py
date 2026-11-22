@@ -5,11 +5,10 @@
 """Offline export of selected training ranks; raw files are never modified."""
 
 import argparse
-import json
 from pathlib import Path
 
 from .. import parse_rank_list
-from .trace_parser import export_rank
+from .trace_parser import export_rank, write_trace
 
 
 def parse_ranks(value):
@@ -26,9 +25,7 @@ def export(directory, ranks, *, include_wait=False, merge=True, output_dir=None)
         for phase in ("forward", "backward", None):
             selected = combined if phase is None else [e for e in combined if e["args"]["phase"] == phase]
             suffix = "" if phase is None else f"_{phase}"
-            (output / f"all_rank{suffix}_trace.json").write_text(
-                json.dumps(selected, ensure_ascii=False), encoding="utf-8"
-            )
+            write_trace(output / f"all_rank{suffix}_trace.json", selected)
     return len(combined)
 
 

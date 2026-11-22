@@ -224,9 +224,7 @@ struct BackwardWorkspaceInfo {
     GM_ADDR ptrBwFlagAiv1Ready;
     GM_ADDR ptrBwFlagHDone;
     GM_ADDR ptrBwDispatchProgress;
-    GM_ADDR ptrDHpSlices;
-    GM_ADDR ptrRecomputeSlices;
-    GM_ADDR ptrDXSlices;
+    GM_ADDR ptrStagedReady;
     int64_t workspaceSize;
 
     __aicore__ inline BackwardWorkspaceInfo() = default;
@@ -250,13 +248,7 @@ struct BackwardWorkspaceInfo {
         ptrDX = layout.gmDataGrad ? ptrDO : nullptr;
         ptrBwFlagDOReleased = layout.gmDataGrad ? base + layout.doReleasedOffset : nullptr;
         ptrBwDispatchProgress = layout.gmDataGrad && splitExperts ? base + layout.progressOffset : nullptr;
-        ptrDHpSlices =
-            DEEPEP_MEGAMOE_BF16_BACKWARD_SLICES && layout.sliceSlots ? base + layout.dhpSlicesOffset : nullptr;
-        ptrRecomputeSlices = DEEPEP_MEGAMOE_BF16_BACKWARD_SLICES && layout.sliceSlots && layout.recompute
-                                 ? base + layout.recomputeSlicesOffset
-                                 : nullptr;
-        ptrDXSlices =
-            DEEPEP_MEGAMOE_BF16_BACKWARD_COMBINE_SLICES && layout.sliceSlots ? base + layout.dxSlicesOffset : nullptr;
+        ptrStagedReady = layout.stagedReadyOffset ? base + layout.stagedReadyOffset : nullptr;
         workspaceSize = layout.totalBytes;
     }
 };

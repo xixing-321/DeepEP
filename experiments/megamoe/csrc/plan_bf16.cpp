@@ -305,7 +305,8 @@ torch::Tensor BF16Plan::AllocateTimer(const torch::Tensor& like, const torch::Te
     const int capacity = static_cast<int>(CeilDiv(std::max(bound, int64_t(128)), int64_t{64}) * 64);
     TORCH_CHECK(capacity <= kMaxCapacity, "training Timer task capacity exceeds supported bound");
     const Layout layout{static_cast<int>(groups * 3), capacity};
-    const bool withWaves = phase == 0;
+    const bool backwardWaves = phase == 1 && MegaMoeBF16Training::UseBackwardStagedWave(SaveMode(mode), f);
+    const bool withWaves = phase == 0 || backwardWaves;
     const int64_t elements = layout.Elements(withWaves);
     TORCH_CHECK(elements * 8 <= 256LL * 1024 * 1024, "training Timer exceeds 256 MiB per phase");
     auto timer = torch::zeros({elements}, like.options().dtype(torch::kInt64));
@@ -313,7 +314,7 @@ torch::Tensor BF16Plan::AllocateTimer(const torch::Tensor& like, const torch::Te
     const int64_t flags =
         saved | (mega_moe_bf16_swiglu_decoupled_for_saved_mode(h, saved) ? 256 : 0) | (w.transW ? 1024 : 0);
     std::vector<int64_t> values{kMagic,
-                                withWaves ? kForwardWaveVersion : kVersion,
+                                phase == 0 ? kForwardWaveVersion : (backwardWaves ? kBackwardWaveVersion : kVersion),
                                 groups * 3,
                                 capacity,
                                 phase,

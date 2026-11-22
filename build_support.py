@@ -249,14 +249,6 @@ def build_configuration(environment=None):
     if timer == "ON" and not megamoe_enabled:
         raise RuntimeError("MegaMoE timer requires DEEPEP_BUILD_MEGAMOE=ON")
 
-    slice_flags = {}
-    for name in ("DEEPEP_MEGAMOE_BF16_BACKWARD_SLICES", "DEEPEP_MEGAMOE_BF16_BACKWARD_COMBINE_SLICES"):
-        value = env.get(name, "OFF")
-        if value not in {"ON", "OFF"}:
-            raise RuntimeError(f"{name} accepts ON or OFF only")
-        if value == "ON" and not megamoe_enabled:
-            raise RuntimeError(f"{name} requires DEEPEP_BUILD_MEGAMOE=ON")
-        slice_flags[name] = value == "ON"
     forward_schedule = env.get("DEEPEP_MEGAMOE_BF16_FORWARD_SCHEDULE", "0")
     if forward_schedule not in ("0", "1"):
         raise RuntimeError("DEEPEP_MEGAMOE_BF16_FORWARD_SCHEDULE must be 0 or 1")
@@ -353,8 +345,6 @@ def build_configuration(environment=None):
         "enabled": megamoe_enabled,
         "timer": timer == "ON",
         "bf16_forward_schedule": forward_schedule,
-        "bf16_backward_slices": slice_flags["DEEPEP_MEGAMOE_BF16_BACKWARD_SLICES"],
-        "bf16_backward_combine_slices": slice_flags["DEEPEP_MEGAMOE_BF16_BACKWARD_COMBINE_SLICES"],
     }
     if megamoe_enabled:
         catlass = Path(env.get("CATLASS_ROOT", str(ROOT / "third-party/catlass")))
@@ -538,8 +528,6 @@ class CMakeBuild(build_ext):
             f"-DDEEPEP_MEGAMOE_TIMER={'ON' if megamoe.get('timer', False) else 'OFF'}",
             f"-DCATLASS_ROOT={configuration.get('CATLASS_ROOT', '')}",
             f"-DDEEPEP_MEGAMOE_BF16_FORWARD_SCHEDULE={megamoe.get('bf16_forward_schedule', '0')}",
-            f"-DDEEPEP_MEGAMOE_BF16_BACKWARD_SLICES={'ON' if megamoe.get('bf16_backward_slices') else 'OFF'}",
-            f"-DDEEPEP_MEGAMOE_BF16_BACKWARD_COMBINE_SLICES={'ON' if megamoe.get('bf16_backward_combine_slices') else 'OFF'}",
             f"-DDEEPEP_BUILD_EP_GMM_FUSED={'ON' if ep_gmm_fused else 'OFF'}",
             f"-DCMAKE_INSTALL_PREFIX={destination}",
         ]

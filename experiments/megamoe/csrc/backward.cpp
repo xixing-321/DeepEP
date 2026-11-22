@@ -118,20 +118,17 @@ BackwardResult BF16Plan::backward(torch::Tensor gradY, torch::Tensor topkWeights
                 "MegaMoe BF16 training_saved_state is too small: need ", savedStateLayout.totalBytes, " bytes");
     uint32_t splitExperts = MegaMoeBF16Training::DefaultBackwardDispatchSplitExperts(
         tiling.savedGateUpMode, static_cast<uint32_t>(expertPerRank));
-    // This diagnostic override selects how many experts use row readiness on the GM path.
-    const char* splitText = std::getenv("MEGAMOE_BF16_BWD_DISPATCH_SPLIT_EXPERTS");
-    if (splitText != nullptr) {
-        if (std::string(splitText) == "all") {
-            splitExperts = static_cast<uint32_t>(expertPerRank);
-        } else {
-            char* end = nullptr;
-            const long value = std::strtol(splitText, &end, 10);
-            TORCH_CHECK(end != splitText && *end == '\0' && value >= 0 && value <= expertPerRank,
-                        "MEGAMOE_BF16_BWD_DISPATCH_SPLIT_EXPERTS must be 0..localE or all");
-            splitExperts = static_cast<uint32_t>(value);
-        }
+    if (MegaMoeBF16Training::UseBackwardStagedWave(tiling.savedGateUpMode, tiling.n / 2)) {
+        splitExperts = static_cast<uint32_t>(expertPerRank);
     }
-    if (!MegaMoeBF16Training::UseGmForBackwardDataGrad(tiling.savedGateUpMode)) splitExperts = 0;
+    // Set to zero to wait for a complete expert throughout backward.
+    const char* override = std::getenv("MEGAMOE_BF16_BWD_DISPATCH_SPLIT_EXPERTS");
+    if (override != nullptr) {
+        const std::string policy(override);
+        TORCH_CHECK(policy == "auto" || policy == "0",
+                    "MEGAMOE_BF16_BWD_DISPATCH_SPLIT_EXPERTS accepts auto or 0 (whole expert)");
+        if (policy == "0") splitExperts = 0;
+    }
     const MegaMoeBF16BackwardWorkspaceLayout backwardLayout(tiling, splitExperts);
     auto backwardWorkspace = AllocateBackwardWorkspace(backwardLayout, gradY);
 

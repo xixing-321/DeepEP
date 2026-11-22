@@ -361,7 +361,15 @@ BF16 推理（`need_grad=False`）固定使用模式 0，按 Wave 交错执行 G
 BF16主函数和buffer不暴露调度及Timer参数。Timer由 `DEEPEP_MEGAMOE_TIMER=ON` 编译，
 通过 `deep_ep_experimental.megamoe.timer.bf16.capture.TimerCapture` 采集，独立于常规性能测量。
 
-前向时间线在每个物理核上按实际 Wave 标记 Dispatch、GMM1、SwiGLU、GMM2 和 Combine。例如 `wave_1_AIC_GMM1_0` 是该核在 Wave 1 上的第一个 GMM1 任务。事件详情含专家号和行段。同一专家跨 Wave 时分别显示，准备和收尾阶段单独显示。反向和旧版前向原始文件仍按专家展示。
+前向时间线在每个物理核上按实际 Wave 标记 Dispatch、GMM1、SwiGLU、GMM2 和 Combine。例如 `wave_1_AIC_GMM1_0` 是该核在 Wave 1 上的第一个 GMM1 任务。事件详情含专家号和行段。
+
+反向 Wave 覆盖 dO Dispatch、dHp 和 SwiGLUGrad。`wave_7_AIC_BW_DHP_E2` 表示 Wave 7 计算专家 2 的 dHp。`wave_7_AIC_BW_DW2_EARLY_E1` 表示该核等待 Wave 7 的 dO 时，提前计算了专家 1 的一个 dW2 输出 tile。常规 dW2 显示为 `AIC_BW_DW2_E1`。`save=none` 走专家调度，先重算 GMM1。
+
+反向主图保留 Wave 内的工作片段。对于 dW1、常规 dW2、GMM1 重算等专家阶段，同一物理核连续执行同一专家的工作显示为一块；遇到其他任务或已记录的等待则断开。块长包含相邻 tile 间的调度间隔，`active_us` 是块内各打点片段的时长之和。`*_backward_detail_trace.json` 保留逐 tile 坐标和时间。
+
+每个 AIV 的 dP 归约和回传在反向主图上显示为一段 `AIV_BW_DP_REDUCE_SEND`。在明细图中展开 `AIV_BW_DP_REDUCE`，可查看各批 `AIV_BW_DP_SEND` 的起止时间、专家和目标 rank。
+
+时间线 JSON 的事件列表在 `traceEvents` 字段中。`ts`、`dur` 的单位为微秒；`displayTimeUnit: "ns"` 让 Chrome 按纳秒区分同一核上相邻的短事件。
 
 同一组 EP8 原始文件可以导出两种视图。默认隐藏等待；带等待的前向主图展示各核每个 Wave 的首个阶段等待，详细图保留采集到的全部等待。
 

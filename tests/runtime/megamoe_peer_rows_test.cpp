@@ -12,6 +12,7 @@
 #include "experiments/megamoe/csrc/kernels/mega_moe/common/mega_moe_bf16_peer_row_layout.hpp"
 #include "experiments/megamoe/csrc/kernels/mega_moe/common/mega_moe_bf16_layout.hpp"
 #include "experiments/megamoe/csrc/kernels/mega_moe/common/mega_moe_workspace_backward.hpp"
+#include "experiments/megamoe/csrc/kernels/mega_moe/stage/mega_moe_staged_wave_backward.hpp"
 
 using namespace MegaMoeBF16Training::Wave;
 using Row = std::pair<uint32_t, uint32_t>;
@@ -23,8 +24,125 @@ struct Prefix {
     }
 };
 
+// Encode dY as (peer, route ordinal) so both a duplicate and a silent row
+// permutation are visible. Check the exact M/N rectangles handed to Cube.
+static void CheckBackwardWaveRows()
+{
+    constexpr uint32_t cores = 32, experts = 4;
+    std::mt19937 rng(20261120);
+    for (uint32_t ep : {8U, 16U, 32U, 128U}) {
+        for (uint32_t scenario = 0; scenario < 5; ++scenario) {
+            std::vector<uint32_t> prefix(ep * experts);
+            std::vector<std::vector<Row>> expected(experts);
+            for (uint32_t peer = 0; peer < ep; ++peer) {
+                for (uint32_t e = 0; e < experts; ++e) {
+                    uint32_t count = scenario == 0 ? 48U : rng() % 101U;
+                    if (scenario == 2 && (e == 1 || peer % 3)) count = 0;
+                    if (scenario == 3) count = peer == 4 ? 1 + 128 * e : 0;
+                    for (uint32_t j = 0; j < count; ++j) expected[e].emplace_back(peer, j);
+                    prefix[peer * experts + e] = expected[e].size();
+                }
+            }
+            for (uint32_t rank : {0U, ep / 2, ep - 1}) {
+                uint32_t previous = 0;
+                for (uint32_t e = 0; e < experts; ++e) {
+                    uint32_t m = expected[e].size();
+                    if (scenario == 4) m = std::min(m, 513U);
+                    uint32_t n = ep == 16 ? 2304 : 3072, cols = (n + 255) / 256;
+                    const MegaMoeBF16Training::BackwardWavePlan plan(
+                        m, n, cores, rank ? prefix[(rank - 1) * experts + e] : 0, previous);
+                    std::vector<Row> actual(m);
+                    std::vector<unsigned> visited(m), products(plan.tiles * cols), arrivals(plan.tiles);
+                    std::vector<unsigned> required(plan.tiles), writers(plan.tiles);
+                    for (uint32_t lane = 0; lane < cores; ++lane) {
+                        plan.ForEach(lane, [&](uint32_t row, uint32_t rows, uint32_t member, uint32_t owners) {
+                            assert(row % 128 == 0 && rows == std::min(128U, m - row));
+                            const auto band = MegaMoeImpl::GetBalancedTokenRange(rows, member, owners);
+                            if (band.count) {
+                                MegaMoeBF16Training::VisitCanonicalPeerRows(
+                                    Prefix{prefix}, ep, experts, e, row + band.start, row + band.start + band.count,
+                                    [&](auto peer, auto j, auto dst, auto len) {
+                                        for (uint32_t i = 0; i < len; ++i) {
+                                            actual[dst + i] = {peer, j + i};
+                                            ++visited[dst + i];
+                                        }
+                                    });
+                                ++arrivals[row / 128];
+                            }
+                        });
+                        plan.ForEachDhpRow(lane, cols, (uint64_t(previous) * cols) % cores,
+                                           [&](uint32_t row, uint32_t, uint32_t firstCol, uint32_t dmaArrivals) {
+                                               required[row / 128] = dmaArrivals;
+                                               ++writers[row / 128];
+                                               for (uint32_t col = firstCol; col < cols; col += cores)
+                                                   ++products[row / 128 * cols + col];
+                                           });
+                    }
+                    assert(arrivals == required && std::equal(actual.begin(), actual.end(), expected[e].begin()));
+                    assert(std::all_of(visited.begin(), visited.end(), [](unsigned v) { return v == 1; }));
+                    assert(std::all_of(products.begin(), products.end(), [](unsigned v) { return v == 1; }));
+                    assert(std::all_of(writers.begin(), writers.end(),
+                                       [&](unsigned v) { return v == std::min(cols, cores); }));
+                    previous += plan.tiles;
+                }
+            }
+        }
+    }
+}
+
+static void CheckDhpWaveOwnership()
+{
+    for (uint32_t cores : {24U, 32U}) {
+        for (uint32_t cols : {1U, 9U, 12U, 32U, 37U, 67U}) {
+            unsigned previous = 0;
+            std::vector<unsigned> work(cores);
+            for (uint32_t m : {0U, 33U, 511U, 16384U, 65U, 1025U}) {
+                const MegaMoeBF16Training::BackwardWavePlan plan(m, cols * 256, cores, m / 2, previous);
+                std::vector<unsigned> visits(plan.tiles * cols);
+                for (unsigned lane = 0; lane < cores; ++lane) {
+                    plan.ForEachDhpRow(lane, cols, previous * cols % cores,
+                                       [&](unsigned row, unsigned rows, unsigned firstCol, unsigned) {
+                                           assert(rows == std::min(128U, m - row));
+                                           unsigned ordinal = (row / 128 + plan.tiles - plan.pivot) % plan.tiles;
+                                           for (unsigned col = firstCol; col < cols; col += cores) {
+                                               assert(((previous + ordinal) * cols + col) % cores == lane);
+                                               ++visits[row / 128 * cols + col];
+                                               ++work[lane];
+                                           }
+                                       });
+                }
+                assert(std::all_of(visits.begin(), visits.end(), [](unsigned count) { return count == 1; }));
+                previous += plan.tiles;
+            }
+            const auto limits = std::minmax_element(work.begin(), work.end());
+            assert(*limits.second - *limits.first <= 1);
+        }
+    }
+
+    // EP16: three experts with 16384 rows and F2304 share 3456 tiles across 32 AICs.
+    std::vector<unsigned> work(32);
+    for (unsigned expert = 0; expert < 3; ++expert) {
+        const MegaMoeBF16Training::BackwardWavePlan plan(16384, 2304, 32, 0, expert * 128);
+        for (unsigned lane = 0; lane < 32; ++lane)
+            plan.ForEachDhpRow(lane, 9, expert * 128 * 9 % 32, [&](unsigned, unsigned, unsigned firstCol, unsigned) {
+                assert(firstCol < 9);
+                ++work[lane];
+            });
+    }
+    assert(std::all_of(work.begin(), work.end(), [](unsigned count) { return count == 108; }));
+}
+
 int main()
 {
+    // Two earlier tiles occupy Wave 0. The visit order here is 4, 5, 0, 1, 2, 3.
+    const MegaMoeBF16Training::BackwardWavePlan tracePlan(768, 3072, 32, 512, 2);
+    assert(tracePlan.groups == 6);
+    for (uint32_t i = 0; i < 6; ++i) {
+        const uint32_t row = ((4 + i) % 6) * 128;
+        assert(tracePlan.WaveId(row) == (2 + i) / 6);
+    }
+    CheckBackwardWaveRows();
+    CheckDhpWaveOwnership();
     // A prefix above 2^32 still rotates the remainder to the correct worker.
     constexpr uint64_t wavePrefix = (uint64_t{1} << 32) + 1;
     static_assert(MegaMoeImpl::GetRotatedBalancedTokenRange(8, 2, 3, wavePrefix).count == 3);
@@ -52,14 +170,30 @@ int main()
     const BackwardWorkspaceLayout smallEp(4, 24576, 7168, 6144, 8, 32, 4, MegaMoeBF16Training::kSaveBf16);
     assert(largeEp.dzOffset == 24576ULL * 7168U * sizeof(uint16_t));
     assert(smallEp.dzOffset == largeEp.dzOffset);
+    assert(largeEp.stagedReadyOffset != 0);
+    if (largeEp.stagedReadyOffset) {
+        assert(largeEp.totalBytes - largeEp.stagedReadyOffset == (24576 / 128 + 4) * 64);
+    }
+    const BackwardWorkspaceLayout mx(4, 24576, 7168, 6144, 128, 32, 4, MegaMoeBF16Training::kSaveMxFp8);
+    const BackwardWorkspaceLayout none(4, 24576, 7168, 6144, 128, 32, 4, MegaMoeBF16Training::kSaveNone);
+    assert(mx.stagedReadyOffset != 0);
+    assert(none.stagedReadyOffset == 0);
+    using namespace MegaMoeBF16Training;
+    static_assert(UseBackwardStagedWave(kSaveBf16, 2048) && UseBackwardStagedWave(kSaveMxFp8, 2080));
+    static_assert(!UseBackwardStagedWave(kSaveBf16, 2080) && !UseBackwardStagedWave(kSaveBf16, 16448));
+    static_assert(!UseBackwardStagedWave(kSaveNone, 2048) && !UseBackwardStagedWave(kSaveMxFp8, 0));
+    for (auto mode : {kSaveBf16, kSaveMxFp8}) {
+        const BackwardWorkspaceLayout escape(16, 24576, 7168, 4096, 32, 32, 0, mode);
+        const BackwardWorkspaceLayout wave(16, 24576, 7168, 4096, 32, 32, 16, mode);
+        assert(!escape.stagedReadyOffset && wave.stagedReadyOffset);
+    }
     assert(MetadataFits(128, 4));
     assert(MetadataFits(1024, 2));
     assert(MetadataBytes(8, 4) == 4096 && MetadataBytes(1024, 2) == 16384);
     assert(ScratchFits(7168, 1024, 2));
     assert(!ScratchFits(32768, 8, 4));
     static_assert(MegaMoeBF16Training::BackwardTopkPartialCount(MegaMoeBF16Training::kSaveBf16, 3072) == 1);
-    static_assert(MegaMoeBF16Training::BackwardTopkPartialCount(MegaMoeBF16Training::kSaveNone, 3072) ==
-                  (DEEPEP_MEGAMOE_BF16_BACKWARD_SLICES ? 1U : 12U));
+    static_assert(MegaMoeBF16Training::BackwardTopkPartialCount(MegaMoeBF16Training::kSaveNone, 3072) == 12);
     static_assert(MegaMoeBF16Training::BackwardTopkPartialCount(MegaMoeBF16Training::kSaveMxFp8, 3072) == 12);
     static_assert(MegaMoeBF16Training::TopkGradReductionWidth(24467, 3072, 64) == 3072);
     static_assert(MegaMoeBF16Training::TopkGradReductionWidth(24258, 3072, 64) == 1536);
@@ -130,12 +264,8 @@ int main()
             assert(layout.doOffset == 0 && layout.controlOffset < layout.totalBytes);
             assert(layout.dzOffset % 512 == 0 && layout.hpOffset % 512 == 0 && layout.dpOffset % 512 == 0);
             assert(layout.dhpReadyOffset < layout.dzReadyOffset && layout.dzReadyOffset < layout.dxReadyOffset);
-            if ((DEEPEP_MEGAMOE_BF16_BACKWARD_SLICES || DEEPEP_MEGAMOE_BF16_BACKWARD_COMBINE_SLICES) &&
-                layout.gmDataGrad) {
-                assert(layout.sliceSlots == (capacity + 127U) / 128U + 4U);
-                assert(layout.totalBytes ==
-                       layout.dxSlicesOffset +
-                           (DEEPEP_MEGAMOE_BF16_BACKWARD_COMBINE_SLICES ? layout.sliceSlots * 64U : 0U));
+            if (layout.stagedReadyOffset) {
+                assert(layout.totalBytes == layout.stagedReadyOffset + ((capacity + 127) / 128 + 4) * 64);
             }
         }
     }

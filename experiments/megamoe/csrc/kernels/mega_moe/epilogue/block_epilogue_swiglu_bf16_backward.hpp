@@ -132,9 +132,7 @@ public:
     // One AIV owns a complete row: read dHp/Gate/Up once, form dP, Hp and dZ,
     // then replace that row's dHp with Hp. No other AIV consumes its columns.
     // The AR primitive retains the tensor reduction's FP32 addition tree.
-    __aicore__ inline void SwiGLUGradRows(GM_ADDR dHpBase, uint32_t rows, uint32_t readerIndex, uint32_t readers,
-                                          const MegaMoeImpl::RowSliceReady& ready = {},
-                                          const MegaMoeImpl::RowSliceReady& recomputeReady = {})
+    __aicore__ inline void SwiGLUGradRows(GM_ADDR dHpBase, uint32_t rows, uint32_t readerIndex, uint32_t readers)
     {
         const uint16_t f = static_cast<uint16_t>(outputF_);
         const uint32_t rowBytes = static_cast<uint32_t>(f) * sizeof(bfloat16_t);
@@ -165,8 +163,6 @@ public:
         const uint16_t tailParts = parts - mainParts;
         for (uint32_t row = readerIndex * batchRows; row < rows; row += readers * batchRows) {
             const uint32_t take = rows - row < batchRows ? rows - row : batchRows;
-            ready.Wait(row, take, (f + 255U) / 256U);
-            recomputeReady.Wait(row, take, (f + 255U) / 256U);
             // Retire the previous dP write before reusing the batch buffers.
             SyncFunc<AscendC::HardEvent::MTE3_S>();
             LoadPackedWeights(take, row);

@@ -13,14 +13,6 @@
 #define MEGA_MOE_BF16_HOST_DEVICE
 #endif
 
-// Compile-time selection of the GM slice-ready backward pipeline.
-#ifndef DEEPEP_MEGAMOE_BF16_BACKWARD_SLICES
-#define DEEPEP_MEGAMOE_BF16_BACKWARD_SLICES 0
-#endif
-#ifndef DEEPEP_MEGAMOE_BF16_BACKWARD_COMBINE_SLICES
-#define DEEPEP_MEGAMOE_BF16_BACKWARD_COMBINE_SLICES 0
-#endif
-
 namespace MegaMoeBF16Training {
 
 constexpr uint64_t kAlignment32 = 32;
@@ -145,10 +137,13 @@ enum SavedGateUpMode : uint32_t { kSaveNone = 1, kSaveBf16 = 2, kSaveMxFp8 = 3 }
 // and a padded scalar result. Wider rows keep the tiled partial path.
 MEGA_MOE_BF16_HOST_DEVICE constexpr bool UseWholeRowTopkGrad(uint32_t mode, uint64_t f)
 {
-    return (mode == kSaveBf16 || (DEEPEP_MEGAMOE_BF16_BACKWARD_SLICES && mode == kSaveNone)) && f > 0 && f <= 16384 &&
-           f % 64 == 0;
+    return mode == kSaveBf16 && f > 0 && f <= 16384 && f % 64 == 0;
 }
 constexpr uint32_t kWholeRowTopkResultBytes = 8U * 1024U;
+MEGA_MOE_BF16_HOST_DEVICE constexpr bool UseBackwardStagedWave(uint32_t mode, uint64_t f)
+{
+    return UseWholeRowTopkGrad(mode, f) || (mode == kSaveMxFp8 && f > 0 && f % 32 == 0);
+}
 MEGA_MOE_BF16_HOST_DEVICE constexpr uint32_t TopkGradBatchRows(uint32_t columns)
 {
     if (columns == 0) return 0;
@@ -185,7 +180,7 @@ MEGA_MOE_BF16_HOST_DEVICE constexpr uint64_t BackwardTopkPartialCount(uint32_t m
 }
 MEGA_MOE_BF16_HOST_DEVICE constexpr bool UseGmForBackwardDataGrad(uint32_t savedMode)
 {
-    return DEEPEP_MEGAMOE_BF16_BACKWARD_SLICES || savedMode != kSaveNone;
+    return savedMode != kSaveNone;
 }
 
 // The caller supplies the effective (capacity-clipped) local expert rows.

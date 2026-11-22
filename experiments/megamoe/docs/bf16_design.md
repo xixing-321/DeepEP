@@ -9,7 +9,7 @@
 | Host | csrc/forward.cpp、csrc/backward.cpp | 前反向校验、分配和启动 |
 | Plan | csrc/plan.hpp、csrc/plan_bf16.cpp | 借用根通信窗口，按配置准备基础 tiling 和前向 workspace。每次调用复制 tiling 并填入权重布局 |
 | Launch | csrc/kernel_launch.hpp | Host 和设备共用的启动符号声明 |
-| 前向 | mega_moe_wave_bf16.hpp | 推理固定使用模式 0（Wave 交错）；训练支持模式 0 和模式 1（分阶段） |
+| 前向 | mega_moe_wave_bf16.hpp | 推理使用模式 0（Wave 交错）。训练默认模式 0，编译时可选模式 1（分阶段）。 |
 | 反向 | mega_moe_bf16_backward.hpp | dY分发、dHp、激活梯度、dX回传及dW |
 | stage | 路由、peer映射、通信、Unpermute及ready | 数据移动和完成条件 |
 | catlass_gmm | mega_moe_bf16_catlass_impl.hpp及_backward.hpp | BF16 GEMM与布局供数 |
@@ -52,6 +52,10 @@ SHMEM 窗口由根 Runtime 持有。BF16 Plan 在 prepare 或首次调用时准�
 | `bf16` | 读取前向保存的 BF16 值。在整行路径中，一次读取 dHp、Gate、Up，生成 dP、Hp 和 dZ。 |
 | `mxfp8` | 按专家内的规范行序读取量化值和比例因子，在寄存器中以 FP32 解码并舍入为 BF16。启用裁剪时，梯度使用同行的裁剪掩码。 |
 | `none` | 从本次前向保存或框架重建的 X 中取出每个专家的连续行，按专家重算 GMM1，得到 Gate 和 Up。 |
+
+反向根据保存类型选择调度。`none` 沿用整专家重算和原有反向流水。`bf16` 在 F 为 64 的倍数且 F ≤ 16384 时使用 Wave，`mxfp8` 在支持的 32 列量化分组上使用 Wave。每个专家沿规范行序按 128 行发布 dO 就绪，尾块按实际行数处理。AIC 在本块 dO 就绪后计算 dHp，AIV 在所需列全部就绪后计算 SwiGLUGrad。
+
+AIC 等待 dO 时，可以先算前面已备齐 dO 和 Hp 的专家的一个 dW2 输出 tile。每个 tile 沿完整专家行做归约。算完即检查 dO，恢复 dHp 或继续借用等待时间。后续 dW2 阶段跳过本核已完成的 tile。需要整专家就绪时，各 rank 可设 `MEGAMOE_BF16_BWD_DISPATCH_SPLIT_EXPERTS=0`，此时 dW2 全部在原阶段计算。
 
 dW1 同样按专家读取连续的 X，与同行的 dZ 计算权重梯度。dP 归约计划使用整个 rank 的路由行数和全部 AIV，保持各分片的归约顺序。专家按源 rank 前缀将 dP 写入源卡独立的 SHMEM 回传区，每条路由占用一个与 TopK weight 同类型的元素。跨卡写入时，发送核回读这一批梯度，逐位确认写入完成后再参加屏障。屏障结束后，源卡按路由索引恢复原来的 TopK slot。
 dHp覆盖为Hp前完成本行dP；dX覆盖dO前，等待dHp和dW2的全部读者退出。

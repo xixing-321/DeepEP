@@ -40,7 +40,9 @@ public:
             header.SetGlobalBuffer(reinterpret_cast<__gm__ int64_t*>(address));
             cores = static_cast<int>(header.GetValue(2));
             capacity = static_cast<int>(header.GetValue(3));
-            withWaves = header.GetValue(1) == MegaMoeTrainTimer::kForwardWaveVersion;
+            const auto version = header.GetValue(1);
+            withWaves =
+                version == MegaMoeTrainTimer::kForwardWaveVersion || version == MegaMoeTrainTimer::kBackwardWaveVersion;
         }
 #endif
         BasicAscendTimerDevice::Init(address, cores, capacity, withWaves);

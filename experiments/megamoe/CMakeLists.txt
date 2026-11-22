@@ -16,8 +16,6 @@ find_package(Torch REQUIRED)
 find_library(TORCH_NPU_LIBRARY torch_npu PATHS "${torch_npu_root}/lib" NO_DEFAULT_PATH REQUIRED)
 find_library(TORCH_PYTHON_LIBRARY torch_python PATHS "${TORCH_INSTALL_PREFIX}/lib" NO_DEFAULT_PATH REQUIRED)
 
-option(DEEPEP_MEGAMOE_BF16_BACKWARD_SLICES "Compile BF16 dHp/SwiGLU slice readiness" OFF)
-option(DEEPEP_MEGAMOE_BF16_BACKWARD_COMBINE_SLICES "Compile BF16 dX slice-ready Combine" OFF)
 set(DEEPEP_MEGAMOE_BF16_FORWARD_SCHEDULE "0" CACHE STRING "BF16 training forward: 0=interleaved, 1=staged")
 if(NOT DEEPEP_MEGAMOE_BF16_FORWARD_SCHEDULE MATCHES "^[01]$")
     message(FATAL_ERROR "DEEPEP_MEGAMOE_BF16_FORWARD_SCHEDULE must be 0 or 1")
@@ -59,10 +57,7 @@ set(bf16_include_dirs "${CMAKE_CURRENT_SOURCE_DIR}"
     "${ASCEND_HOME_PATH}/compiler/tikcpp/tikcfw/interface" "${ASCEND_HOME_PATH}/compiler/tikcpp/tikcfw/impl"
     "${PROJECT_SOURCE_DIR}")
 # BF16 Host and device share the schedule and workspace definitions.
-set(bf16_definitions
-    DEEPEP_MEGAMOE_BF16_FORWARD_SCHEDULE=${DEEPEP_MEGAMOE_BF16_FORWARD_SCHEDULE}
-    DEEPEP_MEGAMOE_BF16_BACKWARD_SLICES=$<BOOL:${DEEPEP_MEGAMOE_BF16_BACKWARD_SLICES}>
-    DEEPEP_MEGAMOE_BF16_BACKWARD_COMBINE_SLICES=$<BOOL:${DEEPEP_MEGAMOE_BF16_BACKWARD_COMBINE_SLICES}>)
+set(bf16_definitions DEEPEP_MEGAMOE_BF16_FORWARD_SCHEDULE=${DEEPEP_MEGAMOE_BF16_FORWARD_SCHEDULE})
 
 # One compile configuration for every entry: the training kernels align to
 # the quantized regime (auto-sync off, static compile, tensor API), keeping

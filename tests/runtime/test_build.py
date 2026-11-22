@@ -727,16 +727,3 @@ def test_host_compiler_cann_path_and_missing(build, tmp_path):
     compiler.write_text('#!/bin/sh\necho "bisheng"\n')
     compiler.chmod(0o755)
     assert build.find_host_compiler(env)[0] == str(compiler)
-
-
-@pytest.mark.parametrize("flag", ["DEEPEP_MEGAMOE_BF16_BACKWARD_SLICES", "DEEPEP_MEGAMOE_BF16_BACKWARD_COMBINE_SLICES"])
-@pytest.mark.parametrize("value", ["1", "on", "invalid"])
-def test_bf16_slice_switch_rejects_ambiguous_values(build, flag, value):
-    with pytest.raises(RuntimeError, match=f"{flag} accepts ON or OFF only"):
-        build.build_configuration({"DEEPEP_NPU_ARCH": "Ascend950", "DEEPEP_BUILD_MEGAMOE": "ON", flag: value})
-
-
-@pytest.mark.parametrize("flag", ["DEEPEP_MEGAMOE_BF16_BACKWARD_SLICES", "DEEPEP_MEGAMOE_BF16_BACKWARD_COMBINE_SLICES"])
-def test_bf16_slice_switch_requires_bf16_component(build, flag):
-    with pytest.raises(RuntimeError, match=f"{flag} requires DEEPEP_BUILD_MEGAMOE=ON"):
-        build.build_configuration({"DEEPEP_NPU_ARCH": "Ascend950", flag: "ON"})

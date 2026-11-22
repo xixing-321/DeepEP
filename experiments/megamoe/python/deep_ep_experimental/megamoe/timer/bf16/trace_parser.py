@@ -7,6 +7,7 @@
 from array import array
 from collections import defaultdict
 import csv
+from itertools import groupby
 import json
 from pathlib import Path
 import sys
@@ -26,8 +27,9 @@ def decode(path, rank):
     if sys.byteorder != "little":
         raw.byteswap()
     header = list(raw[: p.HEADER_WORDS])
-    with_waves = header[1] == p.FORWARD_WAVE_VERSION
-    if header[0] != p.MAGIC or not (header[1] == p.VERSION or (with_waves and header[4] == 0)):
+    wave_phase = {p.FORWARD_WAVE_VERSION: 0, p.BACKWARD_WAVE_VERSION: 1}
+    with_waves = header[1] in wave_phase
+    if header[0] != p.MAGIC or (header[1] != p.VERSION and wave_phase.get(header[1]) != header[4]):
         raise ValueError(f"{path}: unsupported training Timer protocol")
     fixed_count = header[5]
     if (
@@ -158,6 +160,8 @@ def chrome_events(events, origin, *, include_wait=True):
                 continue
             task = event["task"]
             label = name + (f" e{task['expert_id']} m{task['row_start']} n{task['n_start']}" if task else "")
+            if name == "AIC_BW_DW2" and event.get("wave_id", -1) >= 0:
+                label = label.replace(name, name + "_EARLY", 1)
             if event.get("wave_id", -1) >= 0:
                 label = f"wave_{event['wave_id']}_{label}"
             result.append(
@@ -315,6 +319,85 @@ def wave_events(detail, *, include_wait=False):
     return sorted(result, key=lambda event: (event["args"]["core_id"], event["ts"], event["name"]))
 
 
+def backward_events(detail, *, include_wait=False):
+    """Show consecutive expert work as a stage and keep Wave work on its measured tiles."""
+    # ReduceAndRouteTopkGrad records one outer interval per AIV. Its per-peer
+    # sends are available with their original timestamps in the detail trace.
+    dp_stages = {e["args"]["core_id"]: e["args"] for e in detail if e["args"]["event_family"] == "AIV_BW_DP_REDUCE"}
+    result = []
+    for event in detail:
+        args = event["args"]
+        family = args["event_family"]
+        wait = event["cat"] == "wait"
+        if family in ("KERNEL_TIMING", "AIV_BW_DECODE_GATE_UP"):
+            continue
+        if family == "AIV_BW_DP_SEND":
+            stage = dp_stages.get(args["core_id"])
+            if stage and stage["start_cycle"] <= args["start_cycle"] and args["end_cycle"] <= stage["end_cycle"]:
+                continue
+        wave = args.get("wave_id", -1)
+        expert = args.get("expert_id", -1)
+        early = family == "AIC_BW_DW2" and wave >= 0
+        label = "AIV_BW_DP_REDUCE_SEND" if family == "AIV_BW_DP_REDUCE" else family + ("_EARLY" if early else "")
+        if expert >= 0:
+            label += f"_E{expert}"
+        if wave >= 0:
+            label = f"wave_{wave}_{label}"
+        group, engine, sub = core_info(args["core_id"])
+        result.append(
+            dict(
+                event,
+                name=label,
+                pid=f"rank{args['rank']}",
+                tid=f"group_{group}_{engine}_{sub}",
+                cat="dependency_wait" if wait else ("aic_op" if engine == "AIC" else "aiv_op"),
+                args=dict(args, is_wait=wait, early_dw2=early),
+            )
+        )
+    result.sort(key=lambda e: (e["args"]["core_id"], e["ts"], e["name"]))
+    expert_stages = {
+        "AIC_BW_RECOMPUTE",
+        "AIC_BW_DHP",
+        "AIV_BW_SWIGLU_GRAD",
+        "AIV_BW_DISPATCH",
+        "AIC_BW_DW1",
+        "AIC_BW_DW2",
+        "AIC_BW_DX",
+        "AIV_BW_COMBINE",
+    }
+    overview = []
+    # Group before hiding waits so both views preserve the same interruptions.
+    for _, run in groupby(result, key=lambda e: (e["tid"], e["name"])):
+        first = next(run)
+        args = first["args"]
+        if args["is_wait"] and not include_wait:
+            continue
+        if args["event_family"] not in expert_stages or args.get("wave_id", -1) >= 0 or args.get("expert_id", -1) < 0:
+            overview.append(first)
+            overview.extend(run)
+            continue
+        parts = [first, *run]
+        end = parts[-1]["args"]["end_cycle"]
+        span = {k: args[k] for k in ("event_family", "phase", "rank", "core_id", "expert_id", "is_wait", "early_dw2")}
+        if "wave_id" in args:
+            span["wave_id"] = args["wave_id"]
+        span.update(
+            granularity="expert",
+            start_cycle=args["start_cycle"],
+            end_cycle=end,
+            recorded_fragments=len(parts),
+            active_us=sum(e["dur"] for e in parts),
+        )
+        overview.append(dict(first, args=span, dur=(end - args["start_cycle"]) / p.CYCLE_TO_US))
+    return overview
+
+
+def write_trace(path, events):
+    # Chrome uses the display unit when deciding if one slice encloses another.
+    # Event timestamps and durations are still expressed in trace-format microseconds.
+    path.write_text(json.dumps({"displayTimeUnit": "ns", "traceEvents": events}, ensure_ascii=False), encoding="utf-8")
+
+
 def export_rank(directory, rank, *, include_wait=False, output_dir=None):
     directory = Path(directory)
     output = Path(output_dir) if output_dir is not None else directory
@@ -331,7 +414,7 @@ def export_rank(directory, rank, *, include_wait=False, output_dir=None):
             with (output / f"rank_{rank}_{phase}_parsed.csv").open("w", newline="", encoding="utf-8") as stream:
                 writer = csv.writer(stream)
                 columns = ["rank", "core", "phase", "event", "start_cycle", "end_cycle", "task"]
-                has_waves = info["protocol_version"] == p.FORWARD_WAVE_VERSION
+                has_waves = info["protocol_version"] in (p.FORWARD_WAVE_VERSION, p.BACKWARD_WAVE_VERSION)
                 writer.writerow(columns + (["wave_id"] if has_waves else []))
                 writer.writerows(
                     (rank, e["core_id"], phase, e["name"], e["start_cycle"], e["end_cycle"], json.dumps(e["task"]))
@@ -345,9 +428,11 @@ def export_rank(directory, rank, *, include_wait=False, output_dir=None):
     detail = chrome_events(all_events, origin)
     combined = []
     for phase, events in phases.items():
-        if "wave_id" in events[0]:
-            forward_detail = [event for event in detail if event["args"]["phase"] == phase]
-            combined.extend(wave_events(forward_detail, include_wait=include_wait))
+        phase_detail = [event for event in detail if event["args"]["phase"] == phase]
+        if phase == "backward":
+            combined.extend(backward_events(phase_detail, include_wait=include_wait))
+        elif "wave_id" in events[0]:
+            combined.extend(wave_events(phase_detail, include_wait=include_wait))
         else:
             combined.extend(expert_events(events, origin, include_wait=include_wait))
     for phase in phases:
@@ -377,12 +462,10 @@ def export_rank(directory, rank, *, include_wait=False, output_dir=None):
             for name, by_core in lanes.items()
         }
         (output / f"rank_{rank}_{phase}_breakdown.json").write_text(json.dumps(breakdown, indent=2), encoding="utf-8")
-        (output / f"rank_{rank}_{phase}_trace.json").write_text(
-            json.dumps(selected, ensure_ascii=False), encoding="utf-8"
+        write_trace(output / f"rank_{rank}_{phase}_trace.json", selected)
+        write_trace(
+            output / f"rank_{rank}_{phase}_detail_trace.json",
+            [e for e in selected_detail if include_wait or e["cat"] != "wait"],
         )
-        (output / f"rank_{rank}_{phase}_detail_trace.json").write_text(
-            json.dumps([e for e in selected_detail if include_wait or e["cat"] != "wait"], ensure_ascii=False),
-            encoding="utf-8",
-        )
-    (output / f"rank_{rank}_trace.json").write_text(json.dumps(combined, ensure_ascii=False), encoding="utf-8")
+    write_trace(output / f"rank_{rank}_trace.json", combined)
     return combined

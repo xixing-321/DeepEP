@@ -68,6 +68,7 @@ enum DynamicTimingType {
 constexpr int64_t kMagic = 0x44455054524e5431LL;  // DEPTRNT1
 constexpr int64_t kVersion = 1;
 constexpr int64_t kForwardWaveVersion = 2;
+constexpr int64_t kBackwardWaveVersion = 3;
 constexpr int kHeaderWords = 16;
 constexpr int kMetadataWords = 7;
 constexpr int kMaxCoreGroups = 64;
