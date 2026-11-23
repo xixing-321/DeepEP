@@ -5,12 +5,12 @@ Modified by Joyce_An 2026
 
 # MegaMoE
 
-MegaMoE 在 Ascend950 上融合专家路由、两次分组矩阵乘、SwiGLU 和结果归并。三条路径共用 `deep_ep_experimental.megamoe` 包和 `SymmBuffer`，由 `mma_type` 选择计算类型。 构建和多机批量测试脚本位于 [scripts/](scripts/)。
+MegaMoE 在 Ascend950 上融合专家路由、两次分组矩阵乘、SwiGLU 和结果归并。各路径共用 `deep_ep_experimental.megamoe` 包和 `SymmBuffer`，由 `mma_type` 选择计算类型。构建和多机批量测试脚本位于 [scripts/](scripts/)。
 
 | 路径 | `mma_type` | 公开接口 | 共享专家 |
 | --- | --- | --- | --- |
 | W4A8 推理 | `"fp8xfp4"` | `fp8_fp4_mega_moe` | 每卡 0～8 个 |
-| W8A8 推理 | `"fp8xfp8"` | `fp8_fp4_mega_moe` | 不支持 |
+| W8A8 推理与训练 | `"fp8xfp8"` | `fp8_fp4_mega_moe` | 不支持 |
 | BF16 推理与训练 | `"bf16xbf16"` | `bf16_mega_moe` | 不支持 |
 
 ## 1. 输入、输出与公开接口
@@ -105,6 +105,15 @@ rail 按每8个 rank 一组，EP≤8 或完整8卡分组启用，其余 EP 回�
 B>256 保留 Prefill 输入协议，所有路径保留输出跨卡同步。
 
 量化与 BF16 前向共用 Wave 预算公式，各路径按自己的 GMM tile 数确定分组。CATLASS GMM 的布局和同步机制见 [GMM 说明](csrc/kernels/mega_moe/catlass_gmm/README.md)。
+
+### W8A8 训练接口
+
+沿用 `fp8_fp4_mega_moe`。`SymmBuffer` 使用 `mma_type="fp8xfp8"`、`need_grad=True`，X、W1、W2 传原始 BF16 Tensor。框架可在创建 buffer 时通过 `max_recv_tokens` 指定每卡的接收容量。指定时，每次前向在 Host 汇总实际路由行数，任何 rank 超出容量都会在 kernel 启动前报错。省略时使用自动容量。
+
+- `save_dispatched_x=True` 保留专家端的 FP8 X、E8M0 scale 和 TopK weight。设为 `False` 时，框架为本次前向设置无参的 `sym_buffer.dispatch_rebuilder`。反向调用它获取三个连续 Tensor，形状依次为 `[R,H]`、`[R,H/32]`、`[R]`，其中 `R` 是专家端实际接收行数，TopK weight 的 dtype 与前向输入一致。按本地专家、源 EP rank、源内 token 和 TopK slot 排序，三个 Tensor 的第 `i` 行对应同一条路由。算子保留前向的路由表及专家行偏移。异步重建由回调安排完成等待，再交给反向读取。
+- `gmm1_save_type="mxfp8"` 保存沿特征维量化的 Gate/Up。反向从 BF16 W1、W2 量化出转置方向的权重，分别用于 dX 和 dHp。`"none"` 再保留 W1 的前向方向量化结果，按整专家重算 Gate/Up。两个模式的 dW1/dW2 都由对应激活与梯度计算。
+
+无截断的 MXFP8 反向在同一个向量循环中计算 Hp 和 dZ，共用解码后的 Gate/Up 和 SiLU 结果。
 
 <a name="bf16前向与训练"></a>
 
@@ -347,7 +356,8 @@ python -m pytest experiments/megamoe/tests -q
 | 设备验证路径 | 精度对照 | 性能和打点 |
 | --- | --- | --- |
 | W4A8 推理 | 同输入的 CPU Golden，对比全量输出和专家计数，包含配置的共享专家 | profiler 统计前向 kernel 耗时；Timer 单独采集 |
-| W8A8 推理 | W4A8 批量脚本只覆盖 FP4 权重，W8A8 需使用 FP8 权重单独验证 | 当前量化 Timer 仅支持 W4A8 |
+| W8A8 推理 | W4A8 批量脚本只覆盖 FP4 权重，W8A8 需使用 FP8 权重单独验证 | 推理 Timer 目前支持 W4A8 |
+| W8A8 训练 | [Dispatch 重建测试](tests/w8a8/dispatch_rebuild.py)逐 bit 对比 X、scale、TopK weight、输出和梯度，覆盖 `mxfp8` 与 `none` | 记录显存和前反向耗时，可单独采集训练 Timer |
 | BF16 推理 | CPU FP64 真值和设备小算子，对比后乘权的 Y 和专家计数 | 连续下发前向，统计稳态耗时 |
 | BF16 训练 | CPU FP64 真值和设备小算子，检查 Y、专家计数、dX、dP、dW1、dW2 | 分别测前向、反向和完整前反向，可单独采集训练 Timer |
 
@@ -416,9 +426,10 @@ python experiments/megamoe/tests/bf16/test_mega_moe.py 0,1,2,3,4,5,6,7 \
 torchrun --standalone --nproc-per-node=2 experiments/megamoe/tests/bf16/bf16_lifecycle.py
 ```
 
-#### BF16 核内打点
+#### BF16 和 W8A8 训练核内打点
 
 构建时启用 `DEEPEP_MEGAMOE_TIMER=ON`，由 `deep_ep_experimental.megamoe.timer.bf16.capture.TimerCapture` 单独采集前反向。
+W8A8 复用同一采集和解析入口。前向按 Wave 记录 Dispatch、GMM1、SwiGLU、GMM2 和 Combine 的阶段跨度。反向按专家记录 dO Dispatch、重算、dHp、SwiGLUGrad、dW1/dW2、dX 和 Combine，并记录 dP 的归约与回传。`--include-wait` 可显示反向 dHp 的专家 Dispatch 等待。
 
 前向时间线在每个物理核上按实际 Wave 标记 Dispatch、GMM1、SwiGLU、GMM2 和 Combine。例如 `wave_1_AIC_GMM1_0` 是该核在 Wave 1 上的第一个 GMM1 任务；同一核、同一 Wave 内的 GMM1 任务从 0 编号。事件详情含专家号和行段。
 

@@ -98,7 +98,7 @@ class SymmBuffer:
 
     num_experts is global; intermediate_hidden is the post-SwiGLU width.
     This Beta supports nonempty, same-BS calls and one device operation at a time per buffer.
-    Differentiable BF16 forwards retain independent states for their backwards.
+    Differentiable forwards retain independent states for their backwards.
     """
 
     def __init__(
@@ -116,7 +116,7 @@ class SymmBuffer:
         ranks_per_node: int = 0,
         timeout: int = 120,
         need_grad: bool = False,
-        gmm1_save_type: str = "bf16",
+        gmm1_save_type: str | None = None,
         max_recv_tokens: int | None = None,
         debug_collectives: bool = False,
         save_dispatched_x: bool = True,
@@ -128,6 +128,9 @@ class SymmBuffer:
             raise TypeError("Pass a StoreGroup or an initialized ProcessGroup explicitly")
         size = group.size() if isinstance(group, StoreGroup) else dist.get_world_size(group)
         bf16 = mma_type == "bf16xbf16"
+        w8a8_training = mma_type == "fp8xfp8" and need_grad is True
+        if gmm1_save_type is None:
+            gmm1_save_type = "mxfp8" if w8a8_training else "bf16"
         error = None
         try:
             integer("num_experts", num_experts, 1, 2048 if bf16 else 16384)
@@ -162,8 +165,13 @@ class SymmBuffer:
                         num_max_tokens_per_rank, size, num_topk, num_experts // size
                     )
                 integer("max_recv_tokens", max_recv_tokens, 1, (1 << 31) - 1)
+            elif w8a8_training:
+                if gmm1_save_type not in {"mxfp8", "none"}:
+                    raise ValueError("W8A8 training supports gmm1_save_type=mxfp8 or none")
+                if max_recv_tokens is not None:
+                    integer("max_recv_tokens", max_recv_tokens, 1, (1 << 31) - 1)
             elif not save_dispatched_x or need_grad or max_recv_tokens is not None or gmm1_save_type != "bf16":
-                raise ValueError("Training and receive-capacity settings require bf16xbf16")
+                raise ValueError("Training and receive-capacity settings require BF16 or W8A8 training")
             if ranks_per_node and size % ranks_per_node:
                 raise ValueError("ranks_per_node must divide EP (contiguous node-major ranks)")
         except (TypeError, ValueError, ImportError, RuntimeError) as failure:
@@ -203,6 +211,10 @@ class SymmBuffer:
                     need_grad,
                 )
             )
+        elif w8a8_training:
+            dimensions = (size, num_experts // size, num_max_tokens_per_rank, num_topk, hidden)
+            forward_bytes = ext.w8a8_training_buffer_size(*dimensions)
+            capacity = forward_bytes + ext.w8a8_backward_buffer_size(*dimensions)
         else:
             if not getattr(ext, "quantized_enabled", True):
                 raise RuntimeError("Install a wheel built with DEEPEP_BUILD_MEGAMOE=ON")
@@ -218,6 +230,9 @@ class SymmBuffer:
         self.save_dispatched_x = save_dispatched_x
         self.dispatch_rebuilder = None
         self.need_grad, self.gmm1_save_type = need_grad, gmm1_save_type
+        self._w8a8_training = w8a8_training
+        self._w8a8_forward_bytes = forward_bytes if w8a8_training else 0
+        self._w8a8_backward_plan = None
         self.max_recv_tokens = max_recv_tokens
         self._plan_key = None
         self.x = self.x_sf = self.topk_idx = self.topk_weights = None
@@ -240,14 +255,15 @@ class SymmBuffer:
             self._runtime.ensure_alive()
         if self.x is not None:
             return self
+        input_bf16 = self.mma_type == "bf16xbf16" or self._w8a8_training
         self.x = torch.empty(
             (self.num_max_tokens_per_rank, self.hidden),
-            dtype=torch.bfloat16 if self.mma_type == "bf16xbf16" else torch.float8_e4m3fn,
+            dtype=torch.bfloat16 if input_bf16 else torch.float8_e4m3fn,
             device=self._device,
         )
         self.x_sf = (
             None
-            if self.mma_type == "bf16xbf16"
+            if input_bf16
             else torch.empty(
                 (self.num_max_tokens_per_rank, self.hidden // 32), dtype=torch.float8_e8m0fnu, device=self._device
             )
@@ -265,10 +281,11 @@ class SymmBuffer:
 
             validate_buffer_inputs(self, bs)
             return prepare_plan(self, bs, limit, save_type)
-        if self._plan_bs == bs:
+        key = (bs, self.max_recv_tokens) if self._w8a8_training else bs
+        if self._plan_key == key:
             return
         # 只保留当前 BS 的计划，不让不同 BS 的最坏容量 workspace 累积占满 HBM。
-        self._plan = self._plan_bs = None
+        self._plan = self._plan_bs = self._plan_key = None
         runtime = self._runtime
         address = require_native("MegaMoE").megamoe_workspace_address(runtime.native)
         ext = _extension()
@@ -284,9 +301,37 @@ class SymmBuffer:
             self.ranks_per_node,
             ext.ffts_config(),
             address,
-            runtime.native.capacity,
+            self._w8a8_forward_bytes if self._w8a8_training else runtime.native.capacity,
+            *((True, self.max_recv_tokens or 0) if self._w8a8_training else ()),
         )
         self._plan_bs = bs
+        self._plan_key = key
+
+    def _prepare_w8a8_backward(self, value):
+        if self._w8a8_backward_plan is None:
+            runtime = self._runtime
+            address = require_native("MegaMoE").megamoe_workspace_address(runtime.native)
+            ext = _extension()
+            plan = None
+            error = None
+            try:
+                plan = ext.W8A8BackwardPlan(
+                    address + self._w8a8_forward_bytes,
+                    runtime.native.capacity - self._w8a8_forward_bytes,
+                    self.num_max_tokens_per_rank,
+                    self.hidden,
+                    self.intermediate_hidden,
+                    self.num_topk,
+                    self.num_experts // runtime.world_size,
+                    runtime.world_size,
+                    value,
+                    ext.ffts_config(),
+                )
+            except (ValueError, RuntimeError) as failure:
+                error = str(failure)
+            collective_check(self.group, "W8A8 backward plan", error)
+            self._w8a8_backward_plan = plan
+        return self._w8a8_backward_plan
 
     def prepare(self, bs: int) -> SymmBuffer:
         """Collectively prepare/reuse one BS before timing; all ranks must call together."""
@@ -332,6 +377,21 @@ class SymmBuffer:
 
     def validate_inputs(self, bs: int, *, x: Tensor | None = None) -> None:
         """Collective, synchronizing routing scan. Run after filling inputs, outside timing."""
+        if self._w8a8_training:
+            from ._w8a8 import validate_inputs
+
+            error = None
+            try:
+                self._runtime.ensure_alive()
+                integer("BS", bs, 1, self.num_max_tokens_per_rank)
+                value = self.x[:bs] if x is None else x
+                ids, p = self.topk_idx[:bs], self.topk_weights[:bs]
+                validate_inputs(self, bs, value, ids, p)
+                check_routing(ids.cpu().tolist(), p.detach().cpu().tolist(), self.num_experts, self.num_topk)
+            except (ValueError, RuntimeError, TypeError) as failure:
+                error = str(failure)
+            collective_check(self.group, "input preflight", error, bs)
+            return
         if self.mma_type == "bf16xbf16":
             error = None
             try:
@@ -397,6 +457,7 @@ class SymmBuffer:
         with self._lock:
             self._runtime.close()
             self._plan = self._plan_bs = self._plan_key = None
+            self._w8a8_backward_plan = None
             self.x = self.x_sf = self.topk_idx = self.topk_weights = None
 
     def __del__(self):
@@ -518,7 +579,7 @@ def mega_moe(
     x: BF16 [B,H], or (FP8 E4M3 [B,H], E8M0 [B,H/32]).
     FP8 is copied into the original communication record, never dequantized/requantized.
     Routed work uses the prefill scheduler; W4 shared strategy switches at B=256.
-    No backward or graph guarantee yet.
+    With an FP8xFP8 training buffer, x and the original weights are BF16 tensors.
     """
     return _run(
         x,
@@ -552,6 +613,14 @@ def _run(
 
     if not isinstance(sym_buffer, SymmBuffer):
         raise TypeError("sym_buffer must be this installation's MegaMoE SymmBuffer")
+    if sym_buffer._w8a8_training:
+        from ._w8a8 import run
+
+        if timer is not None or shared_l1_weights is not None or shared_l2_weights is not None:
+            raise ValueError("W8A8 training supports routed experts without a timer")
+        if out is None:
+            out = torch.empty_like(x)
+        return run(out, x, topk_idx, topk_weights, l1_weights, l2_weights, sym_buffer, cumulative_stats, None)
     data, scales = _pair(x, "x") if isinstance(x, tuple) else (x, None)
     w1, s1 = _pair(l1_weights, "l1_weights")
     w2, s2 = _pair(l2_weights, "l2_weights")
@@ -640,8 +709,8 @@ def _run(
 
 def fp8_fp4_mega_moe(
     y: Tensor,
-    l1_weights: WeightPair,
-    l2_weights: WeightPair,
+    l1_weights: WeightPair | Tensor,
+    l2_weights: WeightPair | Tensor,
     sym_buffer: SymmBuffer,
     shared_l1_weights: WeightPair | None = None,
     shared_l2_weights: WeightPair | None = None,
@@ -659,10 +728,13 @@ def fp8_fp4_mega_moe(
     Positional parameters follow DeepGEMM. Ascend-only keyword extensions:
     x is optional BF16 [BS,H] (quantized internally, NOT BF16 GEMM);
     timer is a fresh buffer.allocate_timer() for a separate diagnostic call.
-    Routed weights are applied after GMM2; see README numerical compatibility.
+    Inference applies route weights after GMM2.
+    With mma_type="fp8xfp8" and need_grad=True, pass the original BF16 weights
+    and BF16 input. Training applies route weights before GMM2 and records
+    the autograd history on y.
     """
-    if recipe != (1, 1, 32) or activation != "swiglu" or activation_clamp is not None or fast_math is not True:
-        raise NotImplementedError("Beta supports recipe=(1,1,32), SwiGLU, no clamp, default math only")
+    if recipe != (1, 1, 32) or activation != "swiglu" or fast_math is not True:
+        raise NotImplementedError("Beta supports recipe=(1,1,32), SwiGLU and default math")
     if not isinstance(sym_buffer, SymmBuffer):
         raise TypeError("sym_buffer must be this installation's MegaMoE SymmBuffer")
     import torch
@@ -673,6 +745,25 @@ def fp8_fp4_mega_moe(
     bs = y.shape[0]
     if x is not None and (x.dtype != torch.bfloat16 or tuple(x.shape) != (bs, sym_buffer.hidden)):
         raise ValueError("x override must be BF16 [BS,H]; omit x for buffered FP8 input")
+    if sym_buffer._w8a8_training:
+        from ._w8a8 import run
+
+        if timer is not None or shared_l1_weights is not None or shared_l2_weights is not None:
+            raise ValueError("W8A8 training supports routed experts without a timer")
+        run(
+            y,
+            sym_buffer.x[:bs] if x is None else x,
+            sym_buffer.topk_idx[:bs],
+            sym_buffer.topk_weights[:bs],
+            l1_weights,
+            l2_weights,
+            sym_buffer,
+            cumulative_local_expert_recv_stats,
+            activation_clamp,
+        )
+        return
+    if activation_clamp is not None:
+        raise NotImplementedError("Quantized inference uses unclipped SwiGLU")
     _run(
         (sym_buffer.x[:bs], sym_buffer.x_sf[:bs]) if x is None else x,
         sym_buffer.topk_idx[:bs],

@@ -25,7 +25,8 @@ uint32_t DispatchCopyBytes(const MegaMoeTilingData& t)
 {
     const uint32_t token = AlignUp(t.h, uint32_t{256});
     const uint32_t scale = AlignUp(CeilDiv(t.h, uint32_t{32}), uint32_t{32});
-    return token + scale;
+    const uint32_t weights = t.topkWeightsPrefetch ? AlignUp(t.topK * uint32_t{sizeof(float)}, 32U) : 0U;
+    return token + scale + weights;
 }
 
 MegaMoeDispatchBufferConfig DispatchConfig(const MegaMoeTilingData& t, uint32_t ub)
@@ -247,9 +248,8 @@ MegaMoeTilingData MakeTiling(int64_t bs, int64_t h, int64_t hidden_dim, int64_t 
         t.mGroupsPerWave = MegaMoeImpl::WaveGroups(p.aic, gmm1_tiles, gmm2_tiles, 4U);
     }
     // Routed MTE Combine returns the slot after all send lanes finish the Wave.
-    if (is_a8w4 && shared_experts == 0 &&
-        MegaMoeImpl::WaveScratchRows(t.maxOutputSize, t.mGroupsPerWave * MegaMoeImpl::L1_TILE_M_256) <
-            t.maxOutputSize) {
+    if (shared_experts == 0 && MegaMoeImpl::WaveScratchRows(
+                                   t.maxOutputSize, t.mGroupsPerWave * MegaMoeImpl::L1_TILE_M_256) < t.maxOutputSize) {
         t.scratchWaveSlots = MegaMoeImpl::kWaveScratchSlots;
     }
     t.isPerExpertWeightTensor = false;
@@ -280,7 +280,7 @@ void FillPeerAddresses(uint64_t* addresses, void* window, int64_t world)
 
 Plan::Plan(torch::Tensor example, int64_t intermediate, int64_t topk, int64_t experts, int64_t world,
            int64_t max_tokens, bool is_a8w4, int64_t shared_experts, int64_t ranks_per_node, uint64_t ffts,
-           uint64_t symmetric_address, int64_t symmetric_bytes)
+           uint64_t symmetric_address, int64_t symmetric_bytes, bool w8a8_training, int64_t max_recv_tokens)
     : ffts_(ffts)
 {
     CheckTensor(example, 2, "plan input");
@@ -292,13 +292,31 @@ Plan::Plan(torch::Tensor example, int64_t intermediate, int64_t topk, int64_t ex
                 "Plan shared experts require W4A8, with count in [0,8]");
     TORCH_CHECK(ranks_per_node == 0 || (ranks_per_node > 0 && ranks_per_node <= world && world % ranks_per_node == 0),
                 "Plan ranks_per_node must divide EP");
-    const auto required = buffer_size(world, experts, max_tokens, topk, example.size(1));
+    TORCH_CHECK(!w8a8_training || (!is_a8w4 && shared_experts == 0), "Training requires routed W8A8");
+    TORCH_CHECK(max_recv_tokens == 0 || (w8a8_training && max_recv_tokens > 0 && max_recv_tokens <= INT32_MAX),
+                "Invalid W8A8 max_recv_tokens");
+    const auto required = buffer_size(world, experts, max_tokens, topk, example.size(1), w8a8_training);
     TORCH_CHECK(symmetric_address != 0 && symmetric_bytes >= required, "MegaMoE symmetric buffer needs ", required,
                 " bytes, got ", symmetric_bytes);
     platform_ = GetPlatformInfo();
     tiling_ = MakeTiling(example.size(0), example.size(1), intermediate * 2, topk, experts, world, max_tokens, is_a8w4,
                          shared_experts, platform_);
     tiling_.dispatchRanksPerNode = static_cast<uint32_t>(ranks_per_node);
+    if (w8a8_training) {
+        if (max_recv_tokens != 0) {
+            tiling_.maxOutputSize = std::min(tiling_.maxOutputSize, static_cast<uint32_t>(max_recv_tokens));
+        }
+        tiling_.topkWeightsPrefetch = 1;
+        const uint32_t wave_rows = tiling_.mGroupsPerWave * MegaMoeImpl::L1_TILE_M_256;
+        tiling_.scratchWaveSlots =
+            MegaMoeImpl::WaveScratchRows(tiling_.maxOutputSize, wave_rows) < tiling_.maxOutputSize
+                ? MegaMoeImpl::kWaveScratchSlots
+                : 0U;
+        tiling_.maxTilesPerExpert = CeilDiv(tiling_.maxOutputSize, MegaMoeImpl::L1_TILE_M_256) *
+                                    CeilDiv(static_cast<uint32_t>(intermediate), 256U);
+        tiling_.dispatchBufferConfig = DispatchConfig(tiling_, platform_.ub);
+        SetSendMaskConfigs(tiling_, platform_.ub);
+    }
     static_assert(sizeof(MegaMoeTilingData) == 224, "MegaMoE tiling ABI changed");
     const MegaMoeImpl::WorkspaceInfo info(nullptr, &tiling_);
     const int64_t bytes =
@@ -319,7 +337,7 @@ Plan::Plan(torch::Tensor example, int64_t intermediate, int64_t topk, int64_t ex
         aclrtMemcpy(context_.data_ptr(), sizeof(context), &context, sizeof(context), ACL_MEMCPY_HOST_TO_DEVICE));
 }
 
-int64_t buffer_size(int64_t world, int64_t experts, int64_t tokens, int64_t topk, int64_t hidden)
+int64_t buffer_size(int64_t world, int64_t experts, int64_t tokens, int64_t topk, int64_t hidden, bool w8a8_training)
 {
     TORCH_CHECK(world >= 2 && world <= 128 && experts >= 1 && experts <= 128 && tokens >= 1 && tokens <= 65536 &&
                     topk >= 1 && topk <= 32 && topk <= world * experts && hidden >= 1024 && hidden <= 8192 &&
@@ -328,7 +346,7 @@ int64_t buffer_size(int64_t world, int64_t experts, int64_t tokens, int64_t topk
     // The buffer outlives BS/weight-mode changes. Reserve the decode rail/count
     // layout as well; prefill continues to bind its original device offsets.
     const MegaMoeImpl::PeermemSizeParams params{
-        tokens, topk, hidden, experts, world, 2, 1, false, false, MegaMoeImpl::TOPO_TYPE_MTE, true};
+        tokens, topk, hidden, experts, world, 2, 1, w8a8_training, false, MegaMoeImpl::TOPO_TYPE_MTE, true};
     return AlignUp<int64_t>(MegaMoeImpl::EXCEPTION_DUMP_REGION_SIZE + MegaMoeImpl::CalcPeermemLeastSize(params),
                             2LL << 20);
 }

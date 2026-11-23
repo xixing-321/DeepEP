@@ -27,6 +27,10 @@ struct WorkspaceInfo {
     GM_ADDR activationQuantScalePtr;
     GM_ADDR expertRevTokenNumsPtr;
     GM_ADDR metaInfoPtr;
+    GM_ADDR savedDispatchDataPtr{nullptr};
+    GM_ADDR savedDispatchScalePtr{nullptr};
+    GM_ADDR savedRoutesPtr{nullptr};
+    GM_ADDR savedGateUpPtr{nullptr};
     GM_ADDR flagActivationToGmm2Ptr;
     GM_ADDR flagDispatchToGmm1Ptr;
     GM_ADDR flagSendCntCalToUpdParamsPtr;

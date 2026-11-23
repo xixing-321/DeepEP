@@ -66,11 +66,13 @@ struct ExpertDispatchCoreRange {
 struct DispatchCopyProgress {
     uint32_t issuedRows = 0U;
     int32_t pendingRow = -1;
+    int32_t pendingSavedRow = 0;
 };
 
 struct DispatchRouteSegment {
     uint32_t sourceRank;
     int32_t dstRow;
+    int32_t savedRow;
     uint32_t indexOffset;
     int32_t rowCount;
 };
@@ -143,7 +145,7 @@ __aicore__ inline void FetchDispatchTokenAndMetaInfo(const TokenDispatchConfig& 
 template <typename ActivationType, typename QuantScaleType, bool TopkWeightsPrefetch>
 __aicore__ inline void StoreDispatchTokenAndMetaInfo(const TokenDispatchConfig& context, const Params& params,
                                                      TokenDispatchScratch<ActivationType>& scratch, int32_t bufferIdx,
-                                                     int32_t copyIdx)
+                                                     int32_t copyIdx, int32_t savedRow)
 {
     GlobalTensor<ActivationType> tokenRevGlobalTensor;
     GlobalTensor<QuantScaleType> scaleRevGlobalTensor;
@@ -164,7 +166,9 @@ __aicore__ inline void StoreDispatchTokenAndMetaInfo(const TokenDispatchConfig& 
         LocalTensor<int32_t> weightBitsTensor = tokenScaleBuffer[weightOffsetInUb].template ReinterpretCast<int32_t>();
         int32_t topkSlot = scratch.metaInfoTensor[bufferIdx * INT32_PER_256B].GetValue(TOPK_INDEX);
         int32_t weightBits = weightBitsTensor.GetValue(static_cast<uint32_t>(topkSlot));
-        scratch.metaInfoTensor[bufferIdx * INT32_PER_256B].SetValue(WEIGHT_INDEX, weightBits);
+        auto metadata = scratch.metaInfoTensor[bufferIdx * INT32_PER_256B];
+        metadata.SetValue(WEIGHT_INDEX, weightBits);
+        metadata.SetValue(SAVED_ROW_INDEX, savedRow);
         SetFlag<AscendC::HardEvent::S_MTE3>(eventId);
     }
     DataCopyPad(tokenRevGlobalTensor[(copyIdx + params.workspaceInfo.waveRowDelta) * scratch.revTokenElemCnt],
@@ -175,6 +179,25 @@ __aicore__ inline void StoreDispatchTokenAndMetaInfo(const TokenDispatchConfig& 
     WaitFlag<AscendC::HardEvent::S_MTE3>(eventId);
     DataCopy(metaInfoGlobalTensor[copyIdx * INT32_PER_256B], scratch.metaInfoTensor[bufferIdx * INT32_PER_256B],
              INT32_PER_256B);
+    if constexpr (TopkWeightsPrefetch) {
+        const auto& workspace = params.workspaceInfo;
+        if (workspace.savedRoutesPtr != nullptr) {
+            GlobalTensor<int32_t> savedRoutes;
+            savedRoutes.SetGlobalBuffer(reinterpret_cast<__gm__ int32_t*>(workspace.savedRoutesPtr));
+            DataCopy(savedRoutes[static_cast<int64_t>(savedRow) * INT32_PER_256B],
+                     scratch.metaInfoTensor[bufferIdx * INT32_PER_256B], INT32_PER_256B);
+        }
+        if (workspace.savedDispatchDataPtr != nullptr) {
+            GlobalTensor<ActivationType> savedData;
+            GlobalTensor<QuantScaleType> savedScale;
+            savedData.SetGlobalBuffer(reinterpret_cast<__gm__ ActivationType*>(workspace.savedDispatchDataPtr));
+            savedScale.SetGlobalBuffer(reinterpret_cast<__gm__ QuantScaleType*>(workspace.savedDispatchScalePtr));
+            DataCopyPad(savedData[savedRow * scratch.revTokenElemCnt], tokenScaleBuffer,
+                        {1, static_cast<uint16_t>(scratch.revTokenElemCnt * sizeof(ActivationType)), 0U, 0U, 0U});
+            DataCopyPad(savedScale[savedRow * scratch.revScaleElemCnt], scaleBuffer,
+                        {1, static_cast<uint16_t>(scratch.revScaleElemCnt * sizeof(QuantScaleType)), 0U, 0U, 0U});
+        }
+    }
     SetFlag<AscendC::HardEvent::MTE3_MTE2>(eventId);
     SetFlag<AscendC::HardEvent::MTE3_S>(eventId);
 }
@@ -183,8 +206,9 @@ __aicore__ inline void StoreDispatchTokenAndMetaInfo(const TokenDispatchConfig& 
 template <typename ActivationType, typename QuantScaleType, bool TopkWeightsPrefetch>
 __aicore__ inline void CopyTokensAndMetaForDispatch(const TokenDispatchConfig& context, const Params& params,
                                                     GM_ADDR* winRankAddr, TokenDispatchScratch<ActivationType>& scratch,
-                                                    int32_t rowDstOffset, int32_t remoteRankIdx, int32_t copyStartIdx,
-                                                    int32_t copyNum, DispatchCopyProgress& progress)
+                                                    int32_t rowDstOffset, int32_t savedRow, int32_t remoteRankIdx,
+                                                    int32_t copyStartIdx, int32_t copyNum,
+                                                    DispatchCopyProgress& progress)
 {
     const MegaMoeDispatchBufferConfig& bufferConfig = context.bufferConfig;
     int32_t bufferCount = bufferConfig.bufferCount;
@@ -195,8 +219,8 @@ __aicore__ inline void CopyTokensAndMetaForDispatch(const TokenDispatchConfig& c
     for (int32_t issueIdx = 0; issueIdx < copyNum; ++issueIdx) {
         // 单槽没有读写重叠空间，必须先写出；否则 reuse 会等一个尚未发布的 MTE3 事件。
         if (bufferCount == 1 && progress.pendingRow >= 0) {
-            StoreDispatchTokenAndMetaInfo<ActivationType, QuantScaleType, TopkWeightsPrefetch>(context, params, scratch,
-                                                                                               0, progress.pendingRow);
+            StoreDispatchTokenAndMetaInfo<ActivationType, QuantScaleType, TopkWeightsPrefetch>(
+                context, params, scratch, 0, progress.pendingRow, progress.pendingSavedRow);
             progress.pendingRow = -1;
         }
         int32_t issueBufferIdx = progress.issuedRows % bufferCount;
@@ -210,9 +234,13 @@ __aicore__ inline void CopyTokensAndMetaForDispatch(const TokenDispatchConfig& c
         }
         if (progress.pendingRow >= 0) {
             StoreDispatchTokenAndMetaInfo<ActivationType, QuantScaleType, TopkWeightsPrefetch>(
-                context, params, scratch, (progress.issuedRows - 1U) % bufferCount, progress.pendingRow);
+                context, params, scratch, (progress.issuedRows - 1U) % bufferCount, progress.pendingRow,
+                progress.pendingSavedRow);
         }
         progress.pendingRow = rowDstOffset + issueIdx;
+        if constexpr (TopkWeightsPrefetch) {
+            progress.pendingSavedRow = savedRow + issueIdx;
+        }
         ++progress.issuedRows;
     }
 }
@@ -225,7 +253,8 @@ __aicore__ inline void DrainDispatchCopyBuffers(const TokenDispatchConfig& conte
     uint32_t bufferCount = context.bufferConfig.bufferCount;
     if (progress.pendingRow >= 0) {
         StoreDispatchTokenAndMetaInfo<ActivationType, QuantScaleType, TopkWeightsPrefetch>(
-            context, params, scratch, (progress.issuedRows - 1U) % bufferCount, progress.pendingRow);
+            context, params, scratch, (progress.issuedRows - 1U) % bufferCount, progress.pendingRow,
+            progress.pendingSavedRow);
     }
     uint32_t used = progress.issuedRows < bufferCount ? progress.issuedRows : bufferCount;
     for (uint32_t bufferIdx = 0U; bufferIdx < used; ++bufferIdx) {
@@ -272,8 +301,8 @@ __aicore__ inline void FlushDispatchRouteBatch(const TokenDispatchConfig& contex
     for (uint32_t i = 0U; i < batch.count; ++i) {
         const auto& segment = batch.segments[i];
         CopyTokensAndMetaForDispatch<ActivationType, QuantScaleType, TopkWeightsPrefetch>(
-            context, params, winRankAddr, scratch, segment.dstRow, segment.sourceRank, segment.indexOffset,
-            segment.rowCount, progress);
+            context, params, winRankAddr, scratch, segment.dstRow, segment.savedRow, segment.sourceRank,
+            segment.indexOffset, segment.rowCount, progress);
     }
     batch.count = 0U;
     batch.usedItems = 0U;
@@ -296,6 +325,12 @@ __aicore__ inline int32_t DispatchRankTokens(const TokenDispatchConfig& context,
     const uint32_t capacity = static_cast<uint32_t>(context.bufferConfig.routeItemsPerBatch);
     int32_t processed = 0;
     const int32_t rowCount = segmentMatchOrdinalEnd - segmentMatchOrdinalBegin;
+    int32_t savedRow = 0;
+    if constexpr (TopkWeightsPrefetch) {
+        const uint32_t sourceIndex = localExpertId * common.worldSize + remoteRankIdx;
+        const int32_t sourceBegin = sourceIndex == 0U ? 0 : scratch.cumsumInfoTensor.GetValue(sourceIndex - 1U);
+        savedRow = sourceBegin + segmentMatchOrdinalBegin;
+    }
     while (processed < rowCount) {
         const uint32_t remaining = static_cast<uint32_t>(rowCount - processed);
         const uint32_t take = remaining < capacity ? remaining : capacity;
@@ -313,7 +348,7 @@ __aicore__ inline int32_t DispatchRankTokens(const TokenDispatchConfig& context,
         DataCopyPad(scratch.validTopkIndexTensor[batch.usedItems], remoteRouteIndexGlobal,
                     {1U, take * static_cast<uint32_t>(sizeof(int32_t)), 0U, 0U, 0U}, {false, 0U, 0U, 0U});
         batch.segments[batch.count++] = {remoteRankIdx, expertGlobalRowBegin + destinationRowBegin + processed,
-                                         batch.usedItems, static_cast<int32_t>(take)};
+                                         savedRow + processed, batch.usedItems, static_cast<int32_t>(take)};
         batch.usedItems += padded;
         processed += static_cast<int32_t>(take);
     }
@@ -449,7 +484,7 @@ __aicore__ inline void DispatchPeerBalancedRows(const TokenDispatchConfig& conte
 /*
  * Dispatch 唯一执行入口：搬运调用方给定的左闭右开专家 token 范围，并发布 GMM1 tile ready。
  * 调用方负责提前规划范围、推进 WAVE/专家位置以及在必要时恢复 prefix；本函数只做范围裁剪、AIV1 分工、
- * 专家/source-rank 拆段和数据发送。共享底层搬运与同步，仅 W4 非量化 token 路径选择 peer 均衡落位。
+ * 专家/source-rank 拆段和数据发送。共享底层搬运与同步，非量化 Combine 路径可选择 peer 均衡落位。
  */
 template <typename ActivationType, typename QuantScaleType, uint32_t PipelineTileM, bool TopkWeightsPrefetch,
           bool PeerBalanced = false>

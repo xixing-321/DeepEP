@@ -64,6 +64,7 @@ constexpr uint32_t RANK_ID = 0U;
 constexpr uint32_t TOKEN_ID = 1U;
 constexpr uint32_t TOPK_INDEX = 2U;
 constexpr uint32_t WEIGHT_INDEX = 3U;
+constexpr uint32_t SAVED_ROW_INDEX = 4U;
 constexpr uint32_t SYNC_EVENT_ID0 = 0;
 constexpr uint32_t SYNC_EVENT_ID1 = 1;
 constexpr uint32_t SYNC_EVENT_ID2 = 2;

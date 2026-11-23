@@ -85,6 +85,45 @@ extern "C" __attribute__((visibility("default"))) void mega_moe_kernel_do(
     }
 }
 
+// Training uses the same Wave, selecting its pre-GMM2 route weighting.
+__schedmode__(1) __global__
+    __mix__(1, 2) void mega_moe_w8a8_training_forward(GM_ADDR context, GM_ADDR x, GM_ADDR ids, GM_ADDR p, GM_ADDR w1,
+                                                      GM_ADDR w2, GM_ADDR s1, GM_ADDR s2, GM_ADDR y, GM_ADDR counts,
+                                                      GM_ADDR workspace, GM_ADDR dispatch, GM_ADDR scales,
+                                                      GM_ADDR routes, GM_ADDR gateUp, MegaMoeTilingData tiling,
+                                                      uint64_t ffts_addr, GM_ADDR timerAddr)
+{
+#if defined(__NPU_DEVICE__)
+    InitSocState();
+    util_set_ffts_config(ffts_addr);
+    MegaMoeImpl::MegaMoeA8W8Wave<bfloat16_t, bfloat16_t, float, fp8_e4m3fn_t, 4, MegaMoeImpl::COMBINE_NO_QUANT, true,
+                                 false>
+        op;
+    op.Init(context, x, ids, p, w1, w2, nullptr, s1, s2, nullptr, nullptr, nullptr, nullptr, nullptr, y, counts,
+            workspace, &tiling, nullptr);
+    op.BindTrainingState(dispatch, scales, routes, gateUp);
+    MegaMoeTrainTimerDevice timer;
+    timer.Init(timerAddr);
+    timer.Start(MegaMoeTrainTimer::KERNEL_TIMING);
+    op.SetTrainingTimer(timer.Enabled() ? &timer : nullptr);
+    op.Process();
+    timer.End(MegaMoeTrainTimer::KERNEL_TIMING);
+    timer.FlushDynamicCounts();
+#endif
+}
+
+extern "C" __attribute__((visibility("default"))) void mega_moe_w8a8_training_forward_do(
+    uint32_t block_dim, uint32_t ub_bytes, void* stream, uint8_t* context, uint8_t* x, uint8_t* ids, uint8_t* p,
+    uint8_t* w1, uint8_t* w2, uint8_t* s1, uint8_t* s2, uint8_t* y, uint8_t* counts, uint8_t* workspace,
+    uint8_t* dispatch, uint8_t* scales, uint8_t* routes, uint8_t* gate_up, const uint8_t* tiling_host,
+    uint64_t ffts_addr, uint8_t* timer)
+{
+    const auto& tiling = *reinterpret_cast<const MegaMoeTilingData*>(tiling_host);
+    mega_moe_w8a8_training_forward<<<block_dim, ub_bytes, stream>>>(context, x, ids, p, w1, w2, s1, s2, y, counts,
+                                                                    workspace, dispatch, scales, routes, gate_up,
+                                                                    tiling, ffts_addr, timer);
+}
+
 /*
  * BF16 training forward and backward entries.  The implementation uses
  * DeepEP's routing/dispatch/combine pipeline and only references CATLASS

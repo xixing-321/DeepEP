@@ -3,6 +3,8 @@
 
 #include "plan.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <limits>
 
 #include <ATen/MemoryOverlap.h>
@@ -12,6 +14,7 @@
 #include "kernels/mega_moe/common/ascend_timer_v2.hpp"
 #include "kernels/mega_moe/common/mega_moe_bf16_layout.hpp"
 #include "kernels/mega_moe/common/mega_moe_constants.hpp"
+#include "kernels/mega_moe/timer/ascend_timer.hpp"
 
 namespace deepep::megamoe {
 
@@ -22,6 +25,7 @@ std::tuple<torch::Tensor, torch::Tensor> Plan::forward(
     c10::optional<torch::Tensor> shared_weight2, c10::optional<torch::Tensor> shared_weight_scales1,
     c10::optional<torch::Tensor> shared_weight_scales2, c10::optional<torch::Tensor> out)
 {
+    TORCH_CHECK(!tiling_.topkWeightsPrefetch, "Use training_forward on the W8A8 training plan");
     CheckTensor(x, 2, "x");
     CheckTensor(topk_ids, 2, "topk_ids");
     CheckTensor(topk_weights, 2, "topk_weights");
@@ -153,6 +157,101 @@ std::tuple<torch::Tensor, torch::Tensor> Plan::forward(
         c10_npu::NPUCachingAllocator::recordStream(x_scales->storage().data_ptr(), stream);
     }
     return {y, expert_tokens};
+}
+
+torch::Tensor AllocateW8A8Timer(const torch::Tensor& like, uint32_t groups, int64_t rows, int64_t ffn, int64_t experts,
+                                int64_t topk, bool fp32_topk, bool backward, bool recompute)
+{
+#ifndef DEEPEP_MEGAMOE_TIMER
+    TORCH_CHECK(false, "Rebuild with DEEPEP_MEGAMOE_TIMER=ON before capturing training timers");
+#endif
+    using namespace MegaMoeTrainTimer;
+    constexpr int64_t tile = 256;
+    const int64_t h = like.size(1);
+    TORCH_CHECK(groups > 0 && groups <= kMaxCoreGroups, "unsupported W8A8 Timer AIC count");
+    const int64_t rowTiles = CeilDiv(rows, tile) + experts;
+    const int64_t coreTiles = CeilDiv(rowTiles * CeilDiv(std::max(h, ffn), tile), int64_t{groups}) + experts;
+    const int64_t dw1Tiles = experts * CeilDiv(CeilDiv(2 * ffn, tile) * CeilDiv(h, tile), int64_t{groups});
+    const int64_t bound = backward ? std::max(coreTiles, dw1Tiles) : rowTiles;
+    const int64_t capacity = AlignUp(std::max(bound + 16, int64_t{64}), int64_t{64});
+    TORCH_CHECK(capacity <= kMaxCapacity, "W8A8 Timer task capacity exceeds supported bound");
+    const Layout layout{static_cast<int>(groups * 3), static_cast<int>(capacity)};
+    const int64_t elements = layout.Elements(!backward);
+    TORCH_CHECK(elements * 8 <= 256LL * 1024 * 1024, "W8A8 Timer exceeds 256 MiB per phase");
+    auto timer = torch::zeros({elements}, like.options().dtype(torch::kInt64));
+    const std::vector<int64_t> header{kMagic,
+                                      backward ? kVersion : kForwardWaveVersion,
+                                      groups * 3,
+                                      capacity,
+                                      backward,
+                                      FIXED_TIMING_COUNT,
+                                      DYNAMIC_TYPE_COUNT,
+                                      kMetadataWords,
+                                      rows,
+                                      like.size(0),
+                                      h,
+                                      ffn,
+                                      experts,
+                                      topk,
+                                      fp32_topk,
+                                      recompute ? 0 : 2};
+    timer.narrow(0, 0, kHeaderWords).copy_(torch::tensor(header, torch::kInt64));
+    return timer;
+}
+
+W8A8ForwardState Plan::training_forward(torch::Tensor x, torch::Tensor ids, torch::Tensor p, torch::Tensor w1,
+                                        torch::Tensor w2, torch::Tensor s1, torch::Tensor s2, torch::Tensor out,
+                                        double limit, bool save_gate_up, bool save_dispatched_x, bool capture_timer,
+                                        bool fp32_topk)
+{
+    TORCH_CHECK(tiling_.topkWeightsPrefetch == 1 && std::isfinite(limit) && limit >= 0 &&
+                    limit <= std::numeric_limits<float>::max(),
+                "Invalid W8A8 training plan or SwiGLU clamp");
+    const int64_t m = tiling_.bs, h = tiling_.h, n = tiling_.hiddenDim;
+    const int64_t e = tiling_.moeExpertPerRank, k = tiling_.topK, capacity = tiling_.maxOutputSize;
+    auto check = [&](const torch::Tensor& t, torch::IntArrayRef dimensions, torch::ScalarType dtype, const char* name) {
+        CheckTensor(t, dimensions.size(), name);
+        TORCH_CHECK(t.device() == workspace_.device() && t.sizes() == dimensions && t.scalar_type() == dtype, name,
+                    " must match the prepared W8A8 training plan");
+    };
+    constexpr auto fp8 = c10::ScalarType::Float8_e4m3fn;
+    constexpr auto e8m0 = c10::ScalarType::Float8_e8m0fnu;
+    check(x, {m, h}, torch::kBFloat16, "x");
+    check(out, {m, h}, torch::kBFloat16, "out");
+    check(ids, {m, k}, torch::kInt32, "topk_idx");
+    check(p, {m, k}, torch::kFloat32, "topk_weights");
+    check(w1, {e, n, h}, fp8, "l1_weights");
+    check(w2, {e, h, n / 2}, fp8, "l2_weights");
+    check(s1, {e, n, CeilDiv(h, int64_t{64}), 2}, e8m0, "l1_scales");
+    check(s2, {e, h, CeilDiv(n / 2, int64_t{64}), 2}, e8m0, "l2_scales");
+    for (const auto* input : {&x, &ids, &p, &w1, &w2, &s1, &s2}) {
+        at::assert_no_overlap(out, *input);
+    }
+
+    auto options = x.options();
+    W8A8ForwardState saved{
+        torch::empty({e}, options.dtype(torch::kInt32)),
+        save_dispatched_x ? torch::empty({capacity, h}, options.dtype(fp8)) : torch::Tensor{},
+        save_dispatched_x ? torch::empty({capacity, h / 32}, options.dtype(e8m0)) : torch::Tensor{},
+        torch::empty({capacity, static_cast<int64_t>(MegaMoeImpl::META_INFO_SIZE)}, options.dtype(torch::kInt32)),
+        save_gate_up ? torch::empty({capacity, n}, options) : torch::Tensor{},
+        capture_timer ? AllocateW8A8Timer(x, platform_.aic, capacity, n / 2, e, k, fp32_topk, false, !save_gate_up)
+                      : torch::Tensor{}};
+    auto tiling = tiling_;
+    tiling.clampLimit = limit > 0 ? static_cast<float>(limit) : std::numeric_limits<float>::max();
+    const auto stream = c10_npu::getCurrentNPUStream();
+    auto ptr = [](const torch::Tensor& t) { return t.defined() ? static_cast<uint8_t*>(t.data_ptr()) : nullptr; };
+    for (const auto* tensor : {&x, &ids, &p, &w1, &w2, &s1, &s2, &out, &context_, &workspace_, &saved.counts,
+                               &saved.dispatch, &saved.scales, &saved.routes, &saved.gate_up, &saved.timer}) {
+        if (tensor->defined()) {
+            c10_npu::NPUCachingAllocator::recordStream(tensor->storage().data_ptr(), stream);
+        }
+    }
+    mega_moe_w8a8_training_forward_do(
+        platform_.block_dim, platform_.ub, stream.stream(), ptr(context_), ptr(x), ptr(ids), ptr(p), ptr(w1), ptr(w2),
+        ptr(s1), ptr(s2), ptr(out), ptr(saved.counts), ptr(workspace_), ptr(saved.dispatch), ptr(saved.scales),
+        ptr(saved.routes), ptr(saved.gate_up), reinterpret_cast<const uint8_t*>(&tiling), ffts_, ptr(saved.timer));
+    return saved;
 }
 
 }  // namespace deepep::megamoe

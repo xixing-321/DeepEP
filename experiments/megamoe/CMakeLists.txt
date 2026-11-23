@@ -84,12 +84,14 @@ endif()
 
 file(GLOB_RECURSE megamoe_headers CONFIGURE_DEPENDS "csrc/*.hpp" "${PROJECT_SOURCE_DIR}/csrc/kernels/common/*.hpp")
 set(megamoe_objects)
-set(entry_source "${CMAKE_CURRENT_SOURCE_DIR}/csrc/kernels/mega_moe/mega_moe.cpp")
-set(object "${CMAKE_CURRENT_BINARY_DIR}/mega_moe.o")
-add_custom_command(OUTPUT "${object}"
-    COMMAND "${BISHENG}" ${megamoe_device_flags} -c "${entry_source}" -o "${object}"
-    DEPENDS "${entry_source}" ${megamoe_headers} VERBATIM)
-list(APPEND megamoe_objects "${object}")
+foreach(entry IN ITEMS mega_moe mega_moe_w8a8_backward)
+    set(entry_source "${CMAKE_CURRENT_SOURCE_DIR}/csrc/kernels/mega_moe/${entry}.cpp")
+    set(object "${CMAKE_CURRENT_BINARY_DIR}/${entry}.o")
+    add_custom_command(OUTPUT "${object}"
+        COMMAND "${BISHENG}" ${megamoe_device_flags} -c "${entry_source}" -o "${object}"
+        DEPENDS "${entry_source}" ${megamoe_headers} VERBATIM)
+    list(APPEND megamoe_objects "${object}")
+endforeach()
 
 set(kernel_library "${CMAKE_CURRENT_BINARY_DIR}/libmegamoe_kernel.so")
 add_custom_command(OUTPUT "${kernel_library}"

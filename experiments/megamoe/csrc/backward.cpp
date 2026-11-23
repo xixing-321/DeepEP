@@ -2,10 +2,15 @@
 // Modified by guofanfeng 2026
 
 #include "plan.hpp"
+#include "check.hpp"
+#include "shmem.h"
+#include "kernels/mega_moe/common/mega_moe_w8a8_backward_params.hpp"
+#include "kernels/mega_moe/common/mega_moe_w8a8_saved_layout.hpp"
 #include "host_utils.hpp"
 #include "kernel_launch.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
 
 #include "kernels/mega_moe/common/mega_moe_bf16_layout.hpp"
@@ -156,3 +161,175 @@ BackwardResult BF16Plan::backward(torch::Tensor gradY, torch::Tensor topkWeights
 }
 
 }  // namespace deepep::megamoe::bf16
+
+namespace deepep::megamoe {
+
+int64_t w8a8_backward_buffer_size(int64_t world, int64_t experts, int64_t tokens, int64_t topk, int64_t hidden)
+{
+    // Reuse the forward dimension validation and reserve space for FP32 dP.
+    (void)buffer_size(world, experts, tokens, topk, hidden, true);
+    return MegaMoeTrainW8A8::PeerLayout(world, tokens, hidden, topk, experts, 1).total;
+}
+
+W8A8BackwardPlan::W8A8BackwardPlan(uintptr_t address, int64_t bytes, int64_t max_tokens, int64_t hidden, int64_t ffn,
+                                   int64_t topk, int64_t experts, int64_t world, const torch::Tensor& like,
+                                   uint64_t ffts)
+    : platform_(GetPlatformInfo()),
+      rank_(aclshmem_my_pe()),
+      world_(world),
+      max_tokens_(max_tokens),
+      hidden_(hidden),
+      ffn_(ffn),
+      topk_(topk),
+      experts_(experts),
+      ffts_(ffts)
+{
+    const int64_t required = w8a8_backward_buffer_size(world, experts, max_tokens, topk, hidden);
+    TORCH_CHECK(rank_ < world_ && address && bytes >= required && ffn >= 256 && ffn <= 4096 && ffn % 128 == 0,
+                "Invalid W8A8 backward plan");
+    CheckTensor(like, 2, "W8A8 input");
+    auto* window = reinterpret_cast<void*>(address);
+    const auto control = MegaMoeTrainW8A8::PeerLayout(world_, max_tokens_, hidden_, topk_, experts_, 1).xq;
+    ASCEND_DEEPEP_CHECK_ACL(aclrtMemset(window, required, 0, control));
+    std::vector<uint64_t> addresses(world_);
+    FillPeerAddresses(addresses.data(), window, world_);
+    peers_ = torch::empty({world}, like.options().dtype(torch::kInt64));
+    ASCEND_DEEPEP_CHECK_ACL(
+        aclrtMemcpy(peers_.data_ptr(), world * 8, addresses.data(), world * 8, ACL_MEMCPY_HOST_TO_DEVICE));
+}
+
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor> W8A8BackwardPlan::backward(
+    torch::Tensor dy, torch::Tensor packed_p, torch::Tensor dispatch, torch::Tensor scales, torch::Tensor maps,
+    torch::Tensor offsets, const std::vector<torch::Tensor>& compressed, const std::vector<torch::Tensor>& weight_pairs,
+    double limit, bool capture_timer)
+{
+    using namespace MegaMoeTrainW8A8;
+    const int64_t e = experts_, h = hidden_, f = ffn_, k = topk_;
+    const int64_t n = dy.size(0), r = dispatch.size(0);
+    TORCH_CHECK(n > 0 && n <= max_tokens_ && r <= int64_t(world_) * max_tokens_ * std::min(experts_, topk_) &&
+                    std::isfinite(limit) && limit >= 0 && limit <= std::numeric_limits<float>::max(),
+                "Invalid W8A8 backward shape or activation limit");
+    TORCH_CHECK(generation_ < (1U << 31) - 1U, "W8A8 backward generation exhausted");
+    const auto p_type = packed_p.scalar_type();
+    TORCH_CHECK(p_type == torch::kFloat32 || p_type == torch::kBFloat16, "Invalid W8A8 route weight dtype");
+    auto check = [&](const torch::Tensor& t, torch::IntArrayRef dimensions, torch::ScalarType dtype, const char* name) {
+        CheckTensor(t, dimensions.size(), name);
+        TORCH_CHECK(t.device() == peers_.device() && t.sizes() == dimensions && t.scalar_type() == dtype, name,
+                    " must match the W8A8 backward shape");
+    };
+    constexpr auto fp8 = c10::ScalarType::Float8_e4m3fn;
+    constexpr auto e8m0 = c10::ScalarType::Float8_e8m0fnu;
+    check(dy, {n, h}, torch::kBFloat16, "dY");
+    check(packed_p, {r}, p_type, "packed route weights");
+    check(dispatch, {r, h}, fp8, "dispatched X");
+    check(scales, {r, h / 32}, e8m0, "dispatched X scales");
+    check(maps, {r, 3}, torch::kInt32, "route metadata");
+    check(offsets, {e + 1}, torch::kInt32, "expert offsets");
+
+    const bool recompute = compressed.empty();
+    TORCH_CHECK(weight_pairs.size() == (recompute ? 6 : 4), "Wrong weight directions for W8A8 backward");
+    check(weight_pairs[0], {e, h, 2 * f}, fp8, "W1 dgrad");
+    check(weight_pairs[1], {e, h, f / 32, 2}, e8m0, "W1 dgrad scales");
+    check(weight_pairs[2], {e, f, h}, fp8, "W2 dgrad");
+    check(weight_pairs[3], {e, f, h / 64, 2}, e8m0, "W2 dgrad scales");
+    if (recompute) {
+        check(weight_pairs[4], {e, 2 * f, h}, fp8, "W1 recompute");
+        check(weight_pairs[5], {e, 2 * f, h / 64, 2}, e8m0, "W1 recompute scales");
+    } else {
+        TORCH_CHECK(compressed.size() == (limit > 0 ? 7 : 4), "Incomplete saved W8A8 Gate/Up");
+        for (size_t i = 0; i < 4; ++i) {
+            check(compressed[i], {r, i % 2 == 0 ? f : f / 32}, i % 2 == 0 ? fp8 : e8m0, "saved Gate/Up");
+        }
+        for (size_t i = 4; i < compressed.size(); ++i) {
+            check(compressed[i], {r, f / 8}, torch::kUInt8, "saved clipping mask");
+        }
+    }
+
+    const auto stream = c10_npu::getCurrentNPUStream();
+    auto address = [&](const torch::Tensor& tensor) {
+        c10_npu::NPUCachingAllocator::recordStream(tensor.storage().data_ptr(), stream);
+        return reinterpret_cast<uint64_t>(tensor.data_ptr());
+    };
+    std::vector<torch::Tensor> temporaries;
+    auto scratch = [&](torch::IntArrayRef shape, torch::ScalarType dtype) {
+        const auto& tensor = temporaries.emplace_back(torch::empty(shape, dy.options().dtype(dtype)));
+        return address(tensor);
+    };
+
+    auto dx = torch::empty_like(dy);
+    auto dp = torch::empty({n, k}, dy.options().dtype(p_type));
+    auto dw1 = torch::empty({e, 2 * f, h}, dy.options());
+    auto dw2 = torch::empty({e, h, f}, dy.options());
+    TrainParams a{};
+    a.rank = rank_;
+    a.world = world_;
+    a.tokens = n;
+    a.maxTokens = max_tokens_;
+    a.hidden = h;
+    a.ffn = f;
+    a.topk = k;
+    a.experts = e;
+    a.capacity = r;
+    a.saveMode = recompute ? kSaveNone : kSaveMxFp8;
+    a.generation = ++generation_;
+    a.limit = static_cast<float>(limit);
+    a.topkWeightType = p_type == torch::kFloat32;
+    a.peers = address(peers_);
+    a.x = address(dy);
+    a.packedP = address(packed_p);
+    a.xq = address(dispatch);
+    a.sx = address(scales);
+    a.maps = address(maps);
+    a.offsets = address(offsets);
+    a.w1b = address(weight_pairs[0]);
+    a.s1b = address(weight_pairs[1]);
+    a.w2b = address(weight_pairs[2]);
+    a.s2b = address(weight_pairs[3]);
+    if (recompute) {
+        a.w1 = address(weight_pairs[4]);
+        a.s1 = address(weight_pairs[5]);
+        a.gate = scratch({r, f}, torch::kBFloat16);
+        a.up = scratch({r, f}, torch::kBFloat16);
+    } else {
+        a.gateq = address(compressed[0]);
+        a.sqg = address(compressed[1]);
+        a.upq = address(compressed[2]);
+        a.squ = address(compressed[3]);
+        if (limit > 0) {
+            a.gateHigh = address(compressed[4]);
+            a.upLow = address(compressed[5]);
+            a.upHigh = address(compressed[6]);
+        }
+    }
+    a.output = address(dx);
+    a.dpOutput = address(dp);
+    a.dw1 = address(dw1);
+    a.dw2 = address(dw2);
+    // Receive BF16 dY for token-direction quantization independently of dHp.
+    a.deff = scratch({r, h}, torch::kBFloat16);
+    // Retain dHp until dP reduces complete rows. Hp is quantized from UB.
+    a.db = a.hp = scratch({r, f}, torch::kBFloat16);
+    // Expert-local feature-format dY is overwritten by dX after dW2 drains.
+    a.packedY = scratch({r, h}, torch::kBFloat16);
+    a.dzq = scratch({r, 2 * f}, torch::kUInt8);
+    a.sz = scratch({r, 2 * f / 32}, torch::kUInt8);
+    const int64_t padded = AlignUp(r + e * 63, int64_t{64});
+    a.xt = scratch({padded * h}, torch::kUInt8);
+    a.sxt = scratch({padded * h / 32}, torch::kUInt8);
+    a.dt = scratch({padded * h}, torch::kUInt8);
+    a.sdt = scratch({padded * h / 32}, torch::kUInt8);
+    a.zt = scratch({padded * 2 * f}, torch::kUInt8);
+    a.szt = scratch({padded * 2 * f / 32}, torch::kUInt8);
+    a.bt = scratch({padded * f}, torch::kUInt8);
+    a.sbt = scratch({padded * f / 32}, torch::kUInt8);
+    const int64_t flags = e * CeilDiv(r, int64_t{256}) + 11 * e * 2 * platform_.aic;
+    a.pipeline = scratch({flags * 16}, torch::kInt32);
+    auto timer = capture_timer
+                     ? AllocateW8A8Timer(dy, platform_.aic, r, f, e, k, p_type == torch::kFloat32, true, recompute)
+                     : torch::Tensor{};
+    auto* timer_addr = timer.defined() ? reinterpret_cast<uint8_t*>(address(timer)) : nullptr;
+    mega_moe_w8a8_backward_do(platform_.block_dim, platform_.ub, stream.stream(), &a, ffts_, timer_addr);
+    return {dx, dp, dw1, dw2, timer};
+}
+
+}  // namespace deepep::megamoe

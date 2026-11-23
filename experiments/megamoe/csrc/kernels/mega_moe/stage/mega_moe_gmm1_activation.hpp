@@ -357,6 +357,35 @@ __aicore__ inline void Gmm1Aiv0InterleavedEpilogueTileGeneric(const Config& conf
     NotifyGmm2InputReady<IsWaveFlagGrained>(gmmAddrInfo.activationToGmm2Flag, mLoc / L1_TILE_M_256);
 }
 
+// The activation consumes Wave order. Save contiguous canonical runs from the
+// same UB tile so backward can use the framework's dispatch order.
+template <typename ElementC>
+__aicore__ inline void SaveCanonicalGateUp(GM_ADDR savedGateUp, LocalTensor<int32_t> metadata, uint32_t rows,
+                                           uint32_t columns, uint32_t nLoc, uint32_t ffn)
+{
+    GlobalTensor<ElementC> saved;
+    saved.SetGlobalBuffer(reinterpret_cast<__gm__ ElementC*>(savedGateUp));
+    LocalTensor<ElementC> gate(TPosition::VECCALC, 0, MAX_SINGLE_MN_ALIGN32_NUM_128);
+    LocalTensor<ElementC> up(TPosition::VECCALC, MAX_SINGLE_MN_ALIGN32_NUM_128 * sizeof(ElementC),
+                             MAX_SINGLE_MN_ALIGN32_NUM_128);
+    uint32_t first = 0;
+    while (first < rows) {
+        const uint32_t savedRow = metadata.GetValue(first * INT32_PER_256B + SAVED_ROW_INDEX);
+        uint32_t end = first + 1;
+        while (end < rows && metadata.GetValue(end * INT32_PER_256B + SAVED_ROW_INDEX) == savedRow + end - first) {
+            ++end;
+        }
+        constexpr uint32_t blockElements = ALIGN_32 / sizeof(ElementC);
+        constexpr uint32_t elementBytes = sizeof(ElementC);
+        DataCopyExtParams copy{static_cast<uint16_t>(end - first), columns * elementBytes,
+                               (L1_TILE_N - columns) / blockElements, (2 * ffn - columns) * elementBytes, 0U};
+        const uint64_t offset = static_cast<uint64_t>(savedRow) * 2 * ffn + nLoc;
+        DataCopyPad(saved[offset], gate[first * L1_TILE_N], copy);
+        DataCopyPad(saved[offset + ffn], up[first * L1_TILE_N], copy);
+        first = end;
+    }
+}
+
 // Prefetch 非交错路径从 GM 取回两路 GMM1 输出，再执行 SwiGLU/量化。
 template <typename MakeLayoutC, typename ElementC, bool IsWaveFlagGrained, typename Config, typename TensorC,
           typename TensorMetaInfo, typename ActivationQuantOp, typename ActualShape>
@@ -402,6 +431,12 @@ __aicore__ inline void Gmm1Aiv0PrefetchEpilogueTileGeneric(const Config& config,
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(0);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(0);
 
+        if (gmmAddrInfo.savedGateUp != nullptr) {
+            SyncFuncStatic<AscendC::HardEvent::MTE2_S, SYNC_EVENT_ID5>();
+            SaveCanonicalGateUp<ElementC>(gmmAddrInfo.savedGateUp, topkWeightTensor.template ReinterpretCast<int32_t>(),
+                                          subM, Get<N_VALUE>(actualShape), nLoc, config.outputN);
+            SyncFuncStatic<AscendC::HardEvent::MTE3_V, SYNC_EVENT_ID5>();
+        }
         Std::tuple<int64_t, int64_t, int64_t, int64_t> epilogueShape{subM, Get<N_VALUE>(actualShape), 0, 0};
         Std::tuple<int64_t, int64_t, int64_t, int64_t, int64_t, int64_t> epilogueOffset{
             subMLoc * config.outputN + nLoc,
@@ -1043,6 +1078,7 @@ __aicore__ inline void UpdateMoeExpertGmm1GlobalBuffer(
             workspace.gmm1MmadResPtr + globalTokenStartIndex * gmmAddrInfo.gmm1OutRowStride * sizeof(bfloat16_t);
     }
     if constexpr (TopkWeightsPrefetch) {
+        gmmAddrInfo.savedGateUp = workspace.savedGateUpPtr;
         gmmAddrInfo.gmm1TileStatus = reinterpret_cast<__gm__ int32_t*>(workspace.gmm1TileStatusPtr) +
                                      (static_cast<uint64_t>(state.expertIdx) * syncLayout.gmm1TileStatusCountPerExpert +
                                       static_cast<uint64_t>(expertMGroupOffset) * gmm1TilesPerMGroup) *

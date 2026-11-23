@@ -14,6 +14,13 @@ extern "C" void mega_moe_kernel_do(uint32_t block_dim, uint32_t ub_bytes, void* 
                                    uint8_t* shared_weight_scales2, uint8_t* y, uint8_t* expert_token_nums,
                                    uint8_t* workspace, uint8_t* timer, const uint8_t* tiling_host, uint64_t ffts_addr);
 
+extern "C" void mega_moe_w8a8_training_forward_do(uint32_t block_dim, uint32_t ub_bytes, void* stream, uint8_t* context,
+                                                  uint8_t* x, uint8_t* ids, uint8_t* p, uint8_t* w1, uint8_t* w2,
+                                                  uint8_t* s1, uint8_t* s2, uint8_t* y, uint8_t* counts,
+                                                  uint8_t* workspace, uint8_t* dispatch, uint8_t* scales,
+                                                  uint8_t* routes, uint8_t* gate_up, const uint8_t* tiling_host,
+                                                  uint64_t ffts_addr, uint8_t* timer);
+
 extern "C" int mega_moe_bf16_swiglu_decoupled_for_saved_mode(uint64_t hidden, uint32_t saved_mode);
 
 extern "C" void mega_moe_bf16_forward_kernel_do(uint32_t block_dim, void* stream, uint8_t* context, uint8_t* x,
@@ -45,3 +52,10 @@ extern "C" void mega_moe_bf16_backward_timer_kernel_do(uint32_t block_dim, void*
                                                        uint8_t* training_saved_state, uint8_t* dispatch_output,
                                                        uint8_t* backward_workspace, const uint8_t* tiling_host,
                                                        uint64_t ffts_addr, uint32_t split_experts, uint8_t* timer);
+
+namespace MegaMoeTrainW8A8 {
+struct TrainParams;
+}
+
+extern "C" void mega_moe_w8a8_backward_do(uint32_t blocks, uint32_t ub_bytes, void* stream,
+                                          const MegaMoeTrainW8A8::TrainParams* params, uint64_t ffts, uint8_t* timer);
