@@ -259,7 +259,7 @@ W8A8ForwardState Plan::training_forward(torch::Tensor x, torch::Tensor ids, torc
 namespace deepep::megamoe::bf16 {
 namespace {
 
-torch::Tensor AllocateTrainingSavedState(const MegaMoeBF16Training::TrainingSavedStateLayout& savedStateLayout,
+torch::Tensor AllocateTrainingSavedState(const MegaMoeBF16Impl::TrainingSavedStateLayout& savedStateLayout,
                                          const torch::Tensor& like)
 {
     // The compact ordinary-BF16 layout begins at cumsumOffset=0. Embedded
@@ -299,7 +299,7 @@ ForwardResult BF16Plan::forward(torch::Tensor out, torch::Tensor x, torch::Tenso
     TORCH_CHECK(x.scalar_type() == torch::kBFloat16, "x must be bfloat16");
     TORCH_CHECK(topkIds.scalar_type() == torch::kInt32, "topk_ids must be int32");
     const auto topkWeightType = TopkWeightType(topkWeights.scalar_type());
-    const auto topkWeightBytes = MegaMoeBF16Training::TopkWeightBytes(topkWeightType);
+    const auto topkWeightBytes = MegaMoeBF16Impl::TopkWeightBytes(topkWeightType);
     TORCH_CHECK(weight1.scalar_type() == torch::kBFloat16, "weight1 must be bfloat16");
     TORCH_CHECK(weight2.scalar_type() == torch::kBFloat16, "weight2 must be bfloat16");
     TORCH_CHECK(topkWeights.sizes() == topkIds.sizes(), "topk_weights shape must match topk_ids");
@@ -324,7 +324,7 @@ ForwardResult BF16Plan::forward(torch::Tensor out, torch::Tensor x, torch::Tenso
                       weight_before_gmm2_ ? save_gmm1_output : "none", topkWeightType, weightLayout.transW);
 
     const auto savedStateLayout = MakeSavedStateLayout(tiling, k, n, maxRecvTokens);
-    const MegaMoeBF16Training::DispatchOutputLayout dispatchOutputLayout(k, maxRecvTokens, topkWeightBytes);
+    const MegaMoeBF16Impl::DispatchOutputLayout dispatchOutputLayout(k, maxRecvTokens, topkWeightBytes);
     // Both unpermute implementations overwrite every output token row once.
     // ExpertTokenNumCopyOut likewise writes all local-expert entries, so these
     // returned tensors do not need a device-wide pre-clear.
@@ -356,11 +356,16 @@ ForwardResult BF16Plan::forward(torch::Tensor out, torch::Tensor x, torch::Tenso
                                         ptr(routingState), dispatchOutput.defined() ? ptr(dispatchOutput) : nullptr,
                                         ptr(workspace_), reinterpret_cast<const uint8_t*>(&tiling), ffts_addr_);
     }
-    for (const auto* tensor : {&context, &x, &topkIds, &topkWeights, &weight1, &weight2, &out, &expertTokenNums,
-                               &routingState, &dispatchOutput, &workspace_}) {
-        if (tensor->defined()) c10_npu::NPUCachingAllocator::recordStream(tensor->storage().data_ptr(), stream);
+    // The remaining outputs and scratch were allocated on the kernel stream.
+    for (const auto* tensor : {&x, &topkIds, &topkWeights, &weight1, &weight2, &out}) {
+        c10_npu::NPUCachingAllocator::recordStream(tensor->storage().data_ptr(), stream);
     }
-    if (timer.defined()) c10_npu::NPUCachingAllocator::recordStream(timer.storage().data_ptr(), stream);
+    RecordIfForeign(context);
+    RecordIfForeign(workspace_);
+    if (weight_before_gmm2_) {
+        RememberAllocation(routingState);
+        if (dispatchOutput.defined()) RememberAllocation(dispatchOutput);
+    }
     return {out, expertTokenNums, weight_before_gmm2_ ? routingState : torch::Tensor(), dispatchOutput, timer};
 }
 

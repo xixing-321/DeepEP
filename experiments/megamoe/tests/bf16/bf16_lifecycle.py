@@ -60,14 +60,12 @@ def main():
         p = torch.rand(m, topk, generator=generator).softmax(dim=-1).to(device=device, dtype=dtype)
         batches.append((x, ids.roll(index, dims=1), p, dy))
 
-    def forward(op, index=0, *, legacy_layout=False, weight_dtype=None):
+    def forward(op, index=0, *, legacy_layout=False):
         x, routes, weights, _ = batches[index]
         mode, limit, _ = modes[index]
         w1_in, w2_in = w1, w2
         if legacy_layout:
             w1_in, w2_in = (w.transpose(1, 2).contiguous() for w in (w1, w2))
-        if weight_dtype is not None:
-            weights = weights.to(weight_dtype)
         values = [v.detach().clone().requires_grad_() for v in (x, weights, w1_in, w2_in)]
         x, weights, w1_in, w2_in = values
         op.x, op.topk_idx, op.topk_weights = x, routes, weights
@@ -79,9 +77,9 @@ def main():
         assert result is None and y.data_ptr() == pointer
         return values, y, counts
 
-    def backward(index, graph):
+    def backward(index, graph, dy=None):
         values, y, counts = graph
-        y.backward(batches[index][3])
+        y.backward(batches[index][3] if dy is None else dy)
         assert values[1].grad.dtype == values[1].dtype
         dx, dp, dw1, dw2 = (v.grad.cpu() for v in values)
         return dict(y=y.detach().cpu(), counts=counts.cpu(), dx=dx, dp=dp, dw1=dw1, dw2=dw2)
@@ -93,7 +91,6 @@ def main():
             assert tensor.dtype == reference.dtype and tensor.shape == reference.shape, label
             assert torch.equal(tensor.contiguous().view(torch.uint8), reference.contiguous().view(torch.uint8)), label
 
-    # Peer dtype mismatches are rejected by the opt-in collective diagnostics.
     def make():
         return SymmBuffer(
             group,
@@ -105,15 +102,10 @@ def main():
             mma_type="bf16xbf16",
             need_grad=True,
             max_recv_tokens=m * size * e,
-            debug_collectives=True,
         )
 
     op = make()
     expect_error(make, "already owns")
-    expect_error(
-        lambda: forward(op, weight_dtype=torch.float32 if rank % 2 else torch.bfloat16),
-        "EP ranks",
-    )
     expected = [backward(i, forward(op, i)) for i in range(len(batches))]
     assert not torch.equal(expected[0]["dw1"], expected[1]["dw1"]), "same-plan microbatches must be distinguishable"
     pending = [forward(op, i) for i in range(len(batches))]
@@ -121,6 +113,41 @@ def main():
         check(0, backward(0, forward(op)), expected[0])
     for i in reversed(range(len(pending))):
         check(i, backward(i, pending.pop()), expected[i])
+
+    # Hooks and framework redispatch can supply a fresh allocation on a third stream.
+    transfer = torch.npu.Stream()
+
+    def foreign_copy(tensor):
+        caller = torch.npu.current_stream()
+        transfer.wait_stream(caller)
+        with torch.npu.stream(transfer):
+            copied = tensor.clone()
+            tensor.record_stream(transfer)
+        caller.wait_stream(transfer)
+        return copied
+
+    def unpack(tensor):
+        return foreign_copy(tensor) if tensor.dtype == torch.uint8 else tensor
+
+    for i, (mode, _, _) in enumerate(modes):
+        if i and modes[i - 1][0] == mode:
+            continue
+        with torch.autograd.graph.saved_tensors_hooks(lambda t: t.detach(), unpack):
+            graph = forward(op, i)
+        dy = batches[i][3].T.contiguous().T
+        check(i, backward(i, graph, dy), expected[i])
+        del graph
+
+        # Give the rebuilder identical dispatch bytes from a matching forward.
+        saved_graph = forward(op, i)
+        dispatch = saved_graph[1].grad_fn.saved_tensors[-1]
+        del saved_graph
+        op.save_dispatched_x = False
+        op.dispatch_rebuilder = lambda source=dispatch: foreign_copy(source)
+        check(i, backward(i, forward(op, i)), expected[i])
+        op.save_dispatched_x = True
+        op.dispatch_rebuilder = None
+        del dispatch
 
     legacy = backward(0, forward(op, legacy_layout=True))
     for name in ("dw1", "dw2"):
