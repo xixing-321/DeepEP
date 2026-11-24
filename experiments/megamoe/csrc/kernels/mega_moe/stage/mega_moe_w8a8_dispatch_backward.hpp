@@ -22,8 +22,7 @@ __aicore__ inline void FusedTrain::DispatchDy(uint32_t e, uint32_t first, uint32
     const uint64_t raw = a.deff + uint64_t(begin + first) * a.hidden * 2;
     const uint64_t q = DqData(e);
     const uint64_t s = DqScale(e);
-    // Raw input <=64KiB, maps [64KiB,67KiB), quant scratch >=128KiB.
-    // Transport uses two 32KiB bands. Drain both before quant reuses input UB.
+    // The row map occupies [64,67) KiB between the primary input and the MXFP8 prefetch slot.
     LocalTensor<int32_t> maps{TPosition::VECIN, 65536, 768};
     GlobalTensor<int32_t> mg;
     mg.SetGlobalBuffer(reinterpret_cast<__gm__ int32_t*>(a.maps));
@@ -36,6 +35,62 @@ __aicore__ inline void FusedTrain::DispatchDy(uint32_t e, uint32_t first, uint32
         DataCopyPad(maps, mg[uint64_t(begin + first + mapBegin) * 3], DataCopyExtParams{1, count * 12, 0, 0, 0},
                     DataCopyPadExtParams<int32_t>{false, 0, 0, 0});
         SyncFunc<HardEvent::MTE2_S>();
+        // Feature groups are contiguous within each route. Quantize the
+        // same UB rows that are written to raw dY, including a short last batch.
+        if (a.hidden % 256 == 0 && a.hidden <= 32768) {
+            WaitFlag<HardEvent::MTE3_MTE2>(EVENT_ID0);
+            WaitFlag<HardEvent::MTE3_MTE2>(EVENT_ID1);
+            // Both input slots end before the quantization scratch at 128 KiB.
+            constexpr uint32_t secondSlot = 68 * 1024;
+            constexpr uint32_t slotElements = (128 * 1024 - secondSlot) / sizeof(bfloat16_t);
+            const bool prefetch = a.saveMode == kSaveMxFp8 && a.hidden <= slotElements;
+            const uint32_t batchLimit = (prefetch ? slotElements : 32768) / a.hidden;
+            const auto loadRows = [&](LocalTensor<bfloat16_t> input, uint32_t row, uint32_t batch) __aicore__ {
+                for (uint32_t r = 0; r < batch; ++r) {
+                    const uint32_t source = maps.GetValue((row + r) * 3);
+                    const uint32_t token = maps.GetValue((row + r) * 3 + 1);
+                    if (source != lastSource) {
+                        remoteBase = reinterpret_cast<uint64_t>(Peer(source, peer.xq));
+                        lastSource = source;
+                    }
+                    GlobalTensor<bfloat16_t> src;
+                    src.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(remoteBase) + uint64_t(token) * a.hidden);
+                    src.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
+                    DataCopyPad(input[r * a.hidden], src, DataCopyExtParams{1, a.hidden * 2, 0, 0, 0},
+                                DataCopyPadExtParams<bfloat16_t>{false, 0, 0, 0});
+                }
+            };
+            uint32_t slot = 0;
+            LocalTensor<bfloat16_t> input{TPosition::VECIN, 0, 32768};
+            loadRows(input, 0, count < batchLimit ? count : batchLimit);
+            for (uint32_t row = 0; row < count; row += batchLimit) {
+                const uint32_t batch = count - row < batchLimit ? count - row : batchLimit;
+                SyncFunc<HardEvent::MTE2_MTE3>();
+                SyncFunc<HardEvent::MTE2_V>();
+                const uint32_t next = row + batch;
+                const uint32_t nextCount = count - next < batchLimit ? count - next : batchLimit;
+                LocalTensor<bfloat16_t> other{TPosition::VECIN, slot ? 0U : secondSlot, slotElements};
+                if (prefetch && nextCount) loadRows(other, next, nextCount);
+                GlobalTensor<bfloat16_t> dst;
+                dst.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t*>(raw) + uint64_t(mapBegin + row) * a.hidden);
+                dst.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
+                DataCopyPad(dst, input, DataCopyExtParams{1, batch * a.hidden * 2, 0, 0, 0});
+                quant.QuantizeTile(input, Addr(q), Addr(s), batch * a.hidden / 256, 256, 256,
+                                   uint64_t(first + mapBegin + row) * a.hidden, true);
+                if (nextCount) {
+                    if (prefetch) {
+                        input = other;
+                        slot ^= 1;
+                    } else {
+                        loadRows(input, next, nextCount);
+                    }
+                }
+            }
+            SyncFunc<HardEvent::MTE3_S>();
+            SetFlag<HardEvent::MTE3_MTE2>(EVENT_ID0);
+            SetFlag<HardEvent::MTE3_MTE2>(EVENT_ID1);
+            continue;
+        }
         for (uint32_t row = 0; row < count; ++row) {
             const uint32_t source = maps.GetValue(row * 3), token = maps.GetValue(row * 3 + 1);
             if (source != lastSource) {

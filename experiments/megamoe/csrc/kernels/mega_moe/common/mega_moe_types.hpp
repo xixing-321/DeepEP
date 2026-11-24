@@ -27,6 +27,7 @@
 template <class Schema>
 class BasicAscendTimerDevice;
 struct MegaMoeTimerSchema;
+class MegaMoeTrainTimerDevice;
 using AscendTimerDevice = BasicAscendTimerDevice<MegaMoeTimerSchema>;
 
 namespace MegaMoeImpl {
@@ -117,9 +118,15 @@ struct GMMAddrInfo {
     __gm__ int32_t* sharedExpertGmm2TileCounter;
     uint32_t gmm1OutRowStride = 0;
     GM_ADDR savedGateUp = nullptr;
+    uint64_t savedPlaneRows = 0;
+    float savedClampLimit = 0;
     void* routedA8W4Pipeline = nullptr;
     // 仅 Wave 调试采集设置；其他调用保持空指针。
     AscendTimerDevice* timer = nullptr;
+#ifdef DEEPEP_MEGAMOE_TIMER
+    MegaMoeTrainTimerDevice* trainingTimer = nullptr;
+    uint32_t trainingRowInExpert = 0;
+#endif
 };
 
 #if defined(ENABLE_MEGA_MOE_LAYERED_KERNEL)

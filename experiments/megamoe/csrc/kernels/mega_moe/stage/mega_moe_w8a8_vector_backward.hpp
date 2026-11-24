@@ -19,6 +19,7 @@ __aicore__ inline void FusedTrain::GradientTile(uint32_t e, uint32_t localRow, u
     args.upHighGmAddr = a.limit > 0 ? Addr(a.upHigh) : nullptr;
     args.gradZGmAddr = Addr(a.dz);
     args.hpGmAddr = Addr(a.hp);
+    args.dpLow = compressed ? Addr(a.db) : nullptr;
     args.packedTopkWeightsGmAddr = Addr(a.packedP);
     args.baseM = 128;
     args.baseN = 256;
@@ -56,11 +57,11 @@ __aicore__ inline void FusedTrain::ComputeDp()
         return;
     }
     const uint32_t f = a.ffn;
-    const auto plan = MegaMoeBF16Training::MakeTopkGradReductionPlan(rows, f, VCores());
+    const auto plan = MegaMoeBF16Impl::MakeTopkGradReductionPlan(rows, f, VCores());
 
     // Up to eight rows of dHp occupy [0,4096). The current batch of FP32
-    // products fits before the Gate tile at 64 KiB. Each segment is decoded
-    // from the same saved/recomputed Gate and Up used for SwiGLUGrad.
+    // products fits before the Gate tile at 64 KiB. Restore the original column
+    // order before reduction for both cached and recomputed products.
     constexpr uint32_t kProductsOffset = 4096;
     constexpr uint32_t kReductionScratchOffset = 65536;
     constexpr uint32_t kProductsBytes = kReductionScratchOffset - kProductsOffset;
@@ -88,7 +89,23 @@ __aicore__ inline void FusedTrain::ComputeDp()
         const uint32_t take = rows - row < batch ? rows - row : batch;
         for (uint32_t col = 0; col < f; col += 256) {
             const uint32_t cols = f - col < 256 ? f - col : 256;
-            swi.LoadDpProducts(row, col, take, cols, products);
+            if (compressed) {
+                GlobalTensor<float> lo, hi;
+                lo.SetGlobalBuffer(reinterpret_cast<__gm__ float*>(a.db));
+                hi.SetGlobalBuffer(reinterpret_cast<__gm__ float*>(a.hp));
+                lo.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
+                hi.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
+                const uint32_t half = cols / 2;
+                const uint64_t off = (uint64_t(row) * f + col) / 2;
+                DataCopyExtParams p{uint16_t(take), half * 4, (f / 2 - half) * 4, (f - half) / 8, 0};
+                DataCopyPadExtParams<float> pad{false, 0, 0, 0};
+                SyncFunc<HardEvent::V_MTE2>();
+                DataCopyPad(products[col], lo[off], p, pad);
+                DataCopyPad(products[col + half], hi[off], p, pad);
+                SyncFunc<HardEvent::MTE2_V>();
+            } else {
+                swi.LoadDpProducts(row, col, take, cols, products);
+            }
         }
         PipeBarrier<PIPE_V>();
         if (plan.width == f) {

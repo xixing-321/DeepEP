@@ -172,7 +172,10 @@ torch::Tensor AllocateW8A8Timer(const torch::Tensor& like, uint32_t groups, int6
     const int64_t rowTiles = CeilDiv(rows, tile) + experts;
     const int64_t coreTiles = CeilDiv(rowTiles * CeilDiv(std::max(h, ffn), tile), int64_t{groups}) + experts;
     const int64_t dw1Tiles = experts * CeilDiv(CeilDiv(2 * ffn, tile) * CeilDiv(h, tile), int64_t{groups});
-    const int64_t bound = backward ? std::max(coreTiles, dw1Tiles) : rowTiles;
+    // Each GMM1 tile produces up to two 128-row activation records. Wave and
+    // expert boundaries can assign one additional tile to the same core.
+    const int64_t activationTiles = CeilDiv(rowTiles * CeilDiv(ffn, tile), int64_t{groups}) + rowTiles;
+    const int64_t bound = backward ? std::max(coreTiles, dw1Tiles) : 2 * activationTiles;
     const int64_t capacity = AlignUp(std::max(bound + 16, int64_t{64}), int64_t{64});
     TORCH_CHECK(capacity <= kMaxCapacity, "W8A8 Timer task capacity exceeds supported bound");
     const Layout layout{static_cast<int>(groups * 3), static_cast<int>(capacity)};
@@ -234,15 +237,18 @@ W8A8ForwardState Plan::training_forward(torch::Tensor x, torch::Tensor ids, torc
         save_dispatched_x ? torch::empty({capacity, h}, options.dtype(fp8)) : torch::Tensor{},
         save_dispatched_x ? torch::empty({capacity, h / 32}, options.dtype(e8m0)) : torch::Tensor{},
         torch::empty({capacity, static_cast<int64_t>(MegaMoeImpl::META_INFO_SIZE)}, options.dtype(torch::kInt32)),
-        save_gate_up ? torch::empty({capacity, n}, options) : torch::Tensor{},
+        save_gate_up ? torch::empty({(capacity + 31) / 32 * 32, n + n / 32 + (limit > 0 ? 3 * (n / 16) : 0)},
+                                    options.dtype(torch::kUInt8))
+                     : torch::Tensor{},
         capture_timer ? AllocateW8A8Timer(x, platform_.aic, capacity, n / 2, e, k, fp32_topk, false, !save_gate_up)
                       : torch::Tensor{}};
     auto tiling = tiling_;
+    tiling.saveClipMasks = limit > 0;
     tiling.clampLimit = limit > 0 ? static_cast<float>(limit) : std::numeric_limits<float>::max();
     const auto stream = c10_npu::getCurrentNPUStream();
     auto ptr = [](const torch::Tensor& t) { return t.defined() ? static_cast<uint8_t*>(t.data_ptr()) : nullptr; };
-    for (const auto* tensor : {&x, &ids, &p, &w1, &w2, &s1, &s2, &out, &context_, &workspace_, &saved.counts,
-                               &saved.dispatch, &saved.scales, &saved.routes, &saved.gate_up, &saved.timer}) {
+    // Saved planes, routes and counts are allocated on this launch stream.
+    for (const auto* tensor : {&x, &ids, &p, &w1, &w2, &s1, &s2, &out, &context_, &workspace_}) {
         if (tensor->defined()) {
             c10_npu::NPUCachingAllocator::recordStream(tensor->storage().data_ptr(), stream);
         }

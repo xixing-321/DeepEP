@@ -4,7 +4,7 @@
 """BF16 device accuracy against the small-operator and CPU FP64 references."""
 
 
-def combine_baseline(partial, args, rank, world, device):
+def combine_baseline(partial, args, rank, world, device, *, group=None):
     """Move route values through Gloo, then apply the selected NPU combine."""
     import torch
     import torch.distributed as dist
@@ -19,7 +19,7 @@ def combine_baseline(partial, args, rank, world, device):
             for route in partial["routes"]:
                 mask = route["rows"] // m == destination
                 buffer[route["rows"][mask] % m, route["slots"][mask]] = route["y"][mask].float()
-            dist.reduce(buffer.view(torch.int32), dst=destination, op=dist.ReduceOp.BOR)
+            dist.reduce(buffer.view(torch.int32), dst=destination, op=dist.ReduceOp.BOR, group=group)
             if destination == rank:
                 routes = buffer.to(device)
                 y = routes[:, 0] * weights[:, 0:1]
@@ -37,7 +37,7 @@ def combine_baseline(partial, args, rank, world, device):
             buffer[rows, slots, h : 2 * h] = route["dx"][mask].float()
             buffer[rows, slots, -1] = route["dp"][mask].float()
         # Each slot has a single writer. Transport its bits, including negative zero.
-        dist.reduce(buffer.view(torch.int32), dst=destination, op=dist.ReduceOp.BOR)
+        dist.reduce(buffer.view(torch.int32), dst=destination, op=dist.ReduceOp.BOR, group=group)
         if rank == destination:
             ids = partial["ids"][rank * m : (rank + 1) * m]
             result = unpermute_routes(

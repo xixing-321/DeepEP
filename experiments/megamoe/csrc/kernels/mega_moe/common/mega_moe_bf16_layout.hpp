@@ -228,13 +228,14 @@ MEGA_MOE_BF16_HOST_DEVICE constexpr bool SaveGateUpClipMasks(float tilingLimit, 
 }
 
 // AIV0 epilogue only. Dispatch and GMM2 own UB in different phases.
-template <uint32_t RawRows, uint32_t ChunkRows = RawRows, uint32_t Columns = 256>
+template <uint32_t RawRows, uint32_t ChunkRows = RawRows, uint32_t Columns = 256,
+          uint32_t ScratchOffset = 2 * RawRows * Columns * kBf16Bytes>
 struct SavedGateUpQuantUbLayoutFor {
     static constexpr uint32_t kRows = ChunkRows;
     static constexpr uint32_t kColumns = Columns;
     static constexpr uint32_t kElements = kRows * kColumns;
     static constexpr uint32_t kGroups = kElements / 32;
-    static constexpr uint32_t gateData = 2 * RawRows * kColumns * kBf16Bytes;
+    static constexpr uint32_t gateData = ScratchOffset;
     static constexpr uint32_t upData = gateData + kElements;
     static constexpr uint32_t compactScale = upData + kElements;
     static constexpr uint32_t gateScale = compactScale + kGroups * 2;

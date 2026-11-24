@@ -31,6 +31,8 @@ struct WorkspaceInfo {
     GM_ADDR savedDispatchScalePtr{nullptr};
     GM_ADDR savedRoutesPtr{nullptr};
     GM_ADDR savedGateUpPtr{nullptr};
+    uint64_t savedPlaneRows = 0;
+    float savedClampLimit = 0;
     GM_ADDR flagActivationToGmm2Ptr;
     GM_ADDR flagDispatchToGmm1Ptr;
     GM_ADDR flagSendCntCalToUpdParamsPtr;

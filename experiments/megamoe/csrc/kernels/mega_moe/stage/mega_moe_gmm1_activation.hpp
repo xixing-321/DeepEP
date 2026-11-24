@@ -16,11 +16,13 @@
 
 #include "kernel_operator.h"
 #include "../common/ascend_timer_v2_device.hpp"
+#include "../timer/ascend_timer_device.hpp"
 #include "kernel_tiling/kernel_tiling.h"
 #include "kernel_operator_list_tensor_intf.h"
 #include "lib/matmul_intf.h"
 #include "tensor_api/tensor.h"
 #include "../epilogue/block_epilogue_activation_mx_quant.hpp"
+#include "../epilogue/block_saved_gate_up_mxfp8.hpp"
 #include "../common/mega_moe_gmm_common.hpp"
 
 namespace MegaMoeImpl {
@@ -42,6 +44,9 @@ __aicore__ inline void WaitForGmm1InputReady(const GMMAddrInfo& gmmAddrInfo, con
     uint64_t flagOffset = static_cast<uint64_t>(waveIdx) * INT_CACHELINE;
     __gm__ int32_t* flagValueAddr = gmmAddrInfo.dispatchToGmm1Flag + flagOffset;
     AscendTimerWaitScope wait(gmmAddrInfo.timer, AscendTimer::AIC_GMM1_WAIT);
+#ifdef DEEPEP_MEGAMOE_TIMER
+    MegaMoeTrainTimerWaitScope trainWait(gmmAddrInfo.trainingTimer, MegaMoeTrainTimer::AIC_GMM1_WAIT);
+#endif
     WaitUntilGmFlagEquals(flagValueAddr, static_cast<int32_t>(targetValue));
 }
 
@@ -359,29 +364,33 @@ __aicore__ inline void Gmm1Aiv0InterleavedEpilogueTileGeneric(const Config& conf
 
 // The activation consumes Wave order. Save contiguous canonical runs from the
 // same UB tile so backward can use the framework's dispatch order.
-template <typename ElementC>
-__aicore__ inline void SaveCanonicalGateUp(GM_ADDR savedGateUp, LocalTensor<int32_t> metadata, uint32_t rows,
+__aicore__ inline void SaveCanonicalGateUp(const GMMAddrInfo& addr, LocalTensor<int32_t> metadata, uint32_t rows,
                                            uint32_t columns, uint32_t nLoc, uint32_t ffn)
 {
-    GlobalTensor<ElementC> saved;
-    saved.SetGlobalBuffer(reinterpret_cast<__gm__ ElementC*>(savedGateUp));
-    LocalTensor<ElementC> gate(TPosition::VECCALC, 0, MAX_SINGLE_MN_ALIGN32_NUM_128);
-    LocalTensor<ElementC> up(TPosition::VECCALC, MAX_SINGLE_MN_ALIGN32_NUM_128 * sizeof(ElementC),
-                             MAX_SINGLE_MN_ALIGN32_NUM_128);
-    uint32_t first = 0;
-    while (first < rows) {
-        const uint32_t savedRow = metadata.GetValue(first * INT32_PER_256B + SAVED_ROW_INDEX);
-        uint32_t end = first + 1;
-        while (end < rows && metadata.GetValue(end * INT32_PER_256B + SAVED_ROW_INDEX) == savedRow + end - first) {
-            ++end;
-        }
-        constexpr uint32_t blockElements = ALIGN_32 / sizeof(ElementC);
-        constexpr uint32_t elementBytes = sizeof(ElementC);
-        DataCopyExtParams copy{static_cast<uint16_t>(end - first), columns * elementBytes,
-                               (L1_TILE_N - columns) / blockElements, (2 * ffn - columns) * elementBytes, 0U};
-        const uint64_t offset = static_cast<uint64_t>(savedRow) * 2 * ffn + nLoc;
-        DataCopyPad(saved[offset], gate[first * L1_TILE_N], copy);
-        DataCopyPad(saved[offset + ffn], up[first * L1_TILE_N], copy);
+    // Gate and Up use the first 128 KiB; preserve the next 32 KiB of route metadata for SwiGLU.
+    using Encoder = MegaMoeBF16Impl::SavedGateUpMxFp8<128, 256, 64, 160 * 1024, SYNC_EVENT_ID5>;
+    static_assert(Encoder::Layout::totalBytesWithClipMasks <= 248 * 1024);
+    Encoder encoder;
+    LocalTensor<bfloat16_t> gate{TPosition::VECCALC, 0, 128 * 256};
+    LocalTensor<bfloat16_t> up{TPosition::VECCALC, 128 * 256 * sizeof(bfloat16_t), 128 * 256};
+    const uint64_t plane = addr.savedPlaneRows * ffn;
+    GM_ADDR g = addr.savedGateUp;
+    GM_ADDR u = g + plane;
+    GM_ADDR gs = u + plane;
+    GM_ADDR us = gs + plane / 32;
+    GM_ADDR masks = us + plane / 32;
+    const bool clip = addr.savedClampLimit >= 0;
+    for (uint32_t first = 0; first < rows;) {
+        const uint32_t saved = metadata.GetValue(first * INT32_PER_256B + SAVED_ROW_INDEX);
+        // Dispatch knows the length of each contiguous canonical run. Clamp
+        // it to this UB tile; a partial N tile is stored one padded row at a time.
+        const uint32_t run =
+            columns == L1_TILE_N ? metadata.GetValue(first * INT32_PER_256B + SAVED_RUN_LENGTH_INDEX) : 1U;
+        const uint32_t end = first + (run < rows - first ? run : rows - first);
+        encoder.Save(gate[first * L1_TILE_N], up[first * L1_TILE_N], g, u, gs, us, clip ? masks : nullptr,
+                     clip ? masks + plane / 8 : nullptr, clip ? masks + plane / 4 : nullptr, addr.savedClampLimit,
+                     end - first, columns, ffn, uint64_t(saved) * ffn + nLoc);
+        SyncFuncStatic<HardEvent::MTE3_V, SYNC_EVENT_ID5>();
         first = end;
     }
 }
@@ -393,7 +402,8 @@ __aicore__ inline void Gmm1Aiv0PrefetchEpilogueTileGeneric(const Config& config,
                                                            TensorMetaInfo& metaInfoGm,
                                                            ActivationQuantOp& activationQuantOp,
                                                            const GMMAddrInfo& gmmAddrInfo, uint32_t expertBeforeCnt,
-                                                           const ActualShape& actualShape, uint32_t mLoc, uint32_t nLoc)
+                                                           const ActualShape& actualShape, uint32_t mLoc, uint32_t nLoc,
+                                                           uint32_t expertIdx)
 {
     uint32_t mLen = Get<M_VALUE>(actualShape);
     if (mLen == 0U) {
@@ -431,11 +441,20 @@ __aicore__ inline void Gmm1Aiv0PrefetchEpilogueTileGeneric(const Config& config,
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(0);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(0);
 
+        bool needsScalarInput = gmmAddrInfo.savedGateUp != nullptr;
+#ifdef DEEPEP_MEGAMOE_TIMER
+        needsScalarInput |= gmmAddrInfo.trainingTimer != nullptr;
+#endif
+        // W8A8 owns its event IDs explicitly. Saving and timing share the
+        // same completion fence for Gate/Up and the canonical row metadata.
+        if (needsScalarInput) SyncFuncStatic<HardEvent::MTE2_S, SYNC_EVENT_ID5>();
+#ifdef DEEPEP_MEGAMOE_TIMER
+        MegaMoeTrainTimerPassiveScope activation(gmmAddrInfo.trainingTimer, MegaMoeTrainTimer::AIV_SWIGLU, expertIdx,
+                                                 gmmAddrInfo.trainingRowInExpert + subMLoc, subM, nLoc, subTileM);
+#endif
         if (gmmAddrInfo.savedGateUp != nullptr) {
-            SyncFuncStatic<AscendC::HardEvent::MTE2_S, SYNC_EVENT_ID5>();
-            SaveCanonicalGateUp<ElementC>(gmmAddrInfo.savedGateUp, topkWeightTensor.template ReinterpretCast<int32_t>(),
-                                          subM, Get<N_VALUE>(actualShape), nLoc, config.outputN);
-            SyncFuncStatic<AscendC::HardEvent::MTE3_V, SYNC_EVENT_ID5>();
+            SaveCanonicalGateUp(gmmAddrInfo, topkWeightTensor.template ReinterpretCast<int32_t>(), subM,
+                                Get<N_VALUE>(actualShape), nLoc, config.outputN);
         }
         Std::tuple<int64_t, int64_t, int64_t, int64_t> epilogueShape{subM, Get<N_VALUE>(actualShape), 0, 0};
         Std::tuple<int64_t, int64_t, int64_t, int64_t, int64_t, int64_t> epilogueOffset{
@@ -632,7 +651,7 @@ __aicore__ inline void Gmm1Aiv0PrefetchEpilogueGeneric(WorkSet& workSet, const P
         } else {
             Gmm1Aiv0PrefetchEpilogueTileGeneric<MakeLayoutC, ElementC, IsWaveFlagGrained>(
                 config, workSet.gmC, workSet.metaInfoGm, activationQuantOp, gmmAddrInfo, expertBeforeCnt, actualShape,
-                mLoc, nLoc);
+                mLoc, nLoc, expertIdx);
         }
     }
 }
@@ -1079,6 +1098,11 @@ __aicore__ inline void UpdateMoeExpertGmm1GlobalBuffer(
     }
     if constexpr (TopkWeightsPrefetch) {
         gmmAddrInfo.savedGateUp = workspace.savedGateUpPtr;
+#ifdef DEEPEP_MEGAMOE_TIMER
+        gmmAddrInfo.trainingRowInExpert = rowOffsetInExpert;
+#endif
+        gmmAddrInfo.savedPlaneRows = workspace.savedPlaneRows;
+        gmmAddrInfo.savedClampLimit = workspace.savedClampLimit;
         gmmAddrInfo.gmm1TileStatus = reinterpret_cast<__gm__ int32_t*>(workspace.gmm1TileStatusPtr) +
                                      (static_cast<uint64_t>(state.expertIdx) * syncLayout.gmm1TileStatusCountPerExpert +
                                       static_cast<uint64_t>(expertMGroupOffset) * gmm1TilesPerMGroup) *

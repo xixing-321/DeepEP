@@ -30,17 +30,18 @@ __aicore__ inline void FusedTrain::CombinePipelined(bool backward)
             SetFlag<HardEvent::MTE2_V>(id);
         }
         WaitFlag<HardEvent::MTE3_V>(outId);
-        Duplicate(sum, 0.0f, n);
-        PipeBarrier<PIPE_V>();
         for (uint32_t k = 0; k < a.topk; ++k) {
             const uint32_t slot = k % 2;
             const auto id = slot ? EVENT_ID1 : EVENT_ID0;
             LocalTensor<bfloat16_t> input{TPosition::VECIN, slot * 16384, 8192};
             WaitFlag<HardEvent::MTE2_V>(id);
-            Cast(temp, input, RoundMode::CAST_NONE, n);
-            PipeBarrier<PIPE_V>();
-            Add(sum, sum, temp, n);
-            PipeBarrier<PIPE_V>();
+            const bool first = k == 0;
+            MegaMoeBF16Routing::AccumulateUnpermuteRoute(sum, temp, input, n, first);
+            // dX includes positive zero even when every route contributes negative zero.
+            if (first) {
+                Adds(sum, sum, 0.0f, n);
+                PipeBarrier<PIPE_V>();
+            }
             SetFlag<HardEvent::V_MTE2>(id);
             if (k + 2 < a.topk) {
                 GlobalTensor<bfloat16_t> source;
@@ -66,9 +67,15 @@ __aicore__ inline void FusedTrain::CombinePipelined(bool backward)
     WaitFlag<HardEvent::MTE3_V>(EVENT_ID0);
     WaitFlag<HardEvent::MTE3_V>(EVENT_ID1);
     PipeBarrier<PIPE_ALL>();
-    if (backward)
-        for (uint32_t token = VCore(); token < a.tokens; token += VCores())
-            Copy(a.dpOutput + uint64_t(token) * a.topk * WeightBytes(),
-                 reinterpret_cast<uint64_t>(Peer(a.rank, peer.dp + uint64_t(token) * a.topk * WeightBytes())),
-                 a.topk * WeightBytes());
+    if (backward) CopyTopkGradient();
+}
+
+__aicore__ inline void FusedTrain::CopyTopkGradient()
+{
+    const uint64_t bytes = uint64_t(a.tokens) * a.topk * WeightBytes();
+    const uint64_t stripe = ((bytes + VCores() * 32 - 1) / (VCores() * 32)) * 32;
+    const uint64_t offset = uint64_t(VCore()) * stripe;
+    if (offset >= bytes) return;
+    Copy(a.dpOutput + offset, reinterpret_cast<uint64_t>(Peer(a.rank, peer.dp)) + offset,
+         bytes - offset < stripe ? bytes - offset : stripe);
 }

@@ -67,6 +67,48 @@ def make_rebuilder(group, x, ids, p, local_experts):
     return rebuild, recv_counts.sum(0).tolist()
 
 
+def check_cross_stream(buffer, group, x, ids, p, w1, w2, dy):
+    producer = torch.npu.Stream()
+
+    def on_producer(callback):
+        caller = torch.npu.current_stream()
+        producer.wait_stream(caller)
+        with torch.npu.stream(producer):
+            result = callback()
+        caller.wait_stream(producer)
+        return result
+
+    def unpack(tensor):
+        def copy():
+            tensor.record_stream(producer)
+            return tensor.clone()
+
+        return on_producer(copy)
+
+    batches = [(x, p), ((-x.detach()).requires_grad_(), p.detach().roll(1, 0).requires_grad_())]
+    gradient = dy.T.contiguous().T
+    assert not gradient.is_contiguous()
+    expected = []
+    buffer.save_dispatched_x = True
+    for tokens, weights in batches:
+        y, counts = mega_moe(tokens, ids, weights, w1, w2, buffer)
+        grads = torch.autograd.grad(y, (tokens, weights, w1, w2), gradient)
+        expected.append([digest(t) for t in (y, counts, *grads)])
+
+    graphs = []
+    buffer.save_dispatched_x = False
+    for tokens, weights in batches:
+        rebuild, _ = make_rebuilder(group, tokens, ids, weights, w1.shape[0])
+        buffer.dispatch_rebuilder = lambda callback=rebuild: on_producer(callback)
+        with torch.autograd.graph.saved_tensors_hooks(lambda t: t.detach(), unpack):
+            graphs.append(mega_moe(tokens, ids, weights, w1, w2, buffer))
+    buffer.dispatch_rebuilder = None
+    for index in reversed(range(len(batches))):
+        y, counts = graphs[index]
+        grads = torch.autograd.grad(y, (*batches[index], w1, w2), gradient)
+        assert [digest(t) for t in (y, counts, *grads)] == expected[index], (group.rank(), index)
+
+
 def compare_dispatch(group, config, tensors, ids, rebuild, expected_counts, output):
     x, p, w1, w2, dy = tensors
     m, h = x.shape
@@ -145,19 +187,13 @@ def compare_dispatch(group, config, tensors, ids, rebuild, expected_counts, outp
         buffer.prepare(m)
         with torch.npu.stream(buffer._runtime.stream):
             buffer._prepare_w8a8_backward(dy)
-        if config.check_overflow:
-            hot = torch.arange(k, device=x.device, dtype=torch.int32).expand_as(ids).contiguous()
-            try:
-                mega_moe(x, hot, p, w1, w2, buffer)
-            except ValueError as error:
-                assert "EP rank 0" in str(error) and "exceeding max_recv_tokens" in str(error), str(error)
-                print(f"rank={group.rank()} {error}", flush=True)
-            else:
-                raise AssertionError("over-capacity forward did not raise")
         stored, output["memory_saved"] = measure(True)
         recreated, output["memory_rebuilt"] = measure(False)
         output["outputs_exact"] = {name: stored[name] == recreated[name] for name in stored}
         assert all(output["outputs_exact"].values()), output["outputs_exact"]
+        if config.cross_stream:
+            check_cross_stream(buffer, group, x, ids, p, w1, w2, dy)
+            output["cross_stream_microbatches_exact"] = 2
     finally:
         buffer.destroy()
 
@@ -168,8 +204,8 @@ def main():
         parser.add_argument(f"--{name}", type=int, default=default)
     parser.add_argument("--mode", choices=("mxfp8", "none"), required=True)
     parser.add_argument("--p-dtype", choices=("float32", "bfloat16"), default="float32")
-    parser.add_argument("--check-overflow", action="store_true")
     parser.add_argument("--random-routing", action="store_true")
+    parser.add_argument("--cross-stream", action="store_true")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     torch.npu.set_device(int(os.environ["LOCAL_RANK"]))
@@ -195,7 +231,7 @@ def main():
         w2 = normal((e, h, f), f**-0.5).requires_grad_()
         dy = normal((m, h), 0.25)
         rebuild, counts = make_rebuilder(group, x, ids, p, e)
-        output = {"rank": rank, "counts": counts, "overflow_checked": args.check_overflow}
+        output = {"rank": rank, "counts": counts}
         compare_dispatch(group, args, (x, p, w1, w2, dy), ids, rebuild, counts, output)
         args.output.mkdir(parents=True, exist_ok=True)
         (args.output / f"rank-{rank}.json").write_text(json.dumps(output, indent=2) + "\n")

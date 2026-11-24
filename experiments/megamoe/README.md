@@ -108,7 +108,7 @@ B>256 保留 Prefill 输入协议，所有路径保留输出跨卡同步。
 
 ### W8A8 训练接口
 
-沿用 `fp8_fp4_mega_moe`。`SymmBuffer` 使用 `mma_type="fp8xfp8"`、`need_grad=True`，X、W1、W2 传原始 BF16 Tensor。框架可在创建 buffer 时通过 `max_recv_tokens` 指定每卡的接收容量。指定时，每次前向在 Host 汇总实际路由行数，任何 rank 超出容量都会在 kernel 启动前报错。省略时使用自动容量。
+沿用 `fp8_fp4_mega_moe`。`SymmBuffer` 使用 `mma_type="fp8xfp8"`、`need_grad=True`，X、W1、W2 传原始 BF16 Tensor。框架可在创建 buffer 时通过 `max_recv_tokens` 指定每卡的接收容量，该值须覆盖路由最集中的 rank 实际收到的行数。省略时使用自动容量。
 
 - `save_dispatched_x=True` 保留专家端的 FP8 X、E8M0 scale 和 TopK weight。设为 `False` 时，框架为本次前向设置无参的 `sym_buffer.dispatch_rebuilder`。反向调用它获取三个连续 Tensor，形状依次为 `[R,H]`、`[R,H/32]`、`[R]`，其中 `R` 是专家端实际接收行数，TopK weight 的 dtype 与前向输入一致。按本地专家、源 EP rank、源内 token 和 TopK slot 排序，三个 Tensor 的第 `i` 行对应同一条路由。算子保留前向的路由表及专家行偏移。异步重建由回调安排完成等待，再交给反向读取。
 - `gmm1_save_type="mxfp8"` 保存沿特征维量化的 Gate/Up。反向从 BF16 W1、W2 量化出转置方向的权重，分别用于 dX 和 dHp。`"none"` 再保留 W1 的前向方向量化结果，按整专家重算 Gate/Up。两个模式的 dW1/dW2 都由对应激活与梯度计算。
@@ -359,9 +359,19 @@ python -m pytest experiments/megamoe/tests -q
 | --- | --- | --- |
 | W4A8 推理 | 同输入的 CPU Golden，对比全量输出和专家计数，包含配置的共享专家 | profiler 统计前向 kernel 耗时；Timer 单独采集 |
 | W8A8 推理 | W4A8 批量脚本只覆盖 FP4 权重，W8A8 需使用 FP8 权重单独验证 | 推理 Timer 目前支持 W4A8 |
-| W8A8 训练 | [Dispatch 重建测试](tests/w8a8/dispatch_rebuild.py)逐 bit 对比 X、scale、TopK weight、输出和梯度，覆盖 `mxfp8` 与 `none` | 记录显存和前反向耗时，可单独采集训练 Timer |
+| W8A8 训练 | [训练验证](tests/w8a8/run_training.py)对照 NPU 小算子的前向输出与梯度，覆盖 `mxfp8`、`none`；[Dispatch 重建](tests/w8a8/dispatch_rebuild.py)核对 X、scale 和 TopK weight 的行序及显存 | 分别报告前反向 Event 与单融合 kernel 的耗时，每轮取最慢 rank 后统计 P50；`--timer` 在性能采样后导出前反向时间线 |
 | BF16 推理 | CPU FP64 真值和设备小算子，对比后乘权的 Y 和专家计数 | 连续下发前向，统计稳态耗时 |
 | BF16 训练 | CPU FP64 真值和设备小算子，检查 Y、专家计数、dX、dP、dW1、dW2 | 分别测前向、反向和完整前反向，可单独采集训练 Timer |
+
+W8A8 训练示例（8 卡）：
+
+```bash
+torchrun --standalone --nproc-per-node=8 experiments/megamoe/tests/w8a8/run_training.py \
+    --seq 4096 --hidden 7168 --ffn 3072 --topk 6 --expert-per-rank 4 \
+    --routing-mode balanced --max-recv-tokens 24576 --save-gmm1-output mxfp8 --output results/w8a8-mxfp8
+```
+
+`--save-gmm1-output none` 验证 GMM1 重算；`--no-save-dispatched-x` 使用框架重建的 Dispatch 数据。`report.json` 保留各 rank 的逐 bit 结果、原始耗时和汇总。
 
 Ascend950 设备验证按配置分别记录：
 

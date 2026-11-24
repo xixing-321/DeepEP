@@ -20,7 +20,7 @@
 #include "kernel_tiling/kernel_tiling.h"
 #include "catlass/arch/arch.hpp"
 #include "tla/layout.hpp"
-#include "common/mega_moe_kernel_utils.hpp"
+#include "common/mega_moe_utils.hpp"
 #include "common/mega_moe_w8a8_saved_layout.hpp"
 
 namespace MegaMoeTrainW8A8Vec {
@@ -60,6 +60,7 @@ public:
         GM_ADDR upHighGmAddr{nullptr};
         GM_ADDR gradZGmAddr{nullptr};
         GM_ADDR hpGmAddr{nullptr};
+        GM_ADDR dpLow{nullptr};
         GM_ADDR packedTopkWeightsGmAddr{nullptr};
         uint32_t baseM{0};
         uint32_t baseN{0};
@@ -179,6 +180,10 @@ public:
         LoadGateUpTiles(rowBase_ + mLoc, nLoc, singleM, singleN, l0cOutUbSecond_, extraA_);
 
         if constexpr (HpConsumer::enabled && !StoreGradZ) {
+            if (params_.dpLow != nullptr) {
+                SaveDpProducts(rowBase_ + mLoc, nLoc, singleM, singleN, rowStrideInPlane);
+            }
+
             if (params_.savedGateUpMode == MegaMoeTrainW8A8::kSaveMxFp8 &&
                 params_.swigluLimit == kMegaMoeSwigluLimitDisabled && rowStrideInPlane == singleN &&
                 singleN % 64U == 0) {
@@ -485,9 +490,33 @@ private:
         SyncFunc<AscendC::HardEvent::MTE2_V>();
     }
 
+    __aicore__ inline void SaveDpProducts(uint32_t rowStart, uint32_t nLoc, uint32_t singleM, uint32_t singleN,
+                                          uint32_t rowStrideInPlane)
+    {
+        AscendC::GlobalTensor<float> low, high;
+        low.SetGlobalBuffer(reinterpret_cast<__gm__ float*>(params_.dpLow));
+        high.SetGlobalBuffer(reinterpret_cast<__gm__ float*>(params_.hpGmAddr));
+        low.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
+        high.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
+        for (uint32_t r = 0; r < singleM; r += kDecodeRows) {
+            const uint16_t take = singleM - r < kDecodeRows ? singleM - r : kDecodeRows;
+            // dHp is resident in UB. Reuse its GM tile for the low half of the FP32 products.
+            ComputeForwardAux<true>(take, singleN, rowStrideInPlane, mxDecoded_, r, singleN);
+            SyncFunc<AscendC::HardEvent::V_MTE3>();
+            const uint32_t half = singleN / 2;
+            AscendC::DataCopyExtParams p{take, half * 4, half / 8, (outputF_ / 2 - half) * 4, 0};
+            const uint64_t off = ((uint64_t(rowStart + r) * outputF_) + nLoc) / 2;
+            AscendC::DataCopyPad(low[off], mxDecoded_, p);
+            AscendC::DataCopyPad(high[off], mxDecoded_[half], p);
+            SyncFunc<AscendC::HardEvent::MTE3_V>();
+        }
+        SyncFunc<AscendC::HardEvent::MTE3_MTE2>();
+    }
+
     template <bool ForDp = false>
     __aicore__ inline void ComputeForwardAux(uint16_t mSize, uint16_t nSize, uint32_t rowStride,
-                                             AscendC::LocalTensor<float> products = {})
+                                             AscendC::LocalTensor<float> products = {}, uint32_t inputRow = 0,
+                                             uint32_t productStride = 0)
     {
         constexpr uint16_t lanes = 256U / sizeof(float);
         const float limit = params_.swigluLimit;
@@ -498,7 +527,7 @@ private:
         auto* weights16 = (__ubuf__ bfloat16_t*)packedWeightBf16Ub_.GetPhyAddr();
         auto* weights32 = (__ubuf__ float*)packedWeightFp32Ub_.GetPhyAddr();
         auto* productPtr = (__ubuf__ float*)products.GetPhyAddr();
-        const uint32_t ffn = outputF_;
+        const uint32_t ffn = productStride ? productStride : outputF_;
 
         __VEC_SCOPE__
         {
@@ -521,7 +550,7 @@ private:
                 uint32_t remaining = nSize;
                 for (uint16_t col = 0; col < nSize; col += lanes) {
                     auto mask = AscendC::Reg::UpdateMask<float>(remaining);
-                    const uint32_t offset = static_cast<uint32_t>(row) * rowStride + col;
+                    const uint32_t offset = (inputRow + row) * rowStride + col;
                     AscendC::Reg::RegTensor<bfloat16_t> gateBf, upBf, dHpBf, hpBf;
                     AscendC::Reg::RegTensor<float> gateFp, upFp, dHpFp, neg, exp, denom, silu;
                     AscendC::Reg::RegTensor<float> hFp, hpFp, productFp;

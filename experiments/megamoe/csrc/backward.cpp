@@ -193,9 +193,8 @@ W8A8BackwardPlan::W8A8BackwardPlan(uintptr_t address, int64_t bytes, int64_t max
     ASCEND_DEEPEP_CHECK_ACL(aclrtMemset(window, required, 0, control));
     std::vector<uint64_t> addresses(world_);
     FillPeerAddresses(addresses.data(), window, world_);
-    peers_ = torch::empty({world}, like.options().dtype(torch::kInt64));
-    ASCEND_DEEPEP_CHECK_ACL(
-        aclrtMemcpy(peers_.data_ptr(), world * 8, addresses.data(), world * 8, ACL_MEMCPY_HOST_TO_DEVICE));
+    // Order initialization after prior uses of a recycled allocation on the plan's stream.
+    peers_ = torch::from_blob(addresses.data(), {world}, torch::kInt64).to(like.device(), torch::kInt64);
 }
 
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor> W8A8BackwardPlan::backward(
@@ -246,10 +245,12 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
     }
 
     const auto stream = c10_npu::getCurrentNPUStream();
-    auto address = [&](const torch::Tensor& tensor) {
+    auto address = [](const torch::Tensor& tensor) { return reinterpret_cast<uint64_t>(tensor.data_ptr()); };
+    auto inputAddress = [&](const torch::Tensor& tensor) {
         c10_npu::NPUCachingAllocator::recordStream(tensor.storage().data_ptr(), stream);
-        return reinterpret_cast<uint64_t>(tensor.data_ptr());
+        return address(tensor);
     };
+    // Scratch and outputs are allocated and last used here on the launch stream.
     std::vector<torch::Tensor> temporaries;
     auto scratch = [&](torch::IntArrayRef shape, torch::ScalarType dtype) {
         const auto& tensor = temporaries.emplace_back(torch::empty(shape, dy.options().dtype(dtype)));
@@ -274,31 +275,31 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
     a.generation = ++generation_;
     a.limit = static_cast<float>(limit);
     a.topkWeightType = p_type == torch::kFloat32;
-    a.peers = address(peers_);
-    a.x = address(dy);
-    a.packedP = address(packed_p);
-    a.xq = address(dispatch);
-    a.sx = address(scales);
-    a.maps = address(maps);
-    a.offsets = address(offsets);
-    a.w1b = address(weight_pairs[0]);
-    a.s1b = address(weight_pairs[1]);
-    a.w2b = address(weight_pairs[2]);
-    a.s2b = address(weight_pairs[3]);
+    a.peers = inputAddress(peers_);
+    a.x = inputAddress(dy);
+    a.packedP = inputAddress(packed_p);
+    a.xq = inputAddress(dispatch);
+    a.sx = inputAddress(scales);
+    a.maps = inputAddress(maps);
+    a.offsets = inputAddress(offsets);
+    a.w1b = inputAddress(weight_pairs[0]);
+    a.s1b = inputAddress(weight_pairs[1]);
+    a.w2b = inputAddress(weight_pairs[2]);
+    a.s2b = inputAddress(weight_pairs[3]);
     if (recompute) {
-        a.w1 = address(weight_pairs[4]);
-        a.s1 = address(weight_pairs[5]);
+        a.w1 = inputAddress(weight_pairs[4]);
+        a.s1 = inputAddress(weight_pairs[5]);
         a.gate = scratch({r, f}, torch::kBFloat16);
         a.up = scratch({r, f}, torch::kBFloat16);
     } else {
-        a.gateq = address(compressed[0]);
-        a.sqg = address(compressed[1]);
-        a.upq = address(compressed[2]);
-        a.squ = address(compressed[3]);
+        a.gateq = inputAddress(compressed[0]);
+        a.sqg = inputAddress(compressed[1]);
+        a.upq = inputAddress(compressed[2]);
+        a.squ = inputAddress(compressed[3]);
         if (limit > 0) {
-            a.gateHigh = address(compressed[4]);
-            a.upLow = address(compressed[5]);
-            a.upHigh = address(compressed[6]);
+            a.gateHigh = inputAddress(compressed[4]);
+            a.upLow = inputAddress(compressed[5]);
+            a.upHigh = inputAddress(compressed[6]);
         }
     }
     a.output = address(dx);
@@ -307,8 +308,10 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
     a.dw2 = address(dw2);
     // Receive BF16 dY for token-direction quantization independently of dHp.
     a.deff = scratch({r, h}, torch::kBFloat16);
-    // Retain dHp until dP reduces complete rows. Hp is quantized from UB.
-    a.db = a.hp = scratch({r, f}, torch::kBFloat16);
+    // MXFP8 reuses each consumed dHp tile for half of its FP32 dP products.
+    // Recompute mode retains dHp and forms the products during row reduction.
+    a.db = scratch({r, f}, torch::kBFloat16);
+    a.hp = recompute ? a.db : scratch({r, f}, torch::kBFloat16);
     // Expert-local feature-format dY is overwritten by dX after dW2 drains.
     a.packedY = scratch({r, h}, torch::kBFloat16);
     a.dzq = scratch({r, 2 * f}, torch::kUInt8);
@@ -322,7 +325,8 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
     a.szt = scratch({padded * 2 * f / 32}, torch::kUInt8);
     a.bt = scratch({padded * f}, torch::kUInt8);
     a.sbt = scratch({padded * f / 32}, torch::kUInt8);
-    const int64_t flags = e * CeilDiv(r, int64_t{256}) + 11 * e * 2 * platform_.aic;
+    const int64_t dz_stripes = !recompute && f % 256 == 0 ? f / 256 : 0;
+    const int64_t flags = e * (CeilDiv(r, int64_t{256}) + 11 * 2 * platform_.aic + dz_stripes);
     a.pipeline = scratch({flags * 16}, torch::kInt32);
     auto timer = capture_timer
                      ? AllocateW8A8Timer(dy, platform_.aic, r, f, e, k, p_type == torch::kFloat32, true, recompute)

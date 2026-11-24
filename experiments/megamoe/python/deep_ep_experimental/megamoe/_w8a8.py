@@ -9,7 +9,6 @@ import torch
 from torch.autograd.function import once_differentiable
 
 from deep_ep._native import npu_api
-from deep_ep._store import StoreGroup
 
 
 def _quantize(value):
@@ -22,57 +21,19 @@ def _quantize(value):
     return data.reshape(value.shape), scale.view(torch.float8_e8m0fnu).reshape(*value.shape[:-1], width // 64, 2)
 
 
-def _pack_mask(mask):
-    bits = torch.tensor([1, 2, 4, 8, 16, 32, 64, 128], dtype=torch.int32, device=mask.device)
-    return (mask.unflatten(-1, (-1, 8)).to(torch.int32) * bits).sum(-1, dtype=torch.int32).to(torch.uint8)
-
-
-def _save_gate_up(raw, rows, ffn, limit):
-    raw = raw[:rows]
-    if rows == 0:
-        planes = [
-            raw.new_empty((0, ffn), dtype=torch.float8_e4m3fn),
-            raw.new_empty((0, ffn // 32), dtype=torch.float8_e8m0fnu),
-        ]
-        return (*planes, *planes, *(raw.new_empty((0, ffn // 8), dtype=torch.uint8) for _ in range(3 if limit else 0)))
-    gate, up = raw.split(ffn, dim=-1)
-    gate_data, gate_scale = _quantize(gate)
-    up_data, up_scale = _quantize(up)
-    saved = (gate_data, gate_scale.flatten(1), up_data, up_scale.flatten(1))
-    if limit:
-        g, u = gate.float(), up.float()
-        saved += (_pack_mask(g > limit), _pack_mask(u < -limit), _pack_mask(u > limit))
-    return saved
-
-
-def _check_receive_capacity(ids, owner):
-    capacity = owner.max_recv_tokens
-    if capacity is None:
-        return
-    # Count the actual routes before any rank enters the fused kernel.
-    group = owner.group
-    experts = owner.num_experts
-    routes = ids.view(-1).to(device="cpu", dtype=torch.int64)
-    invalid = (routes < 0) | (routes >= experts)
-    local_experts = experts // group.size()
-    destinations = (routes // local_experts).masked_fill_(invalid, group.size())
-    counts = torch.bincount(destinations, minlength=group.size() + 1).to(torch.int32)
-    if isinstance(group, StoreGroup):
-        peers = group.all_gather(counts.tolist(), "W8A8 receive capacity")
-        totals = [sum(values) for values in zip(*peers)]
-    else:
-        import torch.distributed as dist
-
-        if str(dist.get_backend(group)) == "hccl":
-            counts = counts.to(ids.device)
-        dist.all_reduce(counts, group=group)
-        totals = counts.cpu().tolist()
-    if totals[-1]:
-        raise ValueError(f"W8A8 expert IDs must be in [0, {experts})")
-    peak = max(totals[:-1])
-    if peak > capacity:
-        rank = totals.index(peak)
-        raise ValueError(f"W8A8 EP rank {rank} requires {peak} receive rows, exceeding max_recv_tokens={capacity}")
+def _saved_gate_up_planes(raw, rows, ffn, limit):
+    # Planes are capacity-strided; autograd keeps their active row prefix.
+    capacity = raw.shape[0]
+    widths = (ffn, ffn, ffn // 32, ffn // 32) + ((ffn // 8,) * 3 if limit else ())
+    pieces = raw.view(-1).split([capacity * width for width in widths])
+    gate, up, gs, us, *masks = [plane.view(capacity, width)[:rows] for plane, width in zip(pieces, widths)]
+    return (
+        gate.view(torch.float8_e4m3fn),
+        gs.view(torch.float8_e8m0fnu),
+        up.view(torch.float8_e4m3fn),
+        us.view(torch.float8_e8m0fnu),
+        *masks,
+    )
 
 
 def _validate_rebuilt_dispatch(result, owner, rows, p_dtype):
@@ -132,7 +93,7 @@ class W8A8Function(torch.autograd.Function):
         packed_p = None
         if owner.save_dispatched_x:
             packed_p = state.routes[:rows, 3].contiguous().view(torch.float32).to(p.dtype)
-        saved = () if recompute else _save_gate_up(state.gate_up, rows, owner.intermediate_hidden, limit)
+        saved = () if recompute else _saved_gate_up_planes(state.gate_up, rows, owner.intermediate_hidden, limit)
         ctx.owner, ctx.limit, ctx.recompute = owner, limit, recompute
         ctx.rows, ctx.p_dtype = rows, p.dtype
         ctx.save_for_backward(
@@ -158,18 +119,23 @@ class W8A8Function(torch.autograd.Function):
         runtime = owner._runtime
         with owner._lock:
             runtime.ensure_alive()
-            runtime.validate_topk_weight_type(ctx.p_dtype, 1)
             caller = npu_api().current_stream(runtime.device)
             if ctx.rebuild_dispatch is not None:
                 dispatch, scales, p = _validate_rebuilt_dispatch(ctx.rebuild_dispatch(), owner, ctx.rows, ctx.p_dtype)
             runtime.stream.wait_stream(caller)
             with npu_api().stream(runtime.stream):
                 plan = owner._prepare_w8a8_backward(dy)
+                # Hooks can restore the BF16 source weights on a different stream.
+                w1.record_stream(runtime.stream)
+                w2.record_stream(runtime.stream)
+                contiguous_dy = dy.contiguous()
+                if contiguous_dy is not dy:
+                    dy.record_stream(runtime.stream)
                 weights = (*_quantize(w1.transpose(-1, -2)), *_quantize(w2.transpose(-1, -2)))
                 if capture is not None:
                     capture.begin_backward()
                 dx, dp, dw1, dw2, timer = plan.backward(
-                    dy.contiguous(),
+                    contiguous_dy,
                     p,
                     dispatch,
                     scales,
@@ -183,10 +149,9 @@ class W8A8Function(torch.autograd.Function):
                 if capture is not None:
                     capture.backward = timer
             caller.wait_stream(runtime.stream)
-            for t in (dy, dispatch, scales, p, maps, offsets, *saved):
-                t.record_stream(runtime.stream)
-            for t in (dx, dp, dw1, dw2):
-                t.record_stream(caller)
+            if caller != runtime.stream:
+                for t in (dx, dp, dw1, dw2):
+                    t.record_stream(caller)
         return None, None, dx, None, dp, dw1, dw2, None
 
 
@@ -232,14 +197,15 @@ def run(y, x, ids, p, w1, w2, buffer, stats, activation_clamp):
     gradients = torch.is_grad_enabled() and any(t.requires_grad for t in (x, p, w1, w2))
     with buffer._lock:
         runtime.ensure_alive()
-        runtime.validate_topk_weight_type(p.dtype, 0)
-        _check_receive_capacity(ids, buffer)
         caller = npu_api().current_stream(runtime.device)
         runtime.stream.wait_stream(caller)
         with npu_api().stream(runtime.stream):
             buffer._prepare(bs)
-            for t in (*inputs, y):
-                t.record_stream(runtime.stream)
+            # Native forward records the tensors it reads; these originals are converted in Python.
+            w1.record_stream(runtime.stream)
+            w2.record_stream(runtime.stream)
+            if p.dtype != torch.float32:
+                p.record_stream(runtime.stream)
             if gradients:
                 y, counts = W8A8Function.apply(buffer, limit, x, ids, p, w1, w2, y)
             else:
@@ -251,5 +217,7 @@ def run(y, x, ids, p, w1, w2, buffer, stats, activation_clamp):
                 stats.add_(counts)
                 stats.record_stream(runtime.stream)
         caller.wait_stream(runtime.stream)
-        counts.record_stream(caller)
+        if caller != runtime.stream:
+            counts.record_stream(caller)
+            y.record_stream(caller)
     return y, counts

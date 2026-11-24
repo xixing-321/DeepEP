@@ -186,11 +186,19 @@ __aicore__ inline void FusedTrain::ComputeDBTiles()
             MegaMoeTrainTimerPassiveScope wait(timer_, MegaMoeTrainTimer::AIC_BW_DHP_WAIT, e, 0, m);
             WaitWorkers(DISPATCH_EXPERT_DONE, e, GetBlockNum());
         }
-        MegaMoeTrainTimerPassiveScope timer(timer_, MegaMoeTrainTimer::AIC_BW_DHP, e, 0, m);
         Scheduler scheduler(Catlass::GemmCoord{m, a.ffn, a.hidden}, Catlass::MatrixCoord{256U, 256U});
         uint32_t readyBlock = UINT32_MAX;
-        for (uint32_t job = (GetBlockIdx() + workers - firstOwner) % workers; job < scheduler.GetCoreLoops();
-             job += workers) {
+        const uint32_t firstJob = (GetBlockIdx() + workers - firstOwner) % workers;
+        const uint32_t jobs = scheduler.GetCoreLoops();
+        if (a.saveMode != kSaveNone && firstJob < jobs) {
+            readyBlock = scheduler.GetBlockCoord(firstJob).m();
+            const uint32_t remaining = m - readyBlock * 256;
+            const uint32_t rows = remaining < 256 ? remaining : 256;
+            MegaMoeTrainTimerPassiveScope wait(timer_, MegaMoeTrainTimer::AIC_BW_DHP_WAIT, e, readyBlock * 256, rows);
+            WaitFlagValue(DISPATCH_ROW_READY, e, readyBlock, rows);
+        }
+        MegaMoeTrainTimerPassiveScope timer(timer_, MegaMoeTrainTimer::AIC_BW_DHP, e, 0, firstJob < jobs ? m : 0);
+        for (uint32_t job = firstJob; job < jobs; job += workers) {
             if (a.saveMode != kSaveNone) {
                 const uint32_t block = scheduler.GetBlockCoord(job).m();
                 if (block != readyBlock) {
@@ -240,6 +248,8 @@ __aicore__ inline void FusedTrain::ConsumeGradientTiles(uint32_t& combineExpert,
             TokenQuantUb(dGate, shape.n(), a.zt, a.szt, 2 * a.ffn, e, row, col, rows, shape.n());
             TokenQuantUb(dUp, shape.n(), a.zt, a.szt, 2 * a.ffn, e, row, col + a.ffn, rows, shape.n());
             SyncFunc<HardEvent::MTE3_S>();
+            // Both transposed planes and their scales are visible for these rows.
+            if (DzStripes() && rows) AscendC::AtomicAdd(DzStripeReady(e, c.n()), static_cast<int32_t>(rows));
         }
         PublishFlag(DZ_DONE, e, VCore(), 1);
         // X is immutable saved FP8: it has no dB/dZ/dY dependency. Pair this
@@ -275,11 +285,17 @@ __aicore__ inline bool FusedTrain::CanRunReadyDw1Tile()
             Scheduler scheduler(Catlass::GemmCoord{2 * a.ffn, a.hidden, (rows + 63) / 64 * 64},
                                 Catlass::MatrixCoord{256U, 256U});
             if (dw1Job_ < scheduler.GetCoreLoops()) {
-                while (dw1GradReady_ < VCores()) {
-                    if (ReadGmByPassDCache(
-                            reinterpret_cast<__gm__ int32_t*>(FlagAddress(DZ_DONE, dw1Expert_, dw1GradReady_))) < 1)
+                if (DzStripes()) {
+                    const uint32_t stripe = scheduler.GetBlockCoord(dw1Job_).m() % DzStripes();
+                    if (ReadGmByPassDCache(DzStripeReady(dw1Expert_, stripe)) < static_cast<int32_t>(rows))
                         return false;
-                    ++dw1GradReady_;
+                } else {
+                    while (dw1GradReady_ < VCores()) {
+                        if (ReadGmByPassDCache(
+                                reinterpret_cast<__gm__ int32_t*>(FlagAddress(DZ_DONE, dw1Expert_, dw1GradReady_))) < 1)
+                            return false;
+                        ++dw1GradReady_;
+                    }
                 }
                 while (dw1XReady_ < GetBlockNum()) {
                     if (ReadGmByPassDCache(
@@ -398,12 +414,16 @@ __aicore__ inline void FusedTrain::ComputeWgrad()
 __aicore__ inline void FusedTrain::BackwardPipeline()
 {
     if constexpr (g_coreType == AIV) {
-        Zero(a.pipeline, uint64_t(RowFlagCount() + 11 * a.experts * VCores()) * 64);
+        Zero(a.pipeline, (uint64_t(RowFlagCount()) + uint64_t(a.experts) * (11 * VCores() + DzStripes())) * 64);
+        // Recompute reads canonical X and W1 as soon as the pipeline flags are clear.
+        // The dHp GEMM still waits for the expert's dispatched dY.
+        if (a.saveMode == kSaveNone) VectorPublish();
         {
             MegaMoeTrainTimerFixedScope timer(timer_, MegaMoeTrainTimer::AIV_BW_GATHER);
             PublishDy();
         }
-        VectorPublish();
+        RankFence(0);
+        if (a.saveMode != kSaveNone) VectorPublish();
         if (VCore() % 2) DispatchTiles();
         uint32_t combineExpert = 0, combineSequence = 0;
         ConsumeGradientTiles(combineExpert, combineSequence);

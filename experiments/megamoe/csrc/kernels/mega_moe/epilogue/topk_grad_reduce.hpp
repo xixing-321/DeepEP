@@ -37,7 +37,7 @@ __aicore__ inline void LoadReductionStripe(TopkGradTile dst, Tensor source, uint
 // stripes, then the RA pass sums those group results for the same route.
 template <class Tensor>
 __aicore__ inline TopkGradTile ReduceTopkGradGroupedRow(Tensor products, uint32_t f,
-                                                        MegaMoeBF16Training::TopkGradReductionPlan plan,
+                                                        MegaMoeBF16Impl::TopkGradReductionPlan plan,
                                                         uint32_t scratchOffset)
 {
     const uint32_t width = plan.width, stripes = (f + width - 1U) / width;

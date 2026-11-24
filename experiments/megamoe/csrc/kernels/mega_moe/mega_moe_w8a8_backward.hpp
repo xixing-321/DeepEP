@@ -12,6 +12,7 @@
 #include "epilogue/block_epilogue_mx_quant_backward.hpp"
 #include "epilogue/block_epilogue_swiglu_w8a8_backward.hpp"
 #include "epilogue/topk_grad_reduce.hpp"
+#include "stage/mega_moe_unpermute_bf16.hpp"
 #include "timer/ascend_timer_device.hpp"
 
 namespace MegaMoeTrainW8A8 {
@@ -150,6 +151,7 @@ private:
     __aicore__ inline uint32_t SourceRow(uint32_t e, uint32_t source) const;
     __aicore__ inline void Combine(bool backward);
     __aicore__ inline void CombinePipelined(bool backward);
+    __aicore__ inline void CopyTopkGradient();
     __aicore__ inline void GradientTile(uint32_t e, uint32_t row, uint32_t col, uint32_t rows, uint32_t cols);
     __aicore__ inline void TokenQuantRange(uint64_t source, uint64_t q, uint64_t scale, uint32_t width, uint32_t worker,
                                            uint32_t workers, uint32_t expert = 0xffffffffU);
@@ -170,6 +172,15 @@ private:
     __aicore__ inline uint32_t RowFlagCount() const
     {
         return a.experts * ((a.capacity + 255) / 256);
+    }
+    __aicore__ inline uint32_t DzStripes() const
+    {
+        return a.saveMode != kSaveNone && a.ffn % 256 == 0 ? a.ffn / 256 : 0;
+    }
+    __aicore__ inline __gm__ int32_t* DzStripeReady(uint32_t expert, uint32_t stripe) const
+    {
+        const uint64_t base = uint64_t(RowFlagCount()) + 11ULL * a.experts * VCores();
+        return reinterpret_cast<__gm__ int32_t*>(a.pipeline + (base + uint64_t(expert) * DzStripes() + stripe) * 64);
     }
     __aicore__ inline uint64_t FlagAddress(uint32_t section, uint32_t e, uint32_t worker) const;
     __aicore__ inline void PublishFlag(uint32_t section, uint32_t e, uint32_t worker, uint32_t value);
@@ -230,6 +241,7 @@ __aicore__ inline void FusedTrain::Zero(uint64_t dst, uint64_t bytes)
 
 __aicore__ inline void FusedTrain::RankFence(uint32_t phase)
 {
+    MegaMoeTrainTimerWaitScope wait(timer_, MegaMoeTrainTimer::AIV_SYNC_WAIT);
     PipeBarrier<PIPE_ALL>();
     SyncAll<true>();
     {
@@ -277,7 +289,6 @@ __aicore__ inline void FusedTrain::PublishDy()
         const uint32_t count = bytes - off < 16384 ? bytes - off : 16384;
         Copy(reinterpret_cast<uint64_t>(Peer(a.rank, peer.xq)) + off, a.x + off, count);
     }
-    RankFence(0);
 }
 
 // FP32 source p uses bounded raw-bit windows. Keep the 128 KiB source

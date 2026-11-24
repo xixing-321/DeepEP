@@ -6,6 +6,7 @@
 
 #include "../common/mega_moe_utils.hpp"
 #include "mega_moe_route_compact.hpp"
+#include "../timer/ascend_timer_device.hpp"
 
 namespace MegaMoeImpl {
 
@@ -188,7 +189,8 @@ __aicore__ inline void PublishExpertCounts(const MoeStageCommonConfig& common, G
 __aicore__ inline void GatherAndSendExpertCompactRoutesDirect(const AivJobContext& job,
                                                               const MoeStageCommonConfig& common, const Params& params,
                                                               GM_ADDR* winRankAddr, const SendMaskConfig& config,
-                                                              SendMaskScratch& scratch)
+                                                              SendMaskScratch& scratch,
+                                                              MegaMoeTrainTimerDevice* timer = nullptr)
 {
     if constexpr (g_coreType == AIC) {
         return;
@@ -207,6 +209,7 @@ __aicore__ inline void GatherAndSendExpertCompactRoutesDirect(const AivJobContex
     if (ownedExpertNum <= 0) {
         return;
     }
+    MegaMoeTrainTimerFixedScope routeTimer(timer, MegaMoeTrainTimer::AIV_INIT_ROUTING);
 
     GlobalTensor<int32_t> topkIdsGm;
     topkIdsGm.SetGlobalBuffer(reinterpret_cast<__gm__ int32_t*>(params.expertIdxGmAddr));
@@ -655,7 +658,8 @@ __aicore__ inline void RelayRailTopkIdsToExperts(const MoeStageCommonConfig& com
 __aicore__ inline void GatherAndSendExpertCompactRoutesRail(const AivJobContext& job,
                                                             const MoeStageCommonConfig& common, const Params& params,
                                                             GM_ADDR* winRankAddr, const SendMaskConfig& config,
-                                                            SendMaskScratch& scratch)
+                                                            SendMaskScratch& scratch,
+                                                            MegaMoeTrainTimerDevice* timer = nullptr)
 {
     if constexpr (g_coreType == AIC) {
         return;
@@ -669,6 +673,7 @@ __aicore__ inline void GatherAndSendExpertCompactRoutesRail(const AivJobContext&
     const uint32_t jobIdx = job.jobIndex;
 
     if (jobIdx < serverNum) {
+        MegaMoeTrainTimerFixedScope routeTimer(timer, MegaMoeTrainTimer::AIV_INIT_ROUTING);
         SendTopkIdsToRailServer(common, winRankAddr, config, params, scratch, jobIdx);
         return;
     }
@@ -684,6 +689,7 @@ __aicore__ inline void GatherAndSendExpertCompactRoutesRail(const AivJobContext&
                                          : static_cast<uint32_t>(MEGA_MOE_SERVER_SIZE);
     const uint32_t serverExpertBegin = serverRankBegin * common.moeExpertPerRank;
     const uint32_t serverExpertNum = serverCardCount * common.moeExpertPerRank;
+    MegaMoeTrainTimerFixedScope routeTimer(timer, MegaMoeTrainTimer::AIV_INIT_ROUTING);
     for (uint32_t relayIdx = relayCoreIdx % serverNum; relayIdx < serverNum; relayIdx += relayCoreCount) {
         uint32_t expertOffset;
         uint32_t expertCount;
@@ -701,12 +707,13 @@ __aicore__ inline void GatherAndSendExpertCompactRoutesRail(const AivJobContext&
 // Decode uses rail packets and source-major counts; prefill keeps its original wire protocol.
 __aicore__ inline void GatherAndSendExpertCompactRoutes(const AivJobContext& job, const MoeStageCommonConfig& common,
                                                         const Params& params, GM_ADDR* winRankAddr,
-                                                        const SendMaskConfig& config, SendMaskScratch& scratch)
+                                                        const SendMaskConfig& config, SendMaskScratch& scratch,
+                                                        MegaMoeTrainTimerDevice* timer = nullptr)
 {
     if (UseDecodeRailRouting(params.tilingData)) {
-        GatherAndSendExpertCompactRoutesRail(job, common, params, winRankAddr, config, scratch);
+        GatherAndSendExpertCompactRoutesRail(job, common, params, winRankAddr, config, scratch, timer);
     } else {
-        GatherAndSendExpertCompactRoutesDirect(job, common, params, winRankAddr, config, scratch);
+        GatherAndSendExpertCompactRoutesDirect(job, common, params, winRankAddr, config, scratch, timer);
     }
 }
 

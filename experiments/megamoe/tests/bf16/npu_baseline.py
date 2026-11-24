@@ -220,7 +220,7 @@ def unpermute_routes(buffer, ids, device, *, reference="megamoe", topk_weight_dt
     buffer=[M,TopK,2H+1] carries BF16 y/dx and input-dtype dp exactly as FP32.
     Both reference roles combine y and dx in TopK order in FP32, then cast once.
     """
-    if reference not in ("megamoe", "bigop"):
+    if reference not in ("megamoe", "bigop", "w8a8"):
         raise ValueError(f"Unknown NPU reference: {reference}")
     m, topk = ids.shape
     hidden = (buffer.shape[-1] - 1) // 2

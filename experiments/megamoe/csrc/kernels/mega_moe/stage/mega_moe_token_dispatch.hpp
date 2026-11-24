@@ -237,6 +237,12 @@ __aicore__ inline void CopyTokensAndMetaForDispatch(const TokenDispatchConfig& c
                 context, params, scratch, (progress.issuedRows - 1U) % bufferCount, progress.pendingRow,
                 progress.pendingSavedRow);
         }
+        if constexpr (TopkWeightsPrefetch) {
+            if (params.workspaceInfo.savedGateUpPtr != nullptr) {
+                scratch.metaInfoTensor[issueBufferIdx * INT32_PER_256B].SetValue(SAVED_RUN_LENGTH_INDEX,
+                                                                                 copyNum - issueIdx);
+            }
+        }
         progress.pendingRow = rowDstOffset + issueIdx;
         if constexpr (TopkWeightsPrefetch) {
             progress.pendingSavedRow = savedRow + issueIdx;
@@ -545,6 +551,14 @@ __aicore__ inline void DispatchTokenRange(const TokenDispatchConfig& context, co
             ExpertDispatchCoreRange expertRange{expertGlobalRowBegin, overlapGlobalRowBegin - expertGlobalRowBegin,
                                                 overlapGlobalRowEnd - expertGlobalRowBegin};
             if constexpr (PeerBalanced) {
+                if constexpr (TopkWeightsPrefetch) {
+                    // A clipped expert can save only the canonical rows that fit in its output buffer.
+                    if (expertGlobalRowEnd > context.maxOutputSize) {
+                        DispatchOwnedExpertRows<ActivationType, QuantScaleType, PipelineTileM, TopkWeightsPrefetch>(
+                            context, common, syncLayout, params, winRankAddr, scratch, expertIdx, expertRange);
+                        continue;
+                    }
+                }
                 uint32_t sliceBegin =
                     dispatchGlobalRowBegin > expertGlobalRowBegin ? dispatchGlobalRowBegin - expertGlobalRowBegin : 0U;
                 uint32_t sliceEnd = dispatchGlobalRowEnd < expertGlobalRowEnd

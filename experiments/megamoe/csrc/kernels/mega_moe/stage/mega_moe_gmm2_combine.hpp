@@ -20,6 +20,7 @@
 #include "kernel_operator.h"
 #endif
 #include "../common/ascend_timer_v2_device.hpp"
+#include "../timer/ascend_timer_device.hpp"
 #include "kernel_tiling/kernel_tiling.h"
 #include "kernel_operator_list_tensor_intf.h"
 #include "lib/matmul_intf.h"
@@ -486,6 +487,9 @@ __aicore__ inline void WaitForGmm2InputReady(const GMMAddrInfo& gmmAddrInfo, con
         uint64_t flagOffset = static_cast<uint64_t>(waveIdx) * INT_CACHELINE;
         __gm__ int32_t* flagValueAddr = gmmAddrInfo.activationToGmm2Flag + flagOffset;
         AscendTimerWaitScope wait(gmmAddrInfo.timer, AscendTimer::AIC_GMM2_WAIT);
+#ifdef DEEPEP_MEGAMOE_TIMER
+        MegaMoeTrainTimerWaitScope trainWait(gmmAddrInfo.trainingTimer, MegaMoeTrainTimer::AIC_GMM2_WAIT);
+#endif
         WaitUntilGmFlagEquals(flagValueAddr, static_cast<int32_t>(targetLoops));
     } else {
         GmmKernel::BlockScheduler gmmBlockScheduler(
@@ -494,6 +498,9 @@ __aicore__ inline void WaitForGmm2InputReady(const GMMAddrInfo& gmmAddrInfo, con
                 Te::MakeCoord(static_cast<int64_t>(config.activationTileM), static_cast<int64_t>(L1_TILE_N))});
         uint32_t targetLoops = gmmBlockScheduler.GetTileNum();
         AscendTimerWaitScope wait(gmmAddrInfo.timer, AscendTimer::AIC_GMM2_WAIT);
+#ifdef DEEPEP_MEGAMOE_TIMER
+        MegaMoeTrainTimerWaitScope trainWait(gmmAddrInfo.trainingTimer, MegaMoeTrainTimer::AIC_GMM2_WAIT);
+#endif
         WaitUntilGmFlagEquals(gmmAddrInfo.activationToGmm2Flag, static_cast<int32_t>(targetLoops));
     }
 }
@@ -611,6 +618,9 @@ __aicore__ inline void CombineTokenRange(Scheduler& scheduler, TensorC& l0cOutGm
         int32_t expectedReadySequence = gmTileSequence + 1;
         {
             AscendTimerWaitScope wait(gmmAddrInfo.timer, AscendTimer::AIV_COMBINE_WAIT);
+#ifdef DEEPEP_MEGAMOE_TIMER
+            MegaMoeTrainTimerWaitScope trainWait(gmmAddrInfo.trainingTimer, MegaMoeTrainTimer::AIV_COMBINE_WAIT);
+#endif
             WaitUntilGmFlagAtLeast(gmmAddrInfo.gmmToEpilogueFlag, expectedReadySequence);
         }
         auto tensorBlockGm = l0cOutGm.Slice(Te::MakeCoord(mLoc, nLoc),

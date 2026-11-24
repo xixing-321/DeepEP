@@ -7,13 +7,25 @@
 #include "common/mega_moe_bf16_layout.hpp"
 
 namespace MegaMoeBF16Impl {
-template <uint32_t RawRows = 128, uint32_t Columns = 256>
+template <uint32_t RawRows = 128, uint32_t Columns = 256, uint32_t ChunkRows = (RawRows > 128 ? 64 : RawRows),
+          uint32_t ScratchOffset = 2 * RawRows * Columns * sizeof(bfloat16_t), int FixedEvent = -1>
 class SavedGateUpMxFp8 {
 public:
-    static constexpr uint32_t kChunkRows = RawRows > 128 ? 64 : RawRows;
-    using Layout = MegaMoeBF16Impl::SavedGateUpQuantUbLayoutFor<RawRows, kChunkRows, Columns>;
+    static constexpr uint32_t kChunkRows = ChunkRows;
+    using Layout = MegaMoeBF16Impl::SavedGateUpQuantUbLayoutFor<RawRows, kChunkRows, Columns, ScratchOffset>;
 
 private:
+    template <AscendC::HardEvent Event>
+    __aicore__ inline void Sync() const
+    {
+        if constexpr (FixedEvent < 0) {
+            AscendC::SyncFunc<Event>();
+        } else {
+            AscendC::SetFlag<Event>(FixedEvent);
+            AscendC::WaitFlag<Event>(FixedEvent);
+        }
+    }
+
     using DataTypeOut = fp8_e4m3fn_t;
     static constexpr uint16_t MAX_EXP_FOR_BF16 = 0x7f80;
     static constexpr uint16_t MAX_EXP_FOR_FP8 = 0xff;
@@ -47,7 +59,7 @@ public:
         // scratch region after all previous chunk stores have completed.
         for (uint16_t row = 0; row < rows; row += kChunkRows) {
             if (row != 0) {
-                AscendC::SyncFunc<AscendC::HardEvent::MTE3_V>();
+                Sync<AscendC::HardEvent::MTE3_V>();
             }
             const uint16_t remaining = rows - row;
             const uint16_t chunkRows = remaining < kChunkRows ? remaining : kChunkRows;
@@ -76,9 +88,9 @@ private:
         AscendC::SetCtrlSpr<60, 60>(0);
         Quantize(gate, gateData_, gateScale_, rows, columns);
         Quantize(up, upData_, upScale_, rows, columns);
-        AscendC::SyncFunc<AscendC::HardEvent::V_S>();
+        Sync<AscendC::HardEvent::V_S>();
         AscendC::SetCtrlSpr<60, 60>(overflowMode);
-        AscendC::SyncFunc<AscendC::HardEvent::V_MTE3>();
+        Sync<AscendC::HardEvent::V_MTE3>();
         Store(gateGm, gateData_, rows, columns, width, offset);
         Store(upGm, upData_, rows, columns, width, offset);
         Store(gateScaleGm, gateScale_, rows, columns / 32, width / 32, offset / 32);
