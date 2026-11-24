@@ -51,7 +51,7 @@ public:
     W8A8ForwardState training_forward(torch::Tensor x, torch::Tensor ids, torch::Tensor p, torch::Tensor w1,
                                       torch::Tensor w2, torch::Tensor s1, torch::Tensor s2, torch::Tensor out,
                                       double limit, bool save_gate_up, bool save_dispatched_x, bool capture_timer,
-                                      bool fp32_topk);
+                                      bool fp32_topk, const StreamAllocations& inputs);
 
     int64_t workspace_bytes() const
     {
@@ -61,6 +61,7 @@ public:
 private:
     PlatformInfo platform_;
     MegaMoeTilingData tiling_;
+    StreamAllocations allocations_;
     torch::Tensor workspace_;
     torch::Tensor context_;
     uint64_t ffts_;
@@ -79,7 +80,8 @@ public:
     std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor> backward(
         torch::Tensor dy, torch::Tensor packed_p, torch::Tensor dispatch, torch::Tensor scales, torch::Tensor maps,
         torch::Tensor offsets, const std::vector<torch::Tensor>& compressed,
-        const std::vector<torch::Tensor>& weight_pairs, double limit, bool capture_timer);
+        const std::vector<torch::Tensor>& weight_pairs, double limit, bool capture_timer,
+        const StreamAllocations& inputs);
 
 private:
     PlatformInfo platform_;
@@ -91,6 +93,7 @@ private:
     uint32_t topk_;
     uint32_t experts_;
     uint32_t generation_ = 0;
+    StreamAllocations allocations_;
     torch::Tensor peers_;
     uint64_t ffts_;
 };
@@ -157,17 +160,7 @@ private:
     MegaMoeBf16TilingData TilingForCall(int64_t m, int64_t k, int64_t n, int64_t topk, int64_t experts,
                                         int64_t max_recv, double limit, const std::string& mode, uint32_t weight_type,
                                         bool trans_w);
-    // Weak ownership lets autograd discard or replace saved tensors between calls.
-    struct Allocation {
-        c10::weak_intrusive_ptr<c10::StorageImpl> storage;
-        const void* data;
-        const void* context;
-        size_t bytes;
-        c10::Stream stream;
-    };
-    std::vector<Allocation> allocations_;
-    void RememberAllocation(const torch::Tensor& tensor);
-    void RecordIfForeign(const torch::Tensor& tensor) const;
+    StreamAllocations allocations_;
 
     PlatformInfo platform_;
     MegaMoeBf16TilingData tiling_{};

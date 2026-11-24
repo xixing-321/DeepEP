@@ -324,6 +324,10 @@ Plan::Plan(torch::Tensor example, int64_t intermediate, int64_t topk, int64_t ex
     TORCH_CHECK(bytes > info.workspaceSize, "MegaMoE workspace size overflow");
     workspace_ = torch::empty({bytes}, example.options().dtype(torch::kUInt8));
     context_ = torch::empty({static_cast<int64_t>(sizeof(Mc2Aclnn::Mc2MoeContext))}, workspace_.options());
+    if (w8a8_training) {
+        allocations_.RememberAllocation(context_);
+        allocations_.RememberAllocation(workspace_);
+    }
 
     // peer 地址和 context 只在准备阶段解析，不在每次 forward 中重新分配、同步拷贝。
     Mc2Aclnn::Mc2MoeContext context{};

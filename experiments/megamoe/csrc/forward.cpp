@@ -205,7 +205,7 @@ torch::Tensor AllocateW8A8Timer(const torch::Tensor& like, uint32_t groups, int6
 W8A8ForwardState Plan::training_forward(torch::Tensor x, torch::Tensor ids, torch::Tensor p, torch::Tensor w1,
                                         torch::Tensor w2, torch::Tensor s1, torch::Tensor s2, torch::Tensor out,
                                         double limit, bool save_gate_up, bool save_dispatched_x, bool capture_timer,
-                                        bool fp32_topk)
+                                        bool fp32_topk, const StreamAllocations& inputs)
 {
     TORCH_CHECK(tiling_.topkWeightsPrefetch == 1 && std::isfinite(limit) && limit >= 0 &&
                     limit <= std::numeric_limits<float>::max(),
@@ -248,11 +248,14 @@ W8A8ForwardState Plan::training_forward(torch::Tensor x, torch::Tensor ids, torc
     const auto stream = c10_npu::getCurrentNPUStream();
     auto ptr = [](const torch::Tensor& t) { return t.defined() ? static_cast<uint8_t*>(t.data_ptr()) : nullptr; };
     // Saved planes, routes and counts are allocated on this launch stream.
-    for (const auto* tensor : {&x, &ids, &p, &w1, &w2, &s1, &s2, &out, &context_, &workspace_}) {
-        if (tensor->defined()) {
-            c10_npu::NPUCachingAllocator::recordStream(tensor->storage().data_ptr(), stream);
-        }
+    for (const auto* tensor : {&x, &ids, &out}) {
+        c10_npu::NPUCachingAllocator::recordStream(tensor->storage().data_ptr(), stream);
     }
+    for (const auto* tensor : {&p, &w1, &w2, &s1, &s2}) {
+        inputs.RecordIfForeign(*tensor);
+    }
+    allocations_.RecordIfForeign(context_);
+    allocations_.RecordIfForeign(workspace_);
     mega_moe_w8a8_training_forward_do(
         platform_.block_dim, platform_.ub, stream.stream(), ptr(context_), ptr(x), ptr(ids), ptr(p), ptr(w1), ptr(w2),
         ptr(s1), ptr(s2), ptr(out), ptr(saved.counts), ptr(workspace_), ptr(saved.dispatch), ptr(saved.scales),
@@ -366,11 +369,11 @@ ForwardResult BF16Plan::forward(torch::Tensor out, torch::Tensor x, torch::Tenso
     for (const auto* tensor : {&x, &topkIds, &topkWeights, &weight1, &weight2, &out}) {
         c10_npu::NPUCachingAllocator::recordStream(tensor->storage().data_ptr(), stream);
     }
-    RecordIfForeign(context);
-    RecordIfForeign(workspace_);
+    allocations_.RecordIfForeign(context);
+    allocations_.RecordIfForeign(workspace_);
     if (weight_before_gmm2_) {
-        RememberAllocation(routingState);
-        if (dispatchOutput.defined()) RememberAllocation(dispatchOutput);
+        allocations_.RememberAllocation(routingState);
+        if (dispatchOutput.defined()) allocations_.RememberAllocation(dispatchOutput);
     }
     return {out, expertTokenNums, weight_before_gmm2_ ? routingState : torch::Tensor(), dispatchOutput, timer};
 }

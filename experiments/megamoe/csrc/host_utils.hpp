@@ -7,11 +7,53 @@
 #pragma once
 
 #include <cstdint>
+#include <algorithm>
+#include <vector>
 
 #include <torch/extension.h>
+#include "torch_npu/csrc/core/npu/NPUCachingAllocator.h"
 #include "tiling/platform/platform_ascendc.h"
 
 namespace deepep::megamoe {
+
+// Remember the allocations made on a producer stream without retaining tensors across microbatches.
+// An unpack hook may replace the storage; views into the original allocation still match.
+class StreamAllocations {
+public:
+    void RememberAllocation(const torch::Tensor& tensor)
+    {
+        const auto& storage = tensor.storage();
+        allocations_.erase(std::remove_if(allocations_.begin(), allocations_.end(),
+                                          [](const Allocation& a) { return a.storage.expired(); }),
+                           allocations_.end());
+        allocations_.push_back({storage.getWeakStorageImpl(), storage.data(), storage.data_ptr().get_context(),
+                                storage.nbytes(), c10_npu::getCurrentNPUStream(tensor.get_device()).unwrap()});
+    }
+
+    void RecordIfForeign(const torch::Tensor& tensor) const
+    {
+        const auto stream = c10_npu::getCurrentNPUStream(tensor.get_device());
+        const auto& storage = tensor.storage();
+        for (const auto& a : allocations_) {
+            if (a.stream == stream.unwrap() && a.storage.lock().get() == storage.unsafeGetStorageImpl() &&
+                a.data == storage.data() && a.context == storage.data_ptr().get_context() &&
+                a.bytes == storage.nbytes()) {
+                return;
+            }
+        }
+        c10_npu::NPUCachingAllocator::recordStream(storage.data_ptr(), stream);
+    }
+
+private:
+    struct Allocation {
+        c10::weak_intrusive_ptr<c10::StorageImpl> storage;
+        const void* data;
+        const void* context;
+        size_t bytes;
+        c10::Stream stream;
+    };
+    std::vector<Allocation> allocations_;
+};
 
 struct PlatformInfo {
     uint32_t aic;

@@ -356,7 +356,7 @@ void BF16Plan::prepare(int64_t m, int64_t h, int64_t f, int64_t topk, int64_t lo
                 "forward workspace capacity");
 
     auto workspace = AllocateForwardTransientWorkspace(context_, tiling);
-    RememberAllocation(workspace);
+    allocations_.RememberAllocation(workspace);
     tiling_ = tiling;
     workspace_ = std::move(workspace);
 }
@@ -376,32 +376,9 @@ MegaMoeBf16TilingData BF16Plan::TilingForCall(int64_t m, int64_t k, int64_t n, i
     return tiling;
 }
 
-void BF16Plan::RememberAllocation(const torch::Tensor& tensor)
-{
-    const auto& storage = tensor.storage();
-    allocations_.erase(std::remove_if(allocations_.begin(), allocations_.end(),
-                                      [](const Allocation& a) { return a.storage.expired(); }),
-                       allocations_.end());
-    allocations_.push_back({storage.getWeakStorageImpl(), storage.data(), storage.data_ptr().get_context(),
-                            storage.nbytes(), c10_npu::getCurrentNPUStream(tensor.get_device()).unwrap()});
-}
-
-void BF16Plan::RecordIfForeign(const torch::Tensor& tensor) const
-{
-    const auto stream = c10_npu::getCurrentNPUStream(tensor.get_device());
-    const auto& storage = tensor.storage();
-    for (const auto& a : allocations_) {
-        if (a.stream == stream.unwrap() && a.storage.lock().get() == storage.unsafeGetStorageImpl() &&
-            a.data == storage.data() && a.context == storage.data_ptr().get_context() && a.bytes == storage.nbytes()) {
-            return;
-        }
-    }
-    c10_npu::NPUCachingAllocator::recordStream(storage.data_ptr(), stream);
-}
-
 void BF16Plan::close()
 {
-    allocations_.clear();
+    allocations_ = {};
     address_ = 0;
     context_ = torch::Tensor();
     workspace_ = torch::Tensor();
@@ -423,7 +400,7 @@ torch::Tensor BF16Plan::Context(const torch::Tensor& like)
         // Publish the persistent state only after initialization succeeds.
         // A failed first call must remain retryable instead of leaving a
         // defined but partially initialized context behind.
-        RememberAllocation(new_context);
+        allocations_.RememberAllocation(new_context);
         context_ = new_context;
         context_rank_ = rank;
         context_world_size_ = world_size;

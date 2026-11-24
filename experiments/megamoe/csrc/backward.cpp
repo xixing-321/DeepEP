@@ -154,9 +154,9 @@ BackwardResult BF16Plan::backward(torch::Tensor gradY, torch::Tensor topkWeights
         c10_npu::NPUCachingAllocator::recordStream(tensor->storage().data_ptr(), stream);
     }
     // Rebuilt dispatch and hook-restored storage can belong to a different stream.
-    RecordIfForeign(context);
-    RecordIfForeign(trainingSavedState);
-    RecordIfForeign(dispatchOutput);
+    allocations_.RecordIfForeign(context);
+    allocations_.RecordIfForeign(trainingSavedState);
+    allocations_.RecordIfForeign(dispatchOutput);
     return {gradX, gradTopkWeights, gradWeight1, gradWeight2, timer};
 }
 
@@ -195,12 +195,13 @@ W8A8BackwardPlan::W8A8BackwardPlan(uintptr_t address, int64_t bytes, int64_t max
     FillPeerAddresses(addresses.data(), window, world_);
     // Order initialization after prior uses of a recycled allocation on the plan's stream.
     peers_ = torch::from_blob(addresses.data(), {world}, torch::kInt64).to(like.device(), torch::kInt64);
+    allocations_.RememberAllocation(peers_);
 }
 
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor> W8A8BackwardPlan::backward(
     torch::Tensor dy, torch::Tensor packed_p, torch::Tensor dispatch, torch::Tensor scales, torch::Tensor maps,
     torch::Tensor offsets, const std::vector<torch::Tensor>& compressed, const std::vector<torch::Tensor>& weight_pairs,
-    double limit, bool capture_timer)
+    double limit, bool capture_timer, const StreamAllocations& inputs)
 {
     using namespace MegaMoeTrainW8A8;
     const int64_t e = experts_, h = hidden_, f = ffn_, k = topk_;
@@ -247,7 +248,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
     const auto stream = c10_npu::getCurrentNPUStream();
     auto address = [](const torch::Tensor& tensor) { return reinterpret_cast<uint64_t>(tensor.data_ptr()); };
     auto inputAddress = [&](const torch::Tensor& tensor) {
-        c10_npu::NPUCachingAllocator::recordStream(tensor.storage().data_ptr(), stream);
+        inputs.RecordIfForeign(tensor);
         return address(tensor);
     };
     // Scratch and outputs are allocated and last used here on the launch stream.
@@ -275,7 +276,8 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
     a.generation = ++generation_;
     a.limit = static_cast<float>(limit);
     a.topkWeightType = p_type == torch::kFloat32;
-    a.peers = inputAddress(peers_);
+    allocations_.RecordIfForeign(peers_);
+    a.peers = address(peers_);
     a.x = inputAddress(dy);
     a.packedP = inputAddress(packed_p);
     a.xq = inputAddress(dispatch);

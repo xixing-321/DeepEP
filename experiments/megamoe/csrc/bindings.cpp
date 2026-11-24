@@ -22,7 +22,13 @@ PYBIND11_MODULE(_C, module)
                [](int64_t ep, int64_t experts, int64_t tokens, int64_t topk, int64_t hidden) {
                    return deepep::megamoe::buffer_size(ep, experts, tokens, topk, hidden, true);
                });
+    using deepep::megamoe::StreamAllocations;
     using deepep::megamoe::W8A8ForwardState;
+    py::class_<StreamAllocations>(module, "_StreamAllocations")
+        .def(py::init<>())
+        .def("remember", [](StreamAllocations& owner, const std::vector<torch::Tensor>& tensors) {
+            for (const auto& tensor : tensors) owner.RememberAllocation(tensor);
+        });
     py::class_<W8A8ForwardState>(module, "W8A8ForwardState")
         .def_readonly("counts", &W8A8ForwardState::counts)
         .def_readonly("dispatch", &W8A8ForwardState::dispatch)
@@ -37,14 +43,19 @@ PYBIND11_MODULE(_C, module)
         .def(py::init<torch::Tensor, int64_t, int64_t, int64_t, int64_t, int64_t, bool, int64_t, int64_t, uint64_t,
                       uint64_t, int64_t, bool, int64_t>())
         .def("forward", &Plan::forward)
-        .def("training_forward", &Plan::training_forward)
+        .def("training_forward", &Plan::training_forward, py::arg("x"), py::arg("ids"), py::arg("p"), py::arg("w1"),
+             py::arg("w2"), py::arg("s1"), py::arg("s2"), py::arg("out"), py::arg("limit"), py::arg("save_gate_up"),
+             py::arg("save_dispatched_x"), py::arg("capture_timer"), py::arg("fp32_topk"),
+             py::arg("inputs") = StreamAllocations{})
         .def_property_readonly("workspace_bytes", &Plan::workspace_bytes);
     using deepep::megamoe::W8A8BackwardPlan;
     module.def("w8a8_backward_buffer_size", &deepep::megamoe::w8a8_backward_buffer_size);
     py::class_<W8A8BackwardPlan>(module, "W8A8BackwardPlan")
         .def(py::init<uintptr_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, const torch::Tensor&,
                       uint64_t>())
-        .def("backward", &W8A8BackwardPlan::backward);
+        .def("backward", &W8A8BackwardPlan::backward, py::arg("dy"), py::arg("packed_p"), py::arg("dispatch"),
+             py::arg("scales"), py::arg("maps"), py::arg("offsets"), py::arg("compressed"), py::arg("weight_pairs"),
+             py::arg("limit"), py::arg("capture_timer"), py::arg("inputs") = StreamAllocations{});
     module.attr("bf16_enabled") = true;
     module.def("bf16_buffer_size", &deepep::megamoe::bf16::buffer_size, py::arg("max_tokens"), py::arg("hidden"),
                py::arg("intermediate"), py::arg("topk"), py::arg("world"), py::arg("local_experts"),

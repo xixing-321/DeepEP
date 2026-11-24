@@ -9,6 +9,7 @@ import torch
 from torch.autograd.function import once_differentiable
 
 from deep_ep._native import npu_api
+from .api import _extension
 
 
 def _quantize(value):
@@ -19,6 +20,30 @@ def _quantize(value):
         value.contiguous().view(-1, width), axis=-1, round_mode="rint", dst_type=torch.float8_e4m3fn
     )
     return data.reshape(value.shape), scale.view(torch.float8_e8m0fnu).reshape(*value.shape[:-1], width // 64, 2)
+
+
+def _launch_forward(owner, x, ids, p, w1, w2, out, limit, save_gate_up, save_dispatch, capture):
+    allocations = _extension()._StreamAllocations()
+    q1, q2 = _quantize(w1), _quantize(w2)
+    p_fp32 = p.float()
+    allocations.remember((*q1, *q2) if p.dtype == torch.float32 else (*q1, *q2, p_fp32))
+    state = owner._plan.training_forward(
+        x,
+        ids,
+        p_fp32,
+        q1[0],
+        q2[0],
+        q1[1],
+        q2[1],
+        out,
+        limit,
+        save_gate_up,
+        save_dispatch,
+        capture,
+        p.dtype == torch.float32,
+        allocations,
+    )
+    return state, q1, allocations
 
 
 def _saved_gate_up_planes(raw, rows, ffn, limit):
@@ -67,22 +92,9 @@ class W8A8Function(torch.autograd.Function):
         ctx.capture = capture
         if capture is not None:
             capture.claim()
-        w1_forward, w2_forward = _quantize(w1), _quantize(w2)
         recompute = owner.gmm1_save_type == "none"
-        state = owner._plan.training_forward(
-            x,
-            ids,
-            p.float(),
-            w1_forward[0],
-            w2_forward[0],
-            w1_forward[1],
-            w2_forward[1],
-            out,
-            limit,
-            not recompute,
-            owner.save_dispatched_x,
-            capture is not None,
-            p.dtype == torch.float32,
+        state, w1_forward, allocations = _launch_forward(
+            owner, x, ids, p, w1, w2, out, limit, not recompute, owner.save_dispatched_x, capture is not None
         )
         if capture is not None:
             capture.forward = state.timer
@@ -94,6 +106,14 @@ class W8A8Function(torch.autograd.Function):
         if owner.save_dispatched_x:
             packed_p = state.routes[:rows, 3].contiguous().view(torch.float32).to(p.dtype)
         saved = () if recompute else _saved_gate_up_planes(state.gate_up, rows, owner.intermediate_hidden, limit)
+        # Only remember storage allocated by this forward. Unpack hooks and framework re-dispatch may replace it.
+        buffers = [maps, offsets]
+        if owner.save_dispatched_x:
+            buffers.extend((state.dispatch, state.scales, packed_p))
+        if not recompute:
+            buffers.append(state.gate_up)
+        allocations.remember(buffers)
+        ctx.allocations = allocations
         ctx.owner, ctx.limit, ctx.recompute = owner, limit, recompute
         ctx.rows, ctx.p_dtype = rows, p.dtype
         ctx.save_for_backward(
@@ -132,6 +152,7 @@ class W8A8Function(torch.autograd.Function):
                 if contiguous_dy is not dy:
                     dy.record_stream(runtime.stream)
                 weights = (*_quantize(w1.transpose(-1, -2)), *_quantize(w2.transpose(-1, -2)))
+                ctx.allocations.remember(weights if contiguous_dy is dy else (*weights, contiguous_dy))
                 if capture is not None:
                     capture.begin_backward()
                 dx, dp, dw1, dw2, timer = plan.backward(
@@ -145,6 +166,7 @@ class W8A8Function(torch.autograd.Function):
                     (*weights, *saved) if ctx.recompute else weights,
                     ctx.limit,
                     capture is not None,
+                    ctx.allocations,
                 )
                 if capture is not None:
                     capture.backward = timer
@@ -209,10 +231,7 @@ def run(y, x, ids, p, w1, w2, buffer, stats, activation_clamp):
             if gradients:
                 y, counts = W8A8Function.apply(buffer, limit, x, ids, p, w1, w2, y)
             else:
-                q1, q2 = _quantize(w1), _quantize(w2)
-                counts = buffer._plan.training_forward(
-                    x, ids, p.float(), q1[0], q2[0], q1[1], q2[1], y, limit, False, False, False, False
-                ).counts
+                counts = _launch_forward(buffer, x, ids, p, w1, w2, y, limit, False, False, False)[0].counts
             if stats is not None:
                 stats.add_(counts)
                 stats.record_stream(runtime.stream)
