@@ -18,7 +18,6 @@ __aicore__ inline void FusedTrain::RequantizeToken(uint64_t input, uint64_t inpu
     // values are live. A compact 16-byte row stride triggers device error 340.
     LocalTensor<bfloat16_t> scaleBf{TPosition::VECCALC, 12288, 1024};
     LocalTensor<float> scaleFp{TPosition::VECCALC, 16384, 1024};
-    LocalTensor<float> decoded{TPosition::VECCALC, 32768, 8192};
     LocalTensor<bfloat16_t> bf{TPosition::VECCALC, 65536, 8192};
     // This aliases the dead FP8 input and scale tiles, only after BF16 cast.
     LocalTensor<uint16_t> transposed{TPosition::VECIN, 0, 8192};
@@ -36,8 +35,10 @@ __aicore__ inline void FusedTrain::RequantizeToken(uint64_t input, uint64_t inpu
             const uint32_t valid = rows - token < 64 ? rows - token : 64;
             // Padding is a real zero operand, never a read across experts.
             SyncFunc<HardEvent::MTE3_V>();
-            Duplicate(data.ReinterpretCast<uint8_t>(), uint8_t(0), 8192);
-            Duplicate(scales.ReinterpretCast<uint8_t>(), uint8_t(127), 2048);
+            if (valid < 64 || columns < 128) {
+                Duplicate(data.ReinterpretCast<uint8_t>(), uint8_t(0), 8192);
+                Duplicate(scales.ReinterpretCast<uint8_t>(), uint8_t(127), 2048);
+            }
             SyncFunc<HardEvent::V_MTE2>();
             const uint64_t off = uint64_t((gradient ? 0 : Begin(e)) + token) * width + feature;
             const uint64_t dataAddress = (gradient ? gradientData : input) + off;
@@ -56,7 +57,7 @@ __aicore__ inline void FusedTrain::RequantizeToken(uint64_t input, uint64_t inpu
             auto sq = reinterpret_cast<__ubuf__ fp8_e8m0_t*>(scales.GetPhyAddr());
             auto sbf = reinterpret_cast<__ubuf__ bfloat16_t*>(scaleBf.GetPhyAddr());
             auto sfp = reinterpret_cast<__ubuf__ float*>(scaleFp.GetPhyAddr());
-            auto dst = reinterpret_cast<__ubuf__ float*>(decoded.GetPhyAddr());
+            auto dst = reinterpret_cast<__ubuf__ bfloat16_t*>(bf.GetPhyAddr());
             __VEC_SCOPE__
             {
                 static constexpr Reg::CastTrait cast = {Reg::RegLayout::ZERO, Reg::SatMode::UNKNOWN,
@@ -89,12 +90,11 @@ __aicore__ inline void FusedTrain::RequantizeToken(uint64_t input, uint64_t inpu
                     Reg::DataCopy<fp8_e4m3fn_t, Reg::LoadDist::DIST_UNPACK4_B8>(v, q + i * 64);
                     Reg::Cast<float, fp8_e4m3fn_t, cast>(x, v, mask);
                     Reg::Mul(result, s, x, mask);
-                    Reg::DataCopy(dst + i * 64, result, mask);
+                    Reg::RegTensor<bfloat16_t> rounded;
+                    Reg::Cast<bfloat16_t, float, MegaMoeTrainW8A8Vec::kBackwardCastFP32ToBF16>(rounded, result, mask);
+                    Reg::DataCopy<bfloat16_t, Reg::StoreDist::DIST_PACK_B32>(dst + i * 64, rounded, mask);
                 }
             }
-            PipeBarrier<PIPE_V>();
-            // Preserve the old GM-intermediate BF16 rounding boundary.
-            Cast(bf, decoded, RoundMode::CAST_RINT, 8192);
             PipeBarrier<PIPE_V>();
             uint64_t dstList[16], srcList[16];
             const uint64_t srcBase = reinterpret_cast<uint64_t>(bf.GetPhyAddr());

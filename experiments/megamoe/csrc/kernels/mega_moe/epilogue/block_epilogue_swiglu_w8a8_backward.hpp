@@ -180,6 +180,18 @@ public:
         LoadGateUpTiles(rowBase_ + mLoc, nLoc, singleM, singleN, l0cOutUbSecond_, extraA_);
 
         if constexpr (HpConsumer::enabled && !StoreGradZ) {
+            const bool fusedDp = params_.dpLow != nullptr && params_.savedGateUpMode == MegaMoeTrainW8A8::kSaveMxFp8 &&
+                                 params_.swigluLimit != kMegaMoeSwigluLimitDisabled && rowStrideInPlane == singleN &&
+                                 singleN % 64U == 0;
+            if (fusedDp) {
+                SaveDpProducts<true>(rowBase_ + mLoc, nLoc, singleM, singleN, rowStrideInPlane);
+                AscendC::PipeBarrier<PIPE_V>();
+                ApplySavedClipGradientMask(singleM, singleN, rowStrideInPlane);
+                SyncFunc<AscendC::HardEvent::V_MTE2>();
+                SyncFunc<AscendC::HardEvent::V_MTE3>();
+                consumeHp.template operator()<true>(extraA_, singleM, singleN, rowStrideInPlane);
+                return;
+            }
             if (params_.dpLow != nullptr) {
                 SaveDpProducts(rowBase_ + mLoc, nLoc, singleM, singleN, rowStrideInPlane);
             }
@@ -257,27 +269,15 @@ private:
     static constexpr uint32_t kTileColumns = tla::get<1>(L0TileShape_{});
     static constexpr uint32_t kTileElements = kTileRows * kTileColumns;
     static constexpr uint32_t kTileBytes = kTileElements * sizeof(bfloat16_t);
-    static constexpr uint32_t kDecodeRows = 16;
+    static constexpr uint32_t kDecodeRows = 32;
     static constexpr uint32_t kMxDataElements = kDecodeRows * kTileColumns;
     static constexpr uint32_t kMxScaleRowBytes = 32;
     static constexpr uint32_t kMxScaleBytes = kDecodeRows * kMxScaleRowBytes;
-    // DIST_INTLV_B16/B32 are dual-register stores.  They ignore the mask and
-    // always write 2 * VL (512 bytes on A5), even though only the compact
-    // prefix is consumed below.  Reserve the full physical store footprint;
-    // otherwise each following scale row overwrites the beginning of
-    // mxDecoded_ and corrupts an already decoded row in the current chunk.
-    static constexpr uint32_t kMxDualRegisterStoreBytes = 2U * 256U;
-    static constexpr uint32_t kMxScaleBf16Elements = kMxDualRegisterStoreBytes / sizeof(bfloat16_t);
-    static constexpr uint32_t kMxScaleBf16Bytes = kMxScaleBf16Elements * sizeof(bfloat16_t);
-    static constexpr uint32_t kMxScaleFp32Elements = kMxDualRegisterStoreBytes / sizeof(float);
-    static constexpr uint32_t kMxScaleFp32Bytes = kMxScaleFp32Elements * sizeof(float);
     static constexpr uint32_t kMxDecodedElements = kDecodeRows * kTileColumns;
     static constexpr uint32_t kMxDecodedBytes = kMxDecodedElements * sizeof(float);
     static constexpr uint32_t kMxDataOffset = 3U * kTileBytes;
     static constexpr uint32_t kMxScaleOffset = kMxDataOffset + kMxDataElements;
-    static constexpr uint32_t kMxScaleBf16Offset = kMxScaleOffset + kMxScaleBytes;
-    static constexpr uint32_t kMxScaleFp32Offset = kMxScaleBf16Offset + kMxScaleBf16Bytes;
-    static constexpr uint32_t kMxDecodedOffset = kMxScaleFp32Offset + kMxScaleFp32Bytes;
+    static constexpr uint32_t kMxDecodedOffset = kMxScaleOffset + kMxScaleBytes;
     // Retain every decoded row until the whole-tile gradient mask consumes it.
     static constexpr uint32_t kClipMaskBytes = kTileRows * kMxScaleRowBytes;
     static constexpr uint32_t kGateHighOffset = kMxDecodedOffset + kMxDecodedBytes;
@@ -347,14 +347,12 @@ private:
         if (hasLowMask) {
             const uint32_t maskWidthBytes = scaleWidth * sizeof(uint32_t);
             const int64_t index = static_cast<int64_t>(rowStart) * maskWidthBytes + (nLoc / 32) * sizeof(uint32_t);
-            AscendC::SyncFunc<AscendC::HardEvent::S_MTE2>();
             AscendC::SyncFunc<AscendC::HardEvent::V_MTE2>();
             CopyMxRowsToUb(lowMaskGm, index, singleM, groups * sizeof(uint32_t), maskWidthBytes,
                            gatePlane ? gateHighMask_ : upLowMask_);
             if (!gatePlane) {
                 CopyMxRowsToUb(highMaskGm, index, singleM, groups * sizeof(uint32_t), maskWidthBytes, upHighMask_);
             }
-            AscendC::SyncFunc<AscendC::HardEvent::MTE2_S>();
         }
         for (uint32_t chunkRow = 0; chunkRow < singleM; chunkRow += kDecodeRows) {
             const uint16_t rows =
@@ -368,60 +366,40 @@ private:
             CopyMxRowsToUb(dataGm, dataIndex, rows, singleN, outputF_, mxData_);
             CopyMxRowsToUb(scaleGm, scaleIndex, rows, groups, scaleWidth, mxScale_);
             AscendC::SyncFunc<AscendC::HardEvent::MTE2_V>();
-            DecodeMxFp8Rows(rows, singleN, groups);
-            AscendC::PipeBarrier<PIPE_V>();
-            AscendC::Cast(dst[chunkRow * singleN], mxDecoded_, AscendC::RoundMode::CAST_RINT,
-                          static_cast<uint32_t>(rows) * singleN);
+            DecodeMxFp8Rows(rows, singleN, groups, dst[chunkRow * singleN]);
         }
         if (hasLowMask) {
-            AscendC::SyncFunc<AscendC::HardEvent::V_S>();
-            ApplyClipSentinels(dst, singleM, singleN, groups, gatePlane);
-            AscendC::SyncFunc<AscendC::HardEvent::S_MTE2>();
-            AscendC::SyncFunc<AscendC::HardEvent::S_V>();
+            AscendC::PipeBarrier<PIPE_V>();
+            ApplyClipSentinels(dst, singleM, singleN, gatePlane);
+            AscendC::PipeBarrier<PIPE_V>();
         }
     }
 
-    __aicore__ inline void DecodeMxFp8Rows(uint16_t rows, uint32_t columns, uint32_t groups)
+    __aicore__ inline void DecodeMxFp8Rows(uint16_t rows, uint32_t columns, uint32_t groups,
+                                           AscendC::LocalTensor<bfloat16_t> dst)
     {
-        constexpr uint32_t bf16PerReg = 256U / sizeof(bfloat16_t);
         constexpr uint32_t fp32PerReg = 256U / sizeof(float);
         auto data = (__ubuf__ fp8_e4m3fn_t*)mxData_.GetPhyAddr();
         auto scales = (__ubuf__ fp8_e8m0_t*)mxScale_.GetPhyAddr();
-        auto scaleBf16 = (__ubuf__ bfloat16_t*)mxScaleBf16_.GetPhyAddr();
-        auto scaleFp32 = (__ubuf__ float*)mxScaleFp32_.GetPhyAddr();
-        auto decoded = (__ubuf__ float*)mxDecoded_.GetPhyAddr();
+        auto decoded = (__ubuf__ bfloat16_t*)dst.GetPhyAddr();
         __VEC_SCOPE__
         {
             static constexpr AscendC::Reg::CastTrait fp8ToWide = {
                 AscendC::Reg::RegLayout::ZERO, AscendC::Reg::SatMode::UNKNOWN, AscendC::Reg::MaskMergeMode::ZEROING,
                 AscendC::RoundMode::UNKNOWN};
+            namespace V = AscendC::Reg;
+            auto all = V::CreateMask<uint16_t, V::MaskPattern::ALL>();
+            V::RegTensor<int16_t> lanes;
+            V::RegTensor<uint16_t> groupInPair;
+            V::Arange(lanes, int16_t(0));
+            V::ShiftRights(groupInPair, reinterpret_cast<V::RegTensor<uint16_t>&>(lanes), int16_t(6), all);
             for (uint16_t row = 0; row < rows; ++row) {
-                uint32_t scaleRemaining = groups;
-                const uint16_t scaleRepeats = static_cast<uint16_t>(Ops::Base::CeilDiv(groups, bf16PerReg));
-                for (uint16_t i = 0; i < scaleRepeats; ++i) {
-                    auto mask = AscendC::Reg::UpdateMask<bfloat16_t>(scaleRemaining);
-                    AscendC::Reg::RegTensor<fp8_e8m0_t> src;
-                    AscendC::Reg::RegTensor<bfloat16_t> value;
-                    AscendC::Reg::DataCopy<fp8_e8m0_t, AscendC::Reg::LoadDist::DIST_UNPACK_B8>(
-                        src, scales + row * kMxScaleRowBytes + i * bf16PerReg);
-                    AscendC::Reg::Cast<bfloat16_t, fp8_e8m0_t, fp8ToWide>(value, src, mask);
-                    AscendC::Reg::DataCopy<bfloat16_t, AscendC::Reg::StoreDist::DIST_INTLV_B16>(
-                        scaleBf16 + i * bf16PerReg * 2, value, value, mask);
-                }
-                AscendC::Reg::LocalMemBar<AscendC::Reg::MemType::VEC_STORE, AscendC::Reg::MemType::VEC_LOAD>();
-                uint32_t scaleWideRemaining = groups * 2;
-                const uint16_t scaleWideRepeats = static_cast<uint16_t>(Ops::Base::CeilDiv(groups * 2, fp32PerReg));
-                for (uint16_t i = 0; i < scaleWideRepeats; ++i) {
-                    auto mask = AscendC::Reg::UpdateMask<float>(scaleWideRemaining);
-                    AscendC::Reg::RegTensor<bfloat16_t> src;
-                    AscendC::Reg::RegTensor<float> value;
-                    AscendC::Reg::DataCopy<bfloat16_t, AscendC::Reg::LoadDist::DIST_UNPACK_B16>(
-                        src, scaleBf16 + i * fp32PerReg);
-                    AscendC::Reg::Cast<float, bfloat16_t, fp8ToWide>(value, src, mask);
-                    AscendC::Reg::DataCopy<float, AscendC::Reg::StoreDist::DIST_INTLV_B32>(
-                        scaleFp32 + i * fp32PerReg * 2, value, value, mask);
-                }
-                AscendC::Reg::LocalMemBar<AscendC::Reg::MemType::VEC_STORE, AscendC::Reg::MemType::VEC_LOAD>();
+                uint32_t groupCount = groups;
+                auto validGroups = V::UpdateMask<bfloat16_t>(groupCount);
+                V::RegTensor<fp8_e8m0_t> encoded;
+                V::RegTensor<bfloat16_t> compact;
+                V::DataCopy<fp8_e8m0_t, V::LoadDist::DIST_UNPACK_B8>(encoded, scales + row * kMxScaleRowBytes);
+                V::Cast<bfloat16_t, fp8_e8m0_t, fp8ToWide>(compact, encoded, validGroups);
                 uint32_t dataRemaining = columns;
                 const uint16_t dataRepeats = static_cast<uint16_t>(Ops::Base::CeilDiv(columns, fp32PerReg));
                 for (uint16_t i = 0; i < dataRepeats; ++i) {
@@ -430,46 +408,65 @@ private:
                     AscendC::Reg::RegTensor<fp8_e4m3fn_t> src;
                     AscendC::Reg::RegTensor<float> value;
                     AscendC::Reg::RegTensor<float> result;
-                    AscendC::Reg::DataCopy<float, AscendC::Reg::LoadDist::DIST_E2B_B32>(scale, scaleFp32 + i * 8);
+                    AscendC::Reg::RegTensor<bfloat16_t> rounded;
+                    // BF16 -> FP32 selects even b16 lanes. Repeat each MX scale in 64 b16 lanes
+                    // so the FP32 product uses one scale for each consecutive group of 32 values.
+                    V::RegTensor<uint16_t> group;
+                    V::RegTensor<bfloat16_t> expanded;
+                    V::Adds(group, groupInPair, uint16_t(2U * i), all);
+                    V::Gather(expanded, compact, group);
+                    V::Cast<float, bfloat16_t, fp8ToWide>(scale, expanded, mask);
                     AscendC::Reg::DataCopy<fp8_e4m3fn_t, AscendC::Reg::LoadDist::DIST_UNPACK4_B8>(
                         src, data + row * columns + i * fp32PerReg);
                     AscendC::Reg::Cast<float, fp8_e4m3fn_t, fp8ToWide>(value, src, mask);
                     AscendC::Reg::Mul(result, scale, value, mask);
-                    AscendC::Reg::DataCopy(decoded + row * columns + i * fp32PerReg, result, mask);
+                    AscendC::Reg::Cast<bfloat16_t, float, kBackwardCastFP32ToBF16>(rounded, result, mask);
+                    AscendC::Reg::DataCopy<bfloat16_t, AscendC::Reg::StoreDist::DIST_PACK_B32>(
+                        decoded + row * columns + i * fp32PerReg, rounded, mask);
+                }
+            }
+        }
+    }
+
+    __aicore__ inline void SetClippedValues(AscendC::LocalTensor<bfloat16_t> dst, AscendC::LocalTensor<int8_t> clipMask,
+                                            uint16_t rows, uint32_t columns, uint32_t rowStride, uint16_t replacement)
+    {
+        using namespace AscendC::Reg;
+        constexpr uint32_t lanes = 256U / sizeof(uint16_t);
+        const uint16_t repeats = static_cast<uint16_t>(Ops::Base::CeilDiv(columns, lanes));
+        auto* dstBits = reinterpret_cast<__ubuf__ uint16_t*>(dst.GetPhyAddr());
+        auto* maskBits = reinterpret_cast<__ubuf__ uint8_t*>(clipMask.GetPhyAddr());
+        __VEC_SCOPE__
+        {
+            auto all = CreateMask<uint16_t, MaskPattern::ALL>();
+            RegTensor<uint16_t> value;
+            Duplicate(value, replacement, all);
+            for (uint16_t row = 0; row < rows; ++row) {
+                uint32_t remaining = columns;
+                for (uint16_t repeat = 0; repeat < repeats; ++repeat) {
+                    const uint32_t column = repeat * lanes;
+                    MaskReg clipped;
+                    // Each packed bit selects one BF16 element (two predicate bits).
+                    DataCopy<uint8_t, MaskDist::DIST_US>(clipped, maskBits + row * kMxScaleRowBytes + column / 8U);
+                    auto valid = UpdateMask<uint16_t>(remaining);
+                    And(clipped, clipped, valid, all);
+                    DataCopy(dstBits + row * rowStride + column, value, clipped);
                 }
             }
         }
     }
 
     __aicore__ inline void ApplyClipSentinels(AscendC::LocalTensor<bfloat16_t> dst, uint16_t rows, uint32_t columns,
-                                              uint32_t groups, bool gatePlane)
+                                              bool gatePlane)
     {
-        auto dstBits = dst.template ReinterpretCast<uint16_t>();
-        auto gateHighWords = gateHighMask_.template ReinterpretCast<uint32_t>();
-        auto upLowWords = upLowMask_.template ReinterpretCast<uint32_t>();
-        auto highWords = upHighMask_.template ReinterpretCast<uint32_t>();
-        // Infinity is only an internal branch sentinel. The following FP32
-        // clamp turns it into the finite user limit before any arithmetic.
-        // Unlike max-finite BF16, this remains outside every finite limit.
         constexpr uint16_t positiveInfinityBf16 = 0x7f80U;
         constexpr uint16_t negativeInfinityBf16 = 0xff80U;
-        for (uint16_t row = 0; row < rows; ++row) {
-            for (uint32_t group = 0; group < groups; ++group) {
-                const uint32_t low = gatePlane ? gateHighWords.GetValue(row * 8 + group)
-                                               : upLowWords.GetValue(row * 8 + group);
-                const uint32_t high = gatePlane ? 0U : highWords.GetValue(row * 8 + group);
-                if ((low | high) == 0U) {
-                    continue;
-                }
-                for (uint32_t bit = 0; bit < 32; ++bit) {
-                    const uint32_t index = row * columns + group * 32 + bit;
-                    if ((low & (1U << bit)) != 0U) {
-                        dstBits.SetValue(index, gatePlane ? positiveInfinityBf16 : negativeInfinityBf16);
-                    } else if ((high & (1U << bit)) != 0U) {
-                        dstBits.SetValue(index, positiveInfinityBf16);
-                    }
-                }
-            }
+        if (gatePlane) {
+            SetClippedValues(dst, gateHighMask_, rows, columns, columns, positiveInfinityBf16);
+        } else {
+            SetClippedValues(dst, upHighMask_, rows, columns, columns, positiveInfinityBf16);
+            AscendC::PipeBarrier<PIPE_V>();
+            SetClippedValues(dst, upLowMask_, rows, columns, columns, negativeInfinityBf16);
         }
     }
 
@@ -485,6 +482,7 @@ private:
         SyncFunc<AscendC::HardEvent::MTE2_V>();
     }
 
+    template <bool WithGrad = false>
     __aicore__ inline void SaveDpProducts(uint32_t rowStart, uint32_t nLoc, uint32_t singleM, uint32_t singleN,
                                           uint32_t rowStrideInPlane)
     {
@@ -496,7 +494,11 @@ private:
         for (uint32_t r = 0; r < singleM; r += kDecodeRows) {
             const uint16_t take = singleM - r < kDecodeRows ? singleM - r : kDecodeRows;
             // dHp is resident in UB. Reuse its GM tile for the low half of the FP32 products.
-            ComputeForwardAux<true>(take, singleN, rowStrideInPlane, mxDecoded_, r, singleN);
+            if constexpr (WithGrad) {
+                ComputeSwigluGradImpl<true, true, true>(take, singleN, rowStrideInPlane, r);
+            } else {
+                ComputeForwardAux<true>(take, singleN, rowStrideInPlane, mxDecoded_, r, singleN);
+            }
             SyncFunc<AscendC::HardEvent::V_MTE3>();
             const uint32_t half = singleN / 2;
             AscendC::DataCopyExtParams p{take, half * 4, half / 8, (outputF_ / 2 - half) * 4, 0};
@@ -693,8 +695,9 @@ private:
         }
     }
 
-    template <bool UseSavedClipMask, bool ComputeHp = false>
-    __aicore__ inline void ComputeSwigluGradImpl(uint16_t mSize, uint16_t nSize, uint32_t rowStride)
+    template <bool UseSavedClipMask, bool ComputeHp = false, bool ComputeDp = false>
+    __aicore__ inline void ComputeSwigluGradImpl(uint16_t mSize, uint16_t nSize, uint32_t rowStride,
+                                                 uint32_t firstRow = 0)
     {
         constexpr uint16_t kElementsPerRepeat = 256U / sizeof(bfloat16_t);
         const uint16_t repeatsPerRow = static_cast<uint16_t>(
@@ -713,16 +716,19 @@ private:
         auto* weights16 = (__ubuf__ bfloat16_t*)packedWeightBf16Ub_.GetPhyAddr();
         auto* weights32 = (__ubuf__ float*)packedWeightFp32Ub_.GetPhyAddr();
 
+        auto* dpProducts = (__ubuf__ float*)mxDecoded_.GetPhyAddr();
         __VEC_SCOPE__
         {
             for (uint16_t row = 0; row < mSize; ++row) {
                 AscendC::Reg::RegTensor<float> pFp;
                 if (params_.topkWeightType) {
-                    AscendC::Reg::DataCopy<float, AscendC::Reg::LoadDist::DIST_BRC_B32>(pFp, weights32 + row);
+                    AscendC::Reg::DataCopy<float, AscendC::Reg::LoadDist::DIST_BRC_B32>(pFp,
+                                                                                        weights32 + firstRow + row);
                 } else {
                     AscendC::Reg::RegTensor<bfloat16_t> pBf;
                     auto all = AscendC::Reg::CreateMask<float, AscendC::Reg::MaskPattern::ALL>();
-                    AscendC::Reg::DataCopy<bfloat16_t, AscendC::Reg::LoadDist::DIST_BRC_B16>(pBf, weights16 + row);
+                    AscendC::Reg::DataCopy<bfloat16_t, AscendC::Reg::LoadDist::DIST_BRC_B16>(
+                        pBf, weights16 + firstRow + row);
                     AscendC::Reg::Cast<float, bfloat16_t, kBackwardCastBF16ToFP32>(pFp, pBf, all);
                 }
                 uint32_t remaining = nSize;
@@ -730,7 +736,7 @@ private:
                     AscendC::Reg::MaskReg mask = AscendC::Reg::CreateMask<float, AscendC::Reg::MaskPattern::ALL>();
                     AscendC::Reg::RegTensor<bfloat16_t> dH0, dH1, gate0, gate1, up0, up1;
                     AscendC::Reg::RegTensor<float> dHFp0, dHFp1, gateFp0, gateFp1, upFp0, upFp1;
-                    const uint32_t offset = row * rowStride + repeat * kElementsPerRepeat;
+                    const uint32_t offset = (firstRow + row) * rowStride + repeat * kElementsPerRepeat;
                     AscendC::Reg::DataCopy(dH0, dH + offset);
                     AscendC::Reg::DataCopy(gate0, gate + offset);
                     AscendC::Reg::DataCopy(up0, up + offset);
@@ -751,8 +757,9 @@ private:
                         const uint32_t consumed = repeat * kElementsPerRepeat + part * kPartSize;
                         uint32_t partRemaining = consumed < nSize ? nSize - consumed : 0;
                         AscendC::Reg::MaskReg mask = AscendC::Reg::UpdateMask<float>(partRemaining);
-                        auto dHFp = part == 0 ? dHFp0 : dHFp1;
-                        AscendC::Reg::Mul(dHFp, dHFp, pFp, mask);
+                        auto dHpRaw = part == 0 ? dHFp0 : dHFp1;
+                        AscendC::Reg::RegTensor<float> dHFp;
+                        AscendC::Reg::Mul(dHFp, dHpRaw, pFp, mask);
                         auto gateFp = part == 0 ? gateFp0 : gateFp1;
                         auto upFp = part == 0 ? upFp0 : upFp1;
                         AscendC::Reg::RegTensor<float> oneFp, neg, exp, denom, sig, silu;
@@ -813,6 +820,11 @@ private:
                             AscendC::Reg::RegTensor<float> hp;
                             AscendC::Reg::RegTensor<bfloat16_t> hpBf;
                             AscendC::Reg::Mul(hp, silu, upC, mask);
+                            if constexpr (ComputeDp) {
+                                AscendC::Reg::RegTensor<float> product;
+                                AscendC::Reg::Mul(product, dHpRaw, hp, mask);
+                                AscendC::Reg::DataCopy(dpProducts + row * nSize + consumed, product, mask);
+                            }
                             AscendC::Reg::Mul(hp, hp, pFp, mask);
                             AscendC::Reg::Cast<bfloat16_t, float, kBackwardCastFP32ToBF16>(hpBf, hp, mask);
                             AscendC::Reg::DataCopy<bfloat16_t, AscendC::Reg::StoreDist::DIST_PACK_B32>(
@@ -847,43 +859,18 @@ private:
                 }
             }
         }
-        if constexpr (UseSavedClipMask) {
-            // Vector stores must retire before scalar clears masked gradient
-            // lanes. Order the scalar stores against both possible consumers:
-            // the next MTE2 reuse and the current MTE3 dZ writeout.
-            AscendC::SyncFunc<AscendC::HardEvent::V_S>();
+        if constexpr (UseSavedClipMask && !ComputeDp) {
+            AscendC::PipeBarrier<PIPE_V>();
             ApplySavedClipGradientMask(mSize, nSize, rowStride);
-            AscendC::SyncFunc<AscendC::HardEvent::S_MTE2>();
-            AscendC::SyncFunc<AscendC::HardEvent::S_MTE3>();
         }
     }
 
     __aicore__ inline void ApplySavedClipGradientMask(uint16_t rows, uint32_t columns, uint32_t rowStride)
     {
-        auto dGateBits = l0cOutUbFirst_.template ReinterpretCast<uint16_t>();
-        auto dUpBits = l0cOutUbSecond_.template ReinterpretCast<uint16_t>();
-        auto gateHighWords = gateHighMask_.template ReinterpretCast<uint32_t>();
-        auto upLowWords = upLowMask_.template ReinterpretCast<uint32_t>();
-        auto upHighWords = upHighMask_.template ReinterpretCast<uint32_t>();
-        const uint32_t groups = columns / 32;
-        for (uint16_t row = 0; row < rows; ++row) {
-            for (uint32_t group = 0; group < groups; ++group) {
-                const uint32_t gateHigh = gateHighWords.GetValue(row * 8 + group);
-                const uint32_t upClipped = upLowWords.GetValue(row * 8 + group) | upHighWords.GetValue(row * 8 + group);
-                if ((gateHigh | upClipped) == 0U) {
-                    continue;
-                }
-                for (uint32_t bit = 0; bit < 32; ++bit) {
-                    const uint32_t index = row * rowStride + group * 32 + bit;
-                    if ((gateHigh & (1U << bit)) != 0U) {
-                        dGateBits.SetValue(index, 0U);
-                    }
-                    if ((upClipped & (1U << bit)) != 0U) {
-                        dUpBits.SetValue(index, 0U);
-                    }
-                }
-            }
-        }
+        SetClippedValues(l0cOutUbFirst_, gateHighMask_, rows, columns, rowStride, 0U);
+        SetClippedValues(l0cOutUbSecond_, upHighMask_, rows, columns, rowStride, 0U);
+        AscendC::PipeBarrier<PIPE_V>();
+        SetClippedValues(l0cOutUbSecond_, upLowMask_, rows, columns, rowStride, 0U);
     }
 
     // H = SiLU(gate) * up, written to extraA_ (UB offset 2*kTileBytes).
@@ -968,9 +955,6 @@ private:
     AscendC::LocalTensor<bfloat16_t> extraA_{AscendC::TPosition::VECIN, 2 * kTileBytes, kTileElements};
     AscendC::LocalTensor<int8_t> mxData_{AscendC::TPosition::VECIN, kMxDataOffset, kMxDataElements};
     AscendC::LocalTensor<int8_t> mxScale_{AscendC::TPosition::VECIN, kMxScaleOffset, kMxScaleBytes};
-    AscendC::LocalTensor<bfloat16_t> mxScaleBf16_{AscendC::TPosition::VECCALC, kMxScaleBf16Offset,
-                                                  kMxScaleBf16Elements};
-    AscendC::LocalTensor<float> mxScaleFp32_{AscendC::TPosition::VECCALC, kMxScaleFp32Offset, kMxScaleFp32Elements};
     AscendC::LocalTensor<float> mxDecoded_{AscendC::TPosition::VECCALC, kMxDecodedOffset, kMxDecodedElements};
     AscendC::LocalTensor<int8_t> gateHighMask_{AscendC::TPosition::VECIN, kGateHighOffset, kClipMaskBytes};
     AscendC::LocalTensor<int8_t> upLowMask_{AscendC::TPosition::VECIN, kUpLowOffset, kClipMaskBytes};

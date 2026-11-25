@@ -170,6 +170,39 @@ private:
         AscendC::DataCopyPad(dst, src, p);
     }
 
+    // Expand compact E8M0 scales to the 32-byte UB rows read by MTE3.
+    // Each register gathers eight rows. Only the live scale bytes are DMA'd to GM.
+    __aicore__ static inline void ExpandScaleRows(__ubuf__ uint16_t* dst, __ubuf__ uint16_t* src, uint16_t rows,
+                                                  uint16_t wordsPerRow)
+    {
+        namespace V = AscendC::Reg;
+        __VEC_SCOPE__
+        {
+            auto all = V::CreateMask<uint16_t, V::MaskPattern::ALL>();
+            V::RegTensor<int16_t> lanes;
+            V::RegTensor<uint16_t> low, row, within, indices, srcIndex, fieldMask, packed, out;
+            V::Arange(lanes, int16_t(0));
+            auto& index = reinterpret_cast<V::RegTensor<uint16_t>&>(lanes);
+            V::Duplicate(fieldMask, uint16_t(wordsPerRow - 1), all);
+            V::And(within, index, fieldMask, all);
+            V::ShiftRights(row, index, int16_t(4), all);
+            V::Muls(low, row, wordsPerRow, all);
+            V::Add(indices, low, within, all);
+            const uint16_t rowsPerLoad = 128U / wordsPerRow;
+            for (uint16_t base = 0; base < rows; base += rowsPerLoad) {
+                V::LoadAlign(packed, src + base * wordsPerRow);
+                const uint16_t valid = rows - base < rowsPerLoad ? rows - base : rowsPerLoad;
+                for (uint16_t r = 0; r < valid; r += 8U) {
+                    V::Adds(srcIndex, indices, uint16_t(r * wordsPerRow), all);
+                    V::Gather(out, packed, srcIndex);
+                    uint32_t remaining = (valid - r) * 16U;
+                    auto active = V::UpdateMask<uint16_t>(remaining);
+                    V::StoreAlign(dst + (base + r) * 16U, out, active);
+                }
+            }
+        }
+    }
+
     __aicore__ inline void Quantize(AscendC::LocalTensor<bfloat16_t> src, AscendC::LocalTensor<int8_t> data,
                                     AscendC::LocalTensor<int8_t> scales, uint16_t rows, uint16_t columns)
     {
@@ -185,6 +218,13 @@ private:
         // UB DMA sources need 32-byte rows. GM scales stay compact [row,F/32].
         auto packed = (__ubuf__ int8_t*)compactScale_.GetPhyAddr();
         auto padded = (__ubuf__ int8_t*)scales.GetPhyAddr();
+        const uint32_t scaleBytes = uint32_t(rows) * (columns / 32U);
+        if ((columns == 64U || columns == 128U || columns == 256U) &&
+            (scaleBytes + 255U) / 256U * 256U <= Layout::kGroups * sizeof(uint16_t)) {
+            ExpandScaleRows(reinterpret_cast<__ubuf__ uint16_t*>(padded), reinterpret_cast<__ubuf__ uint16_t*>(packed),
+                            rows, columns / 64U);
+            return;
+        }
         __VEC_SCOPE__
         {
             for (uint16_t r = 0; r < rows; ++r) {

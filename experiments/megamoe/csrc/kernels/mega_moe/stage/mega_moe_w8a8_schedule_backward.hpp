@@ -268,10 +268,18 @@ __aicore__ inline void FusedTrain::ConsumeGradientTiles(uint32_t& combineExpert,
 
 __aicore__ inline void FusedTrain::PrepareDExpert(uint32_t e)
 {
-    const uint32_t worker = VCore() / 2, workers = GetBlockNum(), start = Begin(e), m = Rows(e);
-    WaitWorkers(DZ_DONE, e, VCores());
-
+    const uint32_t worker = VCore() / 2, workers = GetBlockNum(), m = Rows(e);
+    if (a.saveMode == kSaveNone) {
+        WaitWorkers(DISPATCH_EXPERT_DONE, e, workers);
+    } else {
+        for (uint32_t row = 0; row < m; row += 256) {
+            const uint32_t rows = m - row < 256 ? m - row : 256;
+            WaitFlagValue(DISPATCH_ROW_READY, e, row / 256, rows);
+        }
+    }
     TokenQuantRange(a.deff, a.dt, a.sdt, a.hidden, worker, workers, e);
+    // dW2 also consumes Hp, and dX will overwrite the dHp input after publication.
+    WaitWorkers(DZ_DONE, e, VCores());
     PublishFlag(D_WGRAD_READY, e, worker, 1);
 }
 
@@ -314,9 +322,17 @@ __aicore__ inline bool FusedTrain::CanRunReadyDw1Tile()
     return false;
 }
 
+__aicore__ inline Gemm::Params FusedTrain::MakeDw1Params(uint32_t expert, uint32_t k) const
+{
+    const uint32_t before = PadBegin(expert);
+    return MakeParams(Addr(a.zt + uint64_t(before) * 2 * a.ffn), Addr(a.xt + uint64_t(before) * a.hidden),
+                      Addr(a.szt + uint64_t(before / 32) * 2 * a.ffn), Addr(a.sxt + uint64_t(before / 32) * a.hidden),
+                      Addr(a.dw1 + uint64_t(expert) * 2 * a.ffn * a.hidden * 2), 2 * a.ffn, a.hidden, k);
+}
+
 __aicore__ inline void FusedTrain::RunReadyDw1Tile()
 {
-    const uint32_t e = dw1Expert_, k = (Rows(e) + 63) / 64 * 64, before = PadBegin(e);
+    const uint32_t e = dw1Expert_, k = (Rows(e) + 63) / 64 * 64;
     uint32_t row = 0, column = 0, rows = 0, columns = 0;
     if (timer_ != nullptr) {
         Scheduler scheduler(Catlass::GemmCoord{2 * a.ffn, a.hidden, k}, Catlass::MatrixCoord{256U, 256U});
@@ -330,11 +346,7 @@ __aicore__ inline void FusedTrain::RunReadyDw1Tile()
     MegaMoeTrainTimerPassiveScope timer(timer_, MegaMoeTrainTimer::AIC_BW_DW1, e, row, rows, column, 256, 256, k,
                                         columns);
 
-    cubeGemm.Run(
-        MakeParams(Addr(a.zt + uint64_t(before) * 2 * a.ffn), Addr(a.xt + uint64_t(before) * a.hidden),
-                   Addr(a.szt + uint64_t(before / 32) * 2 * a.ffn), Addr(a.sxt + uint64_t(before / 32) * a.hidden),
-                   Addr(a.dw1 + uint64_t(e) * 2 * a.ffn * a.hidden * 2), 2 * a.ffn, a.hidden, k),
-        dw1Job_);
+    cubeGemm.Run(MakeDw1Params(e, k), dw1Job_);
     SetFlag<HardEvent::FIX_S>(7);
     WaitFlag<HardEvent::FIX_S>(7);
 
@@ -398,15 +410,20 @@ __aicore__ inline void FusedTrain::PrepareXExpert(uint32_t e, bool forward)
 
 __aicore__ inline void FusedTrain::ComputeWgrad()
 {
-    while (dw1Expert_ < a.experts) {
-        if (CanRunReadyDw1Tile()) {
-            RunReadyDw1Tile();
-        } else if (dw1Expert_ < a.experts) {
-            // The final expert's X preparation may still be in flight after
-            // dX. Preserve both producer fences before draining its tiles.
-            WaitWorkers(DZ_DONE, dw1Expert_, VCores());
-            WaitWorkers(WGRAD_READY, dw1Expert_, GetBlockNum());
-        }
+    // dX has already waited for every producer's dZ. Drain the remaining
+    // disjoint output tiles in expert order, waiting once for X and once for FIX.
+    for (; dw1Expert_ < a.experts; ++dw1Expert_, dw1Job_ = GetBlockIdx()) {
+        const uint32_t rows = Rows(dw1Expert_);
+        if (!rows) continue;
+        const uint32_t k = (rows + 63U) / 64U * 64U;
+        Scheduler scheduler(Catlass::GemmCoord{2U * a.ffn, a.hidden, k}, Catlass::MatrixCoord{256U, 256U});
+        if (dw1Job_ >= scheduler.GetCoreLoops()) continue;
+        WaitWorkers(WGRAD_READY, dw1Expert_, GetBlockNum());
+        const auto params = MakeDw1Params(dw1Expert_, k);
+        MegaMoeTrainTimerPassiveScope timer(timer_, MegaMoeTrainTimer::AIC_BW_DW1, dw1Expert_, 0U, 2U * a.ffn);
+        for (; dw1Job_ < scheduler.GetCoreLoops(); dw1Job_ += GetBlockNum()) cubeGemm.Run(params, dw1Job_);
+        SetFlag<HardEvent::FIX_S>(7);
+        WaitFlag<HardEvent::FIX_S>(7);
     }
     PublishFlag(DW_DONE, 0, GetBlockIdx(), 1);
 }

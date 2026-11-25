@@ -86,6 +86,7 @@ private:
     // Per-Cube cursor, initialized at backward entry before any use.
     uint32_t dw1Expert_, dw1Job_, dw1GradReady_, dw1XReady_;
     __aicore__ inline bool CanRunReadyDw1Tile();
+    __aicore__ inline Gemm::Params MakeDw1Params(uint32_t expert, uint32_t k) const;
     __aicore__ inline void RunReadyDw1Tile();
     __aicore__ inline void WaitDw2InputsWithDw1(uint32_t e);
     __aicore__ inline uint32_t WeightBytes() const

@@ -125,6 +125,29 @@ __aicore__ inline void FusedTrain::ComputeDp(uint32_t worker, uint32_t workers)
     }
 }
 
+// Token-direction MX quantization consumes complete 64-row groups.
+__aicore__ inline void ZeroTokenTail(LocalTensor<uint16_t> tile, uint32_t columns, uint32_t validRows)
+{
+    if (validRows == 64) return;
+    auto* values = reinterpret_cast<__ubuf__ uint16_t*>(tile.GetPhyAddr());
+    __VEC_SCOPE__
+    {
+        uint32_t full = 64U;
+        uint32_t live = validRows;
+        auto all = Reg::CreateMask<uint16_t, Reg::MaskPattern::ALL>();
+        auto group = Reg::UpdateMask<uint16_t>(full);
+        auto used = Reg::UpdateMask<uint16_t>(live);
+        Reg::MaskReg padding;
+        Reg::Xor(padding, group, used, all);
+        Reg::RegTensor<uint16_t> zero;
+        Reg::Duplicate(zero, uint16_t(0), all);
+        for (uint16_t column = 0; column < columns; ++column) {
+            Reg::DataCopy(values + column * 64U, zero, padding);
+        }
+    }
+    PipeBarrier<PIPE_V>();
+}
+
 // Quantize Hp from the third UB tile before it is reused by SwiGLUGrad.
 template <bool PreserveDUp>
 __aicore__ inline void FusedTrain::QuantizeHpUb(LocalTensor<bfloat16_t> hp, uint32_t stride, uint32_t e, uint32_t row,
@@ -153,12 +176,7 @@ __aicore__ inline void FusedTrain::QuantizeHpUb(LocalTensor<bfloat16_t> hp, uint
                                          TransDataTo5HDParams{false, false, uint8_t(cols / 16), 64, 1});
             }
             PipeBarrier<PIPE_V>();
-            if (valid < 64) {
-                SyncFunc<HardEvent::V_S>();
-                for (uint32_t c = 0; c < cols; ++c)
-                    for (uint32_t r = valid; r < 64; ++r) transposed.SetValue(c * 64 + r, uint16_t(0));
-                SyncFunc<HardEvent::S_V>();
-            }
+            ZeroTokenTail(transposed, cols, valid);
             hpQuant.QuantizeTile(transposed.ReinterpretCast<bfloat16_t>(), Addr(a.bt + uint64_t(before) * a.ffn),
                                  Addr(a.sbt + uint64_t(before / 32) * a.ffn), cols, 64, pad,
                                  uint64_t(column + band) * pad + row + token, true);
@@ -197,17 +215,7 @@ __aicore__ inline void FusedTrain::TokenQuantUb(LocalTensor<bfloat16_t> source, 
                                          TransDataTo5HDParams{false, false, uint8_t(columns / 16), 64, 1});
             }
             PipeBarrier<PIPE_V>();
-            // Transpose may copy stale values from the allocated but invalid
-            // tail rows. Clear them before quantizing the expert's final group.
-            if (validRows < 64) {
-                // A vector Duplicate at +validRows need not be 32B aligned.
-                // The infrequent expert tail uses 16-bit scalar stores
-                // with explicit V/S ordering; complete groups stay vector-only.
-                SyncFunc<HardEvent::V_S>();
-                for (uint32_t c = 0; c < columns; ++c)
-                    for (uint32_t r = validRows; r < 64; ++r) transposed.SetValue(c * 64 + r, uint16_t(0));
-                SyncFunc<HardEvent::S_V>();
-            }
+            ZeroTokenTail(transposed, columns, validRows);
             quant.QuantizeTile(transposed.ReinterpretCast<bfloat16_t>(), Addr(q + uint64_t(before) * width),
                                Addr(scale + uint64_t(before / 32) * width), columns, 64, pad,
                                uint64_t(feature + band) * pad + localRow + token, true);
@@ -237,10 +245,12 @@ __aicore__ inline void FusedTrain::TokenQuantRange(uint64_t source, uint64_t q, 
             const uint32_t token = (task / bands) * 64;
             const uint32_t feature = band * 128;
             const uint32_t columns = width - feature < 128 ? width - feature : 128;
-            SyncFunc<HardEvent::MTE2_V>();
-            Duplicate(matrix, uint16_t(0), 8192);
+            const uint32_t validRows = rows - token < 64 ? rows - token : 64;
+            if (validRows < 64) {
+                SyncFunc<HardEvent::MTE2_V>();
+                Duplicate(matrix, uint16_t(0), 8192);
+            }
             SyncFunc<HardEvent::V_MTE2>();
-            const uint32_t validRows = token < rows ? (rows - token < 64 ? rows - token : 64) : 0;
             GlobalTensor<uint16_t> src;
             src.SetGlobalBuffer(reinterpret_cast<__gm__ uint16_t*>(source) + uint64_t(Begin(e) + token) * width +
                                 feature);
