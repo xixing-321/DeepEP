@@ -114,6 +114,7 @@ def main():
             args.hidden,
             args.ffn,
             mma_type="fp8xfp8",
+            ranks_per_node=int(os.environ.get("LOCAL_WORLD_SIZE", 0)),
             need_grad=True,
             max_recv_tokens=args.max_recv_tokens,
             gmm1_save_type=args.save_gmm1_output,

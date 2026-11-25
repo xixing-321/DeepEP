@@ -50,7 +50,7 @@ __aicore__ inline void FusedTrain::GradientTile(uint32_t e, uint32_t localRow, u
     }
 }
 
-__aicore__ inline void FusedTrain::ComputeDp()
+__aicore__ inline void FusedTrain::ComputeDp(uint32_t worker, uint32_t workers)
 {
     const uint32_t rows = Total();
     if (rows == 0) {
@@ -85,7 +85,7 @@ __aicore__ inline void FusedTrain::ComputeDp()
     swi.UpdateNextProblem({0, 2 * f, a.hidden, 0});
     swi.SetDpInput(Addr(a.db));
 
-    for (uint32_t row = VCore() * batch; row < rows; row += VCores() * batch) {
+    for (uint32_t row = worker * batch; row < rows; row += workers * batch) {
         const uint32_t take = rows - row < batch ? rows - row : batch;
         for (uint32_t col = 0; col < f; col += 256) {
             const uint32_t cols = f - col < 256 ? f - col : 256;

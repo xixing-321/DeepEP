@@ -167,7 +167,7 @@ private:
                                         uint32_t width, uint32_t e, uint32_t row, uint32_t col, uint32_t rows,
                                         uint32_t cols);
     __aicore__ inline void SendTile(uint32_t e, uint32_t row, uint32_t col, uint32_t rows, uint32_t cols);
-    __aicore__ inline void ComputeDp();
+    __aicore__ inline void ComputeDp(uint32_t worker, uint32_t workers);
     __aicore__ inline void SendDpRows(uint32_t start, uint32_t rows, LocalTensor<float> sums);
     __aicore__ inline uint32_t RowFlagCount() const
     {

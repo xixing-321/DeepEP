@@ -113,6 +113,8 @@ B>256 保留 Prefill 输入协议，所有路径保留输出跨卡同步。
 - `save_dispatched_x=True` 保留专家端的 FP8 X、E8M0 scale 和 TopK weight。设为 `False` 时，框架为本次前向设置无参的 `sym_buffer.dispatch_rebuilder`。反向调用它获取三个连续 Tensor，形状依次为 `[R,H]`、`[R,H/32]`、`[R]`，其中 `R` 是专家端实际接收行数，TopK weight 的 dtype 与前向输入一致。按本地专家、源 EP rank、源内 token 和 TopK slot 排序，三个 Tensor 的第 `i` 行对应同一条路由。算子保留前向的路由表及专家行偏移。异步重建由回调安排完成等待，再交给反向读取。
 - `gmm1_save_type="mxfp8"` 保存沿特征维量化的 Gate/Up。反向从 BF16 W1、W2 量化出转置方向的权重，分别用于 dX 和 dHp。`"none"` 再保留 W1 的前向方向量化结果，按整专家重算 Gate/Up。两个模式的 dW1/dW2 都由对应激活与梯度计算。
 
+多机训练时，若 EP rank 按节点连续编号，每台机器在该 EP 组内有相同数量的 rank，构造 `SymmBuffer` 时将 `ranks_per_node` 设为这个数量。例如两机各 8 个 EP rank 时传 8，前向 Dispatch 会交错访问两台机器的源 rank。其他分组布局沿用默认值 0。
+
 W8A8 训练的权重量化、前向和反向均在调用方当前 NPU 流上执行。同一 buffer 切换调用流时，新流等待上一条流已提交的工作。MXFP8 反向复用解码后的 Gate/Up；开启裁剪时，梯度沿用前向保存的裁剪掩码。
 
 <a name="bf16前向与训练"></a>

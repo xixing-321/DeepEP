@@ -434,10 +434,12 @@ __aicore__ inline void FusedTrain::BackwardPipeline()
         // Each Vector lane publishes DZ_DONE in expert order. The final
         // publication proves every dHp tile is available for the existing
         // reduction, while a different lane can still be sending dX.
-        WaitWorkers(DZ_DONE, a.experts - 1, VCores());
-        {
+        const bool splitDxAndDp = a.saveMode == kSaveMxFp8;
+        if (!splitDxAndDp || VCore() % 2 == 1) {
+            WaitWorkers(DZ_DONE, a.experts - 1, VCores());
             MegaMoeTrainTimerFixedScope timer(timer_, MegaMoeTrainTimer::AIV_BW_DP_REDUCE);
-            ComputeDp();
+            // AIV0 drains dX while AIV1 reduces and returns complete dP rows.
+            ComputeDp(splitDxAndDp ? VCore() / 2 : VCore(), splitDxAndDp ? GetBlockNum() : VCores());
         }
 
         for (uint32_t e = 0; e < a.experts; ++e)
