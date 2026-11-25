@@ -343,6 +343,19 @@ private:
         const uint32_t scaleWidth = outputF_ / 32;
         const uint32_t groups = singleN / 32;
         const bool hasLowMask = params_.gateHighGmAddr != nullptr;
+        // Mask rows occupy dedicated UB for the lifetime of this tile.
+        if (hasLowMask) {
+            const uint32_t maskWidthBytes = scaleWidth * sizeof(uint32_t);
+            const int64_t index = static_cast<int64_t>(rowStart) * maskWidthBytes + (nLoc / 32) * sizeof(uint32_t);
+            AscendC::SyncFunc<AscendC::HardEvent::S_MTE2>();
+            AscendC::SyncFunc<AscendC::HardEvent::V_MTE2>();
+            CopyMxRowsToUb(lowMaskGm, index, singleM, groups * sizeof(uint32_t), maskWidthBytes,
+                           gatePlane ? gateHighMask_ : upLowMask_);
+            if (!gatePlane) {
+                CopyMxRowsToUb(highMaskGm, index, singleM, groups * sizeof(uint32_t), maskWidthBytes, upHighMask_);
+            }
+            AscendC::SyncFunc<AscendC::HardEvent::MTE2_S>();
+        }
         for (uint32_t chunkRow = 0; chunkRow < singleM; chunkRow += kDecodeRows) {
             const uint16_t rows =
                 static_cast<uint16_t>(singleM - chunkRow > kDecodeRows ? kDecodeRows : singleM - chunkRow);
@@ -354,38 +367,17 @@ private:
             AscendC::SyncFunc<AscendC::HardEvent::V_MTE2>();
             CopyMxRowsToUb(dataGm, dataIndex, rows, singleN, outputF_, mxData_);
             CopyMxRowsToUb(scaleGm, scaleIndex, rows, groups, scaleWidth, mxScale_);
-            if (hasLowMask) {
-                const uint32_t maskWidthBytes = scaleWidth * sizeof(uint32_t);
-                const int64_t maskIndex =
-                    static_cast<int64_t>(globalRow) * maskWidthBytes + (nLoc / 32) * sizeof(uint32_t);
-                if (gatePlane) {
-                    CopyMxRowsToUb(lowMaskGm, maskIndex, rows, groups * sizeof(uint32_t), maskWidthBytes,
-                                   gateHighMask_[chunkRow * kMxScaleRowBytes]);
-                } else {
-                    CopyMxRowsToUb(lowMaskGm, maskIndex, rows, groups * sizeof(uint32_t), maskWidthBytes,
-                                   upLowMask_[chunkRow * kMxScaleRowBytes]);
-                }
-                if (!gatePlane) {
-                    CopyMxRowsToUb(highMaskGm, maskIndex, rows, groups * sizeof(uint32_t), maskWidthBytes,
-                                   upHighMask_[chunkRow * kMxScaleRowBytes]);
-                }
-                AscendC::SyncFunc<AscendC::HardEvent::MTE2_S>();
-            }
             AscendC::SyncFunc<AscendC::HardEvent::MTE2_V>();
             DecodeMxFp8Rows(rows, singleN, groups);
             AscendC::PipeBarrier<PIPE_V>();
             AscendC::Cast(dst[chunkRow * singleN], mxDecoded_, AscendC::RoundMode::CAST_RINT,
                           static_cast<uint32_t>(rows) * singleN);
-            if (hasLowMask) {
-                // The masks record decisions made from raw forward BF16.
-                // Force masked values beyond the finite limit so the existing
-                // FP32 clamp restores exactly +/-L and produces a zero range
-                // indicator, without re-inferring the decision from MXFP8.
-                AscendC::SyncFunc<AscendC::HardEvent::V_S>();
-                ApplyClipSentinels(dst[chunkRow * singleN], rows, singleN, groups, gatePlane, chunkRow);
-                AscendC::SyncFunc<AscendC::HardEvent::S_MTE2>();
-                AscendC::SyncFunc<AscendC::HardEvent::S_V>();
-            }
+        }
+        if (hasLowMask) {
+            AscendC::SyncFunc<AscendC::HardEvent::V_S>();
+            ApplyClipSentinels(dst, singleM, singleN, groups, gatePlane);
+            AscendC::SyncFunc<AscendC::HardEvent::S_MTE2>();
+            AscendC::SyncFunc<AscendC::HardEvent::S_V>();
         }
     }
 
@@ -450,7 +442,7 @@ private:
     }
 
     __aicore__ inline void ApplyClipSentinels(AscendC::LocalTensor<bfloat16_t> dst, uint16_t rows, uint32_t columns,
-                                              uint32_t groups, bool gatePlane, uint32_t maskRow)
+                                              uint32_t groups, bool gatePlane)
     {
         auto dstBits = dst.template ReinterpretCast<uint16_t>();
         auto gateHighWords = gateHighMask_.template ReinterpretCast<uint32_t>();
@@ -463,9 +455,9 @@ private:
         constexpr uint16_t negativeInfinityBf16 = 0xff80U;
         for (uint16_t row = 0; row < rows; ++row) {
             for (uint32_t group = 0; group < groups; ++group) {
-                const uint32_t low = gatePlane ? gateHighWords.GetValue((maskRow + row) * 8 + group)
-                                               : upLowWords.GetValue((maskRow + row) * 8 + group);
-                const uint32_t high = gatePlane ? 0U : highWords.GetValue((maskRow + row) * 8 + group);
+                const uint32_t low = gatePlane ? gateHighWords.GetValue(row * 8 + group)
+                                               : upLowWords.GetValue(row * 8 + group);
+                const uint32_t high = gatePlane ? 0U : highWords.GetValue(row * 8 + group);
                 if ((low | high) == 0U) {
                     continue;
                 }

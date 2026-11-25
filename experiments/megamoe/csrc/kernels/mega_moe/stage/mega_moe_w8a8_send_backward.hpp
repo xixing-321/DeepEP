@@ -36,22 +36,43 @@ __aicore__ inline void FusedTrain::SendTile(uint32_t e, uint32_t localRow, uint3
     SyncFunc<HardEvent::MTE2_S>();
     SyncFunc<HardEvent::MTE2_MTE3>();
 
-    uint32_t lastRank = 0xffffffffU;
-    uint64_t remoteBase = 0;
-    for (uint32_t row = 0; row < rows; ++row) {
+    // Rows from one peer often visit equally spaced TopK slots. Submit each
+    // such run as a strided DMA. A peer change or an irregular stride starts
+    // a new run; the remote address of each route stays the same.
+    auto routeAt = [&](uint32_t row) __aicore__ -> uint64_t {
+        return uint64_t(maps.GetValue(row * 3U + 1U)) * a.topk + maps.GetValue(row * 3U + 2U);
+    };
+    uint32_t row = 0;
+    while (row < rows) {
         const uint32_t rank = maps.GetValue(row * 3U);
-        if (rank != lastRank) {
-            remoteBase = reinterpret_cast<uint64_t>(Peer(rank, 0));
-            lastRank = rank;
-        }
-        const uint32_t token = maps.GetValue(row * 3U + 1U);
-        const uint32_t slot = maps.GetValue(row * 3U + 2U);
-        const uint64_t route = uint64_t(token) * a.topk + slot;
-        GlobalTensor<bfloat16_t> target;
-        target.SetGlobalBuffer(
-            reinterpret_cast<__gm__ bfloat16_t*>(remoteBase + peer.result + (route * a.hidden + col) * 2U));
-        target.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
-        DataCopyPad(target, tile[row * ubStride], DataCopyExtParams{1, cols * 2U, 0, 0, 0});
+        const uint64_t remoteBase = reinterpret_cast<uint64_t>(Peer(rank, 0));
+        do {
+            const uint32_t first = row++;
+            const uint64_t route = routeAt(first);
+            uint32_t gap = 0;
+            if (row < rows && uint32_t(maps.GetValue(row * 3U)) == rank) {
+                const uint64_t next = routeAt(row);
+                if (next > route) {
+                    const uint64_t step = next - route;
+                    const uint64_t gapBytes = (step * a.hidden - cols) * sizeof(bfloat16_t);
+                    if (gapBytes <= UINT32_MAX) {
+                        gap = static_cast<uint32_t>(gapBytes);
+                        ++row;
+                        uint64_t expected = next + step;
+                        while (row < rows && uint32_t(maps.GetValue(row * 3U)) == rank && routeAt(row) == expected) {
+                            ++row;
+                            expected += step;
+                        }
+                    }
+                }
+            }
+            GlobalTensor<bfloat16_t> target;
+            target.SetGlobalBuffer(
+                reinterpret_cast<__gm__ bfloat16_t*>(remoteBase + peer.result + (route * a.hidden + col) * 2U));
+            target.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
+            DataCopyPad(target, tile[first * ubStride],
+                        DataCopyExtParams{static_cast<uint16_t>(row - first), cols * 2U, 0, gap, 0});
+        } while (row < rows && uint32_t(maps.GetValue(row * 3U)) == rank);
     }
     // One completion per tile, never the old read/write/wait per token.
     SyncFunc<HardEvent::MTE3_S>();
