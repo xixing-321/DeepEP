@@ -153,8 +153,10 @@ BackwardResult BF16Plan::backward(torch::Tensor gradY, torch::Tensor topkWeights
     for (const auto* tensor : {&gradY, &topkWeights, &weight1, &weight2}) {
         c10_npu::NPUCachingAllocator::recordStream(tensor->storage().data_ptr(), stream);
     }
+    if (stream.unwrap() != context_stream_) {
+        c10_npu::NPUCachingAllocator::recordStream(context.storage().data_ptr(), stream);
+    }
     // Rebuilt dispatch and hook-restored storage can belong to a different stream.
-    allocations_.RecordIfForeign(context);
     allocations_.RecordIfForeign(trainingSavedState);
     allocations_.RecordIfForeign(dispatchOutput);
     return {gradX, gradTopkWeights, gradWeight1, gradWeight2, timer};
@@ -195,7 +197,7 @@ W8A8BackwardPlan::W8A8BackwardPlan(uintptr_t address, int64_t bytes, int64_t max
     FillPeerAddresses(addresses.data(), window, world_);
     // Order initialization after prior uses of a recycled allocation on the plan's stream.
     peers_ = torch::from_blob(addresses.data(), {world}, torch::kInt64).to(like.device(), torch::kInt64);
-    allocations_.RememberAllocation(peers_);
+    peers_stream_ = c10_npu::getCurrentNPUStream(like.get_device()).unwrap();
 }
 
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor> W8A8BackwardPlan::backward(
@@ -276,7 +278,9 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
     a.generation = ++generation_;
     a.limit = static_cast<float>(limit);
     a.topkWeightType = p_type == torch::kFloat32;
-    allocations_.RecordIfForeign(peers_);
+    if (stream.unwrap() != peers_stream_) {
+        c10_npu::NPUCachingAllocator::recordStream(peers_.storage().data_ptr(), stream);
+    }
     a.peers = address(peers_);
     a.x = inputAddress(dy);
     a.packedP = inputAddress(packed_p);

@@ -254,8 +254,10 @@ W8A8ForwardState Plan::training_forward(torch::Tensor x, torch::Tensor ids, torc
     for (const auto* tensor : {&p, &w1, &w2, &s1, &s2}) {
         inputs.RecordIfForeign(*tensor);
     }
-    allocations_.RecordIfForeign(context_);
-    allocations_.RecordIfForeign(workspace_);
+    if (stream.unwrap() != training_plan_stream_) {
+        c10_npu::NPUCachingAllocator::recordStream(context_.storage().data_ptr(), stream);
+        c10_npu::NPUCachingAllocator::recordStream(workspace_.storage().data_ptr(), stream);
+    }
     mega_moe_w8a8_training_forward_do(
         platform_.block_dim, platform_.ub, stream.stream(), ptr(context_), ptr(x), ptr(ids), ptr(p), ptr(w1), ptr(w2),
         ptr(s1), ptr(s2), ptr(out), ptr(saved.counts), ptr(workspace_), ptr(saved.dispatch), ptr(saved.scales),
@@ -369,8 +371,12 @@ ForwardResult BF16Plan::forward(torch::Tensor out, torch::Tensor x, torch::Tenso
     for (const auto* tensor : {&x, &topkIds, &topkWeights, &weight1, &weight2, &out}) {
         c10_npu::NPUCachingAllocator::recordStream(tensor->storage().data_ptr(), stream);
     }
-    allocations_.RecordIfForeign(context);
-    allocations_.RecordIfForeign(workspace_);
+    if (stream.unwrap() != context_stream_) {
+        c10_npu::NPUCachingAllocator::recordStream(context.storage().data_ptr(), stream);
+    }
+    if (stream.unwrap() != workspace_stream_) {
+        c10_npu::NPUCachingAllocator::recordStream(workspace_.storage().data_ptr(), stream);
+    }
     if (weight_before_gmm2_) {
         allocations_.RememberAllocation(routingState);
         if (dispatchOutput.defined()) allocations_.RememberAllocation(dispatchOutput);

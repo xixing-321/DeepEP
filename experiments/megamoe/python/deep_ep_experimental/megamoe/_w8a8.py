@@ -8,7 +8,6 @@ import math
 import torch
 from torch.autograd.function import once_differentiable
 
-from deep_ep._native import npu_api
 from .api import _extension
 
 
@@ -139,41 +138,35 @@ class W8A8Function(torch.autograd.Function):
         runtime = owner._runtime
         with owner._lock:
             runtime.ensure_alive()
-            caller = npu_api().current_stream(runtime.device)
             if ctx.rebuild_dispatch is not None:
                 dispatch, scales, p = _validate_rebuilt_dispatch(ctx.rebuild_dispatch(), owner, ctx.rows, ctx.p_dtype)
-            runtime.stream.wait_stream(caller)
-            with npu_api().stream(runtime.stream):
-                plan = owner._prepare_w8a8_backward(dy)
-                # Hooks can restore the BF16 source weights on a different stream.
-                w1.record_stream(runtime.stream)
-                w2.record_stream(runtime.stream)
-                contiguous_dy = dy.contiguous()
-                if contiguous_dy is not dy:
-                    dy.record_stream(runtime.stream)
-                weights = (*_quantize(w1.transpose(-1, -2)), *_quantize(w2.transpose(-1, -2)))
-                ctx.allocations.remember(weights if contiguous_dy is dy else (*weights, contiguous_dy))
-                if capture is not None:
-                    capture.begin_backward()
-                dx, dp, dw1, dw2, timer = plan.backward(
-                    contiguous_dy,
-                    p,
-                    dispatch,
-                    scales,
-                    maps,
-                    offsets,
-                    () if ctx.recompute else saved,
-                    (*weights, *saved) if ctx.recompute else weights,
-                    ctx.limit,
-                    capture is not None,
-                    ctx.allocations,
-                )
-                if capture is not None:
-                    capture.backward = timer
-            caller.wait_stream(runtime.stream)
-            if caller != runtime.stream:
-                for t in (dx, dp, dw1, dw2):
-                    t.record_stream(caller)
+            caller = runtime.use_caller_stream()
+            plan = owner._prepare_w8a8_backward(dy)
+            # Hooks can restore the BF16 source weights on a different stream.
+            w1.record_stream(caller)
+            w2.record_stream(caller)
+            contiguous_dy = dy.contiguous()
+            if contiguous_dy is not dy:
+                dy.record_stream(caller)
+            weights = (*_quantize(w1.transpose(-1, -2)), *_quantize(w2.transpose(-1, -2)))
+            ctx.allocations.remember(weights if contiguous_dy is dy else (*weights, contiguous_dy))
+            if capture is not None:
+                capture.begin_backward()
+            dx, dp, dw1, dw2, timer = plan.backward(
+                contiguous_dy,
+                p,
+                dispatch,
+                scales,
+                maps,
+                offsets,
+                () if ctx.recompute else saved,
+                (*weights, *saved) if ctx.recompute else weights,
+                ctx.limit,
+                capture is not None,
+                ctx.allocations,
+            )
+            if capture is not None:
+                capture.backward = timer
         return None, None, dx, None, dp, dw1, dw2, None
 
 
@@ -219,24 +212,18 @@ def run(y, x, ids, p, w1, w2, buffer, stats, activation_clamp):
     gradients = torch.is_grad_enabled() and any(t.requires_grad for t in (x, p, w1, w2))
     with buffer._lock:
         runtime.ensure_alive()
-        caller = npu_api().current_stream(runtime.device)
-        runtime.stream.wait_stream(caller)
-        with npu_api().stream(runtime.stream):
-            buffer._prepare(bs)
-            # Native forward records the tensors it reads; these originals are converted in Python.
-            w1.record_stream(runtime.stream)
-            w2.record_stream(runtime.stream)
-            if p.dtype != torch.float32:
-                p.record_stream(runtime.stream)
-            if gradients:
-                y, counts = W8A8Function.apply(buffer, limit, x, ids, p, w1, w2, y)
-            else:
-                counts = _launch_forward(buffer, x, ids, p, w1, w2, y, limit, False, False, False)[0].counts
-            if stats is not None:
-                stats.add_(counts)
-                stats.record_stream(runtime.stream)
-        caller.wait_stream(runtime.stream)
-        if caller != runtime.stream:
-            counts.record_stream(caller)
-            y.record_stream(caller)
+        caller = runtime.use_caller_stream()
+        buffer._prepare(bs)
+        # Native forward records the tensors it reads; these originals are converted in Python.
+        w1.record_stream(caller)
+        w2.record_stream(caller)
+        if p.dtype != torch.float32:
+            p.record_stream(caller)
+        if gradients:
+            y, counts = W8A8Function.apply(buffer, limit, x, ids, p, w1, w2, y)
+        else:
+            counts = _launch_forward(buffer, x, ids, p, w1, w2, y, limit, False, False, False)[0].counts
+        if stats is not None:
+            stats.add_(counts)
+            stats.record_stream(caller)
     return y, counts

@@ -15,7 +15,17 @@ from deep_ep_experimental.megamoe.api import _MegaRuntime
 @pytest.mark.parametrize("backend", ["store", "gloo"])
 @pytest.mark.parametrize(
     "case",
-    ["same-host", "different-host", "missing-host", "mapping", "device", "engine", "bf16", "bf16-debug-mismatch"],
+    [
+        "same-host",
+        "different-host",
+        "missing-host",
+        "mapping",
+        "device",
+        "engine",
+        "bf16",
+        "bf16-debug-mismatch",
+        "w8a8-training",
+    ],
 )
 def test_megamoe_bootstrap(monkeypatch, backend, case):
     monkeypatch.setattr(_runtime, "endpoint", lambda: "tcp://127.0.0.1:19091")
@@ -34,11 +44,14 @@ def test_megamoe_bootstrap(monkeypatch, backend, case):
         runtime_busy=lambda: False, next_instance_id=lambda: 0, Runtime=core_runtime, create_megamoe_runtime=create
     )
     monkeypatch.setattr(_runtime, "require_native", lambda operation: native)
+    caller = SimpleNamespace(synchronize=lambda: None)
     monkeypatch.setattr(
         _runtime,
         "npu_api",
         lambda: SimpleNamespace(
-            current_device=lambda: 0, Stream=lambda **kwargs: SimpleNamespace(synchronize=lambda: None)
+            current_device=lambda: 0,
+            current_stream=lambda device: caller,
+            Stream=lambda **kwargs: SimpleNamespace(synchronize=lambda: None),
         ),
     )
 
@@ -90,11 +103,12 @@ def test_megamoe_bootstrap(monkeypatch, backend, case):
             _MegaRuntime(group, 2 << 20, bf16=bf16)
         assert not created
     else:
-        runtime = _MegaRuntime(group, 2 << 20, bf16=bf16)
+        runtime = _MegaRuntime(group, 2 << 20, bf16=bf16, w8a8_training=case == "w8a8-training")
         try:
             assert len(created) == 1
             assert created[0][:3] == (0, 2, 2 << 20)
             assert created[0][-1] is bf16
+            assert (runtime.stream is caller) == (bf16 or case == "w8a8-training")
             if bf16:
                 with pytest.raises(RuntimeError, match="already owns"):
                     _MegaRuntime(group, 2 << 20, bf16=True)

@@ -70,6 +70,7 @@ class Runtime:
 
     _megamoe = False
     _megamoe_train = False
+    _use_caller_stream = False
 
     def __init__(
         self,
@@ -257,7 +258,7 @@ class Runtime:
             self.notify_lock = threading.RLock()
             self.notify_failed = False
             self.notify_inflight = None
-            self.stream = npu.Stream(device=self.device)
+            self.stream = npu.current_stream(self.device) if self._use_caller_stream else npu.Stream(device=self.device)
             self.native = (
                 native.create_combine_runtime(
                     rank, size, capacity, address, timeout, bootstrap == "mpi", use_1g_huge_pages, uid

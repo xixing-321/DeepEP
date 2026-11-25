@@ -113,7 +113,7 @@ B>256 保留 Prefill 输入协议，所有路径保留输出跨卡同步。
 - `save_dispatched_x=True` 保留专家端的 FP8 X、E8M0 scale 和 TopK weight。设为 `False` 时，框架为本次前向设置无参的 `sym_buffer.dispatch_rebuilder`。反向调用它获取三个连续 Tensor，形状依次为 `[R,H]`、`[R,H/32]`、`[R]`，其中 `R` 是专家端实际接收行数，TopK weight 的 dtype 与前向输入一致。按本地专家、源 EP rank、源内 token 和 TopK slot 排序，三个 Tensor 的第 `i` 行对应同一条路由。算子保留前向的路由表及专家行偏移。异步重建由回调安排完成等待，再交给反向读取。
 - `gmm1_save_type="mxfp8"` 保存沿特征维量化的 Gate/Up。反向从 BF16 W1、W2 量化出转置方向的权重，分别用于 dX 和 dHp。`"none"` 再保留 W1 的前向方向量化结果，按整专家重算 Gate/Up。两个模式的 dW1/dW2 都由对应激活与梯度计算。
 
-无截断的 MXFP8 反向在同一个向量循环中计算 Hp 和 dZ，共用解码后的 Gate/Up 和 SiLU 结果。
+W8A8 训练的权重量化、前向和反向均在调用方当前 NPU 流上执行。同一 buffer 切换调用流时，新流等待上一条流已提交的工作。MXFP8 反向复用解码后的 Gate/Up；开启裁剪时，梯度沿用前向保存的裁剪掩码。
 
 <a name="bf16前向与训练"></a>
 
@@ -184,7 +184,7 @@ BF16 支持 EP=2～1024，E 须能被 EP 整除，每卡 1～32 个路由专家�
 
 框架自行重建时设置 `save_dispatched_x=False`，并在每次前向前设置 `sym_buffer.dispatch_rebuilder` 为该 microbatch 的无参函数。反向调用该函数取得连续的设备端 UInt8 缓冲。缓冲依次存放 `[max_recv_tokens, H]` BF16 X 和 `[max_recv_tokens]` 原 dtype 的 p，两段分别按 512 字节对齐。异步重建时，回调须让调用流等待生产端事件。每个前向独立记录回调，支持多前向后逆序反向。直接调用原生 Plan 的框架可以在 `plan.forward(..., capture_timer=False, save_dispatched_x=False)` 后将重建张量传入 `backward`。
 
-反向临时 workspace 在算子流上分配，用完即可按流序复用。反向在同一流读取前向保存的原始张量时，最后一个引用释放后，该流即可复用这块显存。若框架重建了 `dispatch_output`，或 autograd hook 换回了新的存储，算子会登记反向使用流，保护尚未完成的读取。
+BF16 前反向在框架当前 NPU 流上执行。同一 `SymmBuffer` 切换调用流时，新流会等待上一条流已提交的工作，之后再复用共享通信区。反向临时 workspace 在调用流上分配，用完即可按流序复用。前反向同流时，前向保存的原始张量在最后一个引用释放后也可复用。若框架重建了 `dispatch_output`，或 autograd hook 换回了新的存储，算子会登记反向使用流，保护尚未完成的读取。
 
 同一 EP 组的调用顺序、配置和 p 的 dtype 须一致。
 

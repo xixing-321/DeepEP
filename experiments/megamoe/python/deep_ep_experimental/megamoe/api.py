@@ -39,10 +39,22 @@ def _extension():
 class _MegaRuntime(Runtime):
     _megamoe = True
 
-    def __init__(self, group, capacity, timeout=120, *, bf16=False, debug_collectives=False, **kwargs):
+    def __init__(
+        self, group, capacity, timeout=120, *, bf16=False, w8a8_training=False, debug_collectives=False, **kwargs
+    ):
         self._megamoe = not bf16
         self._megamoe_train = bf16
+        self._use_caller_stream = bf16 or w8a8_training
         super().__init__(group, capacity, timeout, debug_collectives=debug_collectives, **kwargs)
+
+    def use_caller_stream(self):
+        # The buffer lock orders submissions on the host. Order the shared SHMEM window
+        # on the device as well when successive calls use different streams.
+        caller = npu_api().current_stream(self.device)
+        if caller != self.stream:
+            caller.wait_stream(self.stream)
+            self.stream = caller
+        return caller
 
 
 def _pair(value, name):
@@ -215,7 +227,9 @@ class SymmBuffer:
             error = str(failure)
         # 输入分配失败先通知所有 rank，再进入 SHMEM，避免其他 rank 已在建链等待。
         collective_check(group, "input allocation", error)
-        self._runtime = _MegaRuntime(group, capacity, timeout, bf16=bf16, debug_collectives=debug_collectives)
+        self._runtime = _MegaRuntime(
+            group, capacity, timeout, bf16=bf16, w8a8_training=w8a8_training, debug_collectives=debug_collectives
+        )
         if bf16:
             self._runtime.barrier()
 
@@ -317,9 +331,13 @@ class SymmBuffer:
             collective_check(self.group, "prepare", error, bs)
             try:
                 runtime = self._runtime
-                runtime.stream.wait_stream(npu_api().current_stream(runtime.device))
-                with npu_api().stream(runtime.stream):
+                if self.mma_type == "bf16xbf16" or self._w8a8_training:
+                    runtime.use_caller_stream()
                     self._prepare(bs)
+                else:
+                    runtime.stream.wait_stream(npu_api().current_stream(runtime.device))
+                    with npu_api().stream(runtime.stream):
+                        self._prepare(bs)
             except Exception as failure:
                 error = str(failure)
             collective_check(self.group, f"prepare BS={bs}", error)

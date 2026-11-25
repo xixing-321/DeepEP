@@ -7,7 +7,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <vector>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -61,7 +60,7 @@ public:
 private:
     PlatformInfo platform_;
     MegaMoeTilingData tiling_;
-    StreamAllocations allocations_;
+    c10::optional<c10::Stream> training_plan_stream_;
     torch::Tensor workspace_;
     torch::Tensor context_;
     uint64_t ffts_;
@@ -93,7 +92,7 @@ private:
     uint32_t topk_;
     uint32_t experts_;
     uint32_t generation_ = 0;
-    StreamAllocations allocations_;
+    c10::optional<c10::Stream> peers_stream_;
     torch::Tensor peers_;
     uint64_t ffts_;
 };
@@ -175,6 +174,8 @@ private:
     uint64_t ffts_addr_;
     torch::Tensor context_;
     torch::Tensor workspace_;
+    c10::optional<c10::Stream> context_stream_;
+    c10::optional<c10::Stream> workspace_stream_;
     bool weight_before_gmm2_;
 
     int context_rank_ = -1;

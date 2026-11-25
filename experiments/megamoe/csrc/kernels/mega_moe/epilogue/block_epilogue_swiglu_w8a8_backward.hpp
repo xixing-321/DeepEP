@@ -184,11 +184,14 @@ public:
                 SaveDpProducts(rowBase_ + mLoc, nLoc, singleM, singleN, rowStrideInPlane);
             }
 
-            if (params_.savedGateUpMode == MegaMoeTrainW8A8::kSaveMxFp8 &&
-                params_.swigluLimit == kMegaMoeSwigluLimitDisabled && rowStrideInPlane == singleN &&
+            if (params_.savedGateUpMode == MegaMoeTrainW8A8::kSaveMxFp8 && rowStrideInPlane == singleN &&
                 singleN % 64U == 0) {
-                // Keep Hp, dGate and dUp live in separate UB planes for quantization.
-                ComputeContiguousUnclampedGrad<true>(singleM, singleN);
+                // Keep Hp, dGate and dUp in separate UB planes. Consume the clip masks before Hp reuses their scratch.
+                if (params_.swigluLimit == kMegaMoeSwigluLimitDisabled) {
+                    ComputeContiguousUnclampedGrad<true>(singleM, singleN);
+                } else {
+                    ComputeSwigluGradImpl<true, true>(singleM, singleN, rowStrideInPlane);
+                }
                 SyncFunc<AscendC::HardEvent::V_MTE2>();
                 SyncFunc<AscendC::HardEvent::V_MTE3>();
                 consumeHp.template operator()<true>(extraA_, singleM, singleN, rowStrideInPlane);
@@ -698,7 +701,7 @@ private:
         }
     }
 
-    template <bool UseSavedClipMask>
+    template <bool UseSavedClipMask, bool ComputeHp = false>
     __aicore__ inline void ComputeSwigluGradImpl(uint16_t mSize, uint16_t nSize, uint32_t rowStride)
     {
         constexpr uint16_t kElementsPerRepeat = 256U / sizeof(bfloat16_t);
@@ -814,6 +817,15 @@ private:
                         AscendC::Reg::Div<float, &kBackwardDivMode>(sig, oneFp, denom, mask);
                         // Differentiate the same fused FP32 SiLU/Up recipe.
                         AscendC::Reg::Div<float, &kBackwardDivMode>(silu, gateC, denom, mask);
+                        if constexpr (ComputeHp) {
+                            AscendC::Reg::RegTensor<float> hp;
+                            AscendC::Reg::RegTensor<bfloat16_t> hpBf;
+                            AscendC::Reg::Mul(hp, silu, upC, mask);
+                            AscendC::Reg::Mul(hp, hp, pFp, mask);
+                            AscendC::Reg::Cast<bfloat16_t, float, kBackwardCastFP32ToBF16>(hpBf, hp, mask);
+                            AscendC::Reg::DataCopy<bfloat16_t, AscendC::Reg::StoreDist::DIST_PACK_B32>(
+                                up + offset + part * kPartSize, hpBf, mask);
+                        }
                         siluRounded = silu;  // Same FP32 fused activation as forward.
                         AscendC::Reg::Mul(dUpFp, dHFp, siluRounded, mask);
                         if (limitEnabled) {
