@@ -231,28 +231,31 @@ __aicore__ inline void FusedTrain::TokenQuantRange(uint64_t source, uint64_t q, 
     // dX and Combine. Each expert's token axis has separate 64-row padding.
     // [64 tokens,128 features] -> [128 features,64 tokens], using the same
     // 16x16 transpose and MX quantizer as the validated ordinary path.
-    LocalTensor<uint16_t> input{TPosition::VECIN, 0, 8192};
-    LocalTensor<uint16_t> matrix{TPosition::VECIN, 32768, 8192};
+    constexpr uint32_t tileRows = 128;
+    LocalTensor<uint16_t> input{TPosition::VECIN, 0, tileRows * 128};
+    LocalTensor<uint16_t> matrix{TPosition::VECIN, 32768, tileRows * 128};
     for (uint32_t e = 0; e < a.experts; ++e) {
         if (expert != 0xffffffffU && e != expert) continue;
         const uint32_t rows = Rows(e);
         const uint32_t pad = (rows + 63) / 64 * 64;
         const uint32_t paddedBefore = PadBegin(e);
         const uint32_t bands = (width + 127) / 128;
-        const uint32_t tokenTiles = pad / 64;
+        const uint32_t tokenTiles = (pad + tileRows - 1) / tileRows;
+        const uint32_t firstRow = Begin(e);
         for (uint32_t task = worker; task < bands * tokenTiles; task += workers) {
             const uint32_t band = task % bands;
-            const uint32_t token = (task / bands) * 64;
+            const uint32_t token = (task / bands) * tileRows;
+            const uint32_t depth = pad - token < tileRows ? pad - token : tileRows;
             const uint32_t feature = band * 128;
             const uint32_t columns = width - feature < 128 ? width - feature : 128;
-            const uint32_t validRows = rows - token < 64 ? rows - token : 64;
-            if (validRows < 64) {
+            const uint32_t validRows = rows - token < depth ? rows - token : depth;
+            if (validRows < depth) {
                 SyncFunc<HardEvent::MTE2_V>();
-                Duplicate(matrix, uint16_t(0), 8192);
+                Duplicate(matrix, uint16_t(0), depth * 128);
             }
             SyncFunc<HardEvent::V_MTE2>();
             GlobalTensor<uint16_t> src;
-            src.SetGlobalBuffer(reinterpret_cast<__gm__ uint16_t*>(source) + uint64_t(Begin(e) + token) * width +
+            src.SetGlobalBuffer(reinterpret_cast<__gm__ uint16_t*>(source) + uint64_t(firstRow + token) * width +
                                 feature);
             src.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
             if (validRows) {
@@ -265,17 +268,17 @@ __aicore__ inline void FusedTrain::TokenQuantRange(uint64_t source, uint64_t q, 
             uint64_t dstList[16], srcList[16];
             const uint64_t srcBase = reinterpret_cast<uint64_t>(matrix.GetPhyAddr());
             const uint64_t dstBase = reinterpret_cast<uint64_t>(input.GetPhyAddr());
-            for (uint32_t tokenBlock = 0; tokenBlock < 4; ++tokenBlock) {
+            for (uint32_t tokenBlock = 0; tokenBlock < depth / 16; ++tokenBlock) {
                 for (uint32_t i = 0; i < 16; ++i) {
                     srcList[i] = srcBase + (tokenBlock * 16 + i) * 128 * 2;
-                    dstList[i] = dstBase + (i * 64 + tokenBlock * 16) * 2;
+                    dstList[i] = dstBase + (i * depth + tokenBlock * 16) * 2;
                 }
                 TransDataTo5HD<uint16_t>(dstList, srcList,
-                                         TransDataTo5HDParams{false, false, uint8_t(columns / 16), 64, 1});
+                                         TransDataTo5HDParams{false, false, uint8_t(columns / 16), uint16_t(depth), 1});
             }
             PipeBarrier<PIPE_V>();
             quant.QuantizeTile(input.ReinterpretCast<bfloat16_t>(), Addr(q + uint64_t(paddedBefore) * width),
-                               Addr(scale + uint64_t(paddedBefore / 32) * width), columns, 64, pad,
+                               Addr(scale + uint64_t(paddedBefore / 32) * width), columns, depth, pad,
                                uint64_t(feature) * pad + token, true);
         }
     }
